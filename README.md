@@ -1,4 +1,4 @@
-# Nexora Finance
+# Nexora
 
 Trade. Earn. Automate.
 
