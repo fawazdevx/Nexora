@@ -154,7 +154,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({...activation, queue: "agent-actions"});
     }
 
-    if (req.method === "HEAD" && path === "/api/webhooks/circle") {
+    if ((req.method === "GET" || req.method === "HEAD") && path === "/api/webhooks/circle") {
       return {status: 200};
     }
 
