@@ -3,7 +3,7 @@ import {pathToFileURL} from "node:url";
 import {config} from "./config.js";
 import {corsHeaders, handleAppRequest} from "./router.js";
 
-export async function handler(req: IncomingMessage, res: ServerResponse) {
+async function handler(req: IncomingMessage, res: ServerResponse) {
   const body = await readJson(req);
   const result = await handleAppRequest({
     method: req.method ?? "GET",

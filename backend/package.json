@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/server.ts",
+    "dev": "tsx src/local-http.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/local-http.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
