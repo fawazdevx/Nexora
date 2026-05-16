@@ -26,9 +26,10 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
   try {
     const url = new URL(req.url, `http://${req.host ?? "localhost"}`);
     const body = req.body ?? {};
-    const path = url.pathname;
+    const rawPath = url.pathname;
+    const path = normalizePath(rawPath);
 
-    if (req.method === "GET" && (path === "/health" || path === "/api/health")) {
+    if (req.method === "GET" && path === "/api/health") {
       return ok({ok: true, network: "Arc Testnet", chainId: config.arc.chainId});
     }
 
@@ -165,7 +166,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({status: "queued", queue: "indexing"});
     }
 
-    return response(404, {error: "not_found"});
+    return response(404, {error: "not_found", path: rawPath, normalizedPath: path});
   } catch (error) {
     return response(400, {error: error instanceof Error ? error.message : "bad_request"});
   }
@@ -211,4 +212,11 @@ function requiredNumber(value: unknown, label: string) {
 
 function arrayOfStrings(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizePath(path: string) {
+  if (path === "/") return "/api/health";
+  if (path === "/health") return "/api/health";
+  if (path.startsWith("/api/")) return path;
+  return `/api${path}`;
 }
