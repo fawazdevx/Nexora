@@ -1,4 +1,4 @@
-import {handleAppRequest, corsHeaders} from "../../dist/app.js";
+import {handleAppRequest, corsHeaders} from "../../dist/router.js";
 
 export async function handler(event) {
   const body = parseBody(event.body);

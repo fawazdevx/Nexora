@@ -1,7 +1,7 @@
 import {createServer, type IncomingMessage, type ServerResponse} from "node:http";
 import {pathToFileURL} from "node:url";
 import {config} from "./config.js";
-import {corsHeaders, handleAppRequest} from "./app.js";
+import {corsHeaders, handleAppRequest} from "./router.js";
 
 export async function handler(req: IncomingMessage, res: ServerResponse) {
   const body = await readJson(req);

@@ -1,4 +1,4 @@
-import {corsHeaders, handleAppRequest} from "../src/app";
+import {corsHeaders, handleAppRequest} from "../src/router";
 
 type VercelRequestLike = {
   method?: string;
