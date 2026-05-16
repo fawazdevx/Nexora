@@ -82,7 +82,8 @@ const emptyStore = (): StoreShape => ({
   subscriptions: []
 });
 
-const storePath = resolve(process.env.NEXORA_STORE_PATH ?? ".nexora-data/store.json");
+const writableStorePath = process.env.VERCEL || process.env.NETLIFY ? "/tmp/nexora-store.json" : ".nexora-data/store.json";
+const storePath = resolve(process.env.NEXORA_STORE_PATH ?? writableStorePath);
 let cache: StoreShape | null = null;
 let writeQueue = Promise.resolve();
 

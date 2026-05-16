@@ -1,1 +1,1 @@
-export {handler as default} from "../src/server.js";
+export {handler as default} from "../src/server";
