@@ -28,7 +28,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
     const body = req.body ?? {};
     const path = url.pathname;
 
-    if (req.method === "GET" && path === "/health") {
+    if (req.method === "GET" && (path === "/health" || path === "/api/health")) {
       return ok({ok: true, network: "Arc Testnet", chainId: config.arc.chainId});
     }
 
