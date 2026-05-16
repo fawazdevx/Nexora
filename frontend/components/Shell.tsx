@@ -38,15 +38,15 @@ export function Shell({children}: {children: React.ReactNode}) {
     <div className="min-h-screen overflow-hidden bg-void text-slate-100">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(155,92,246,0.18),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.035),transparent_24%)]" />
 
-      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-void/88 px-4 py-3 backdrop-blur-xl md:px-6">
+      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-void/88 px-4 py-4 backdrop-blur-xl md:px-6">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">
           <a href="/app" onClick={(event) => navigate(event, "/app")} className="flex shrink-0 items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg border border-plasma/25 bg-plasma/10 text-orchid">
+            <div className="grid h-11 w-11 place-items-center rounded-xl border border-plasma/25 bg-plasma/10 text-orchid">
               <Activity size={20} />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-xl font-semibold tracking-normal text-white">Nexora</div>
-              <div className="mt-0.5 hidden text-xs text-slate-500 sm:block">
+              <div className="truncate text-2xl font-semibold tracking-normal text-white">Nexora</div>
+              <div className="mt-1 hidden text-sm text-slate-400 sm:block">
                 {isConnected ? <ArcNameLabel address={address} fallback="Agent Finance Network" /> : "Agent Finance Network"}
               </div>
             </div>
@@ -66,7 +66,7 @@ export function Shell({children}: {children: React.ReactNode}) {
           </nav>
 
           <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.035] px-3 py-2 text-[15px] text-slate-500 2xl:flex">
+            <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-[15px] text-slate-400 2xl:flex">
               <Search size={16} />
               <span className="w-52 truncate">Search agents, markets, policies</span>
             </div>
@@ -93,39 +93,39 @@ export function Shell({children}: {children: React.ReactNode}) {
         <div className="mx-auto grid max-w-[1440px] gap-6 xl:grid-cols-[1fr_300px]">
           <section className="min-w-0">{children}</section>
 
-          <aside className="hidden space-y-4 xl:block">
+          <aside className="hidden space-y-5 xl:block">
             <div className="panel">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-orchid">
+              <div className="flex items-center gap-2 text-sm uppercase tracking-[0.16em] text-orchid">
                 <Activity size={14} />
                 Operator
               </div>
               <div className="mt-4 rounded-lg border border-plasma/20 bg-plasma/10 p-4">
-                <p className="text-sm text-slate-400">Connected identity</p>
-                <p className="mt-2 truncate text-xl font-semibold text-white">
+                <p className="text-sm text-slate-300">Connected identity</p>
+                <p className="mt-2 truncate text-2xl font-semibold text-white">
                   <ArcNameLabel address={address} fallback="Connect wallet" />
                 </p>
               </div>
             </div>
 
             <div className="panel">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-orchid">
+              <div className="flex items-center gap-2 text-sm uppercase tracking-[0.16em] text-orchid">
                 <RadioTower size={14} />
                 Arc deployment
               </div>
-              <div className="mt-4 grid gap-2 text-sm">
-                <div className="surface flex items-center justify-between px-3 py-2">
+              <div className="mt-4 grid gap-2 text-base">
+                <div className="surface flex items-center justify-between px-4 py-3">
                   <span className="text-slate-400">Gas asset</span>
                   <span className="text-white">USDC</span>
                 </div>
-                <div className="surface flex items-center justify-between px-3 py-2">
+                <div className="surface flex items-center justify-between px-4 py-3">
                   <span className="text-slate-400">Settlement</span>
                   <span className="text-white">x402</span>
                 </div>
-                <div className="surface flex items-center justify-between px-3 py-2">
+                <div className="surface flex items-center justify-between px-4 py-3">
                   <span className="text-slate-400">Policy</span>
                   <span className="text-mint">Ready</span>
                 </div>
-                <div className="surface flex items-center justify-between px-3 py-2">
+                <div className="surface flex items-center justify-between px-4 py-3">
                   <span className="text-slate-400">Agent wallets</span>
                   <span className="text-white">Circle</span>
                 </div>
@@ -133,21 +133,21 @@ export function Shell({children}: {children: React.ReactNode}) {
             </div>
 
             <div className="panel">
-              <div className="flex items-center gap-2 text-sm font-medium text-white">
-                <Sparkles size={17} className="text-orchid" />
+              <div className="flex items-center gap-2 text-base font-medium text-white">
+                <Sparkles size={18} className="text-orchid" />
                 Production track
               </div>
-              <div className="mt-4 space-y-2 text-sm leading-6 text-slate-400">
+              <div className="mt-4 space-y-2 text-base leading-7 text-slate-300">
                 <p>Deploy proxy contracts, add addresses to env files, then connect Circle and x402 settlement keys.</p>
               </div>
             </div>
 
             <div className="panel">
-              <div className="flex items-center gap-2 text-sm font-medium text-white">
-                <ShieldCheck size={17} className="text-mint" />
+              <div className="flex items-center gap-2 text-base font-medium text-white">
+                <ShieldCheck size={18} className="text-mint" />
                 Deployment checklist
               </div>
-              <div className="mt-4 space-y-2 text-sm leading-6 text-slate-400">
+              <div className="mt-4 space-y-2 text-base leading-7 text-slate-300">
                 <p>Set owner, treasury, and AI operator wallets.</p>
                 <p>Deploy contracts, then copy proxy addresses into frontend and backend env files.</p>
               </div>

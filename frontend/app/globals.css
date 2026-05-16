@@ -13,7 +13,8 @@ body {
     radial-gradient(circle at 50% -22%, rgba(155, 92, 246, 0.18), transparent 34rem),
     linear-gradient(180deg, #0d0b14 0%, #090811 52%, #07060d 100%);
   color: #f1f5f9;
-  font-size: 16px;
+  font-size: 17px;
+  line-height: 1.55;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
@@ -29,43 +30,43 @@ textarea {
 
 @layer components {
   .panel {
-    @apply rounded-lg border border-white/[0.08] bg-panel/90 p-5 shadow-neon backdrop-blur-xl;
+    @apply rounded-xl border border-white/[0.09] bg-panel/90 p-6 shadow-neon backdrop-blur-xl;
   }
 
   .surface {
-    @apply rounded-lg border border-white/[0.08] bg-white/[0.04];
+    @apply rounded-xl border border-white/[0.08] bg-white/[0.045];
   }
 
   .section-kicker {
-    @apply text-xs font-semibold uppercase tracking-[0.16em] text-orchid;
+    @apply text-sm font-semibold uppercase tracking-[0.14em] text-orchid;
   }
 
   .page-title {
-    @apply mt-2 text-2xl font-semibold tracking-normal text-white md:text-3xl;
+    @apply mt-2 text-3xl font-semibold tracking-normal text-white md:text-4xl;
   }
 
   .muted-copy {
-    @apply text-[15px] leading-7 text-slate-300/85;
+    @apply text-base leading-7 text-slate-300/90;
   }
 
   .field {
-    @apply rounded-md border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 text-white outline-none transition placeholder:text-slate-600 focus:border-plasma/70 focus:bg-white/[0.07];
+    @apply min-h-12 rounded-lg border border-white/[0.1] bg-white/[0.05] px-4 py-3 text-[15px] text-white outline-none transition placeholder:text-slate-500 focus:border-plasma/70 focus:bg-white/[0.075];
   }
 
   .action-button {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-plasma/30 bg-plasma px-4 py-2 text-sm font-semibold text-white shadow-glow transition hover:border-orchid/60 hover:bg-violet disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-plasma/30 bg-plasma px-5 py-3 text-[15px] font-semibold text-white shadow-glow transition hover:border-orchid/60 hover:bg-violet disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .danger-button {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-magenta/45 bg-magenta/10 px-4 py-2 text-sm font-medium text-magenta transition hover:border-magenta hover:bg-magenta/20 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-magenta/45 bg-magenta/10 px-5 py-3 text-[15px] font-medium text-magenta transition hover:border-magenta hover:bg-magenta/20 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .secondary-button {
-    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-white/[0.12] bg-white/[0.045] px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-plasma/35 hover:bg-white/[0.075];
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.12] bg-white/[0.045] px-5 py-3 text-[15px] font-medium text-slate-100 transition hover:border-plasma/35 hover:bg-white/[0.075];
   }
 
   .nav-item {
-    @apply flex items-center gap-2 rounded-md border border-transparent px-3 py-2 text-[15px] text-slate-400 transition hover:border-white/[0.08] hover:bg-white/[0.045] hover:text-white;
+    @apply flex items-center gap-2 rounded-lg border border-transparent px-4 py-3 text-[15px] text-slate-300 transition hover:border-white/[0.08] hover:bg-white/[0.045] hover:text-white;
   }
 
   .nav-item-active {
@@ -73,11 +74,11 @@ textarea {
   }
 
   .status-pill {
-    @apply inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-white/[0.05] px-3 py-1 text-xs text-slate-300;
+    @apply inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-white/[0.05] px-3.5 py-1.5 text-[13px] text-slate-300;
   }
 
   .nav-chip {
-    @apply inline-flex shrink-0 items-center gap-2 rounded-md border border-white/[0.1] bg-white/[0.05] px-3 py-2 text-sm text-slate-300;
+    @apply inline-flex shrink-0 items-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.05] px-4 py-2.5 text-[15px] text-slate-300;
   }
 
   .nav-chip-active {
@@ -86,5 +87,5 @@ textarea {
 }
 
 [data-rk] button {
-  border-radius: 6px !important;
+  border-radius: 10px !important;
 }
