@@ -1,0 +1,22 @@
+{
+  "agents": [],
+  "services": [],
+  "payments": [],
+  "earnActivations": [
+    {
+      "id": "e685c758-c7d0-4db6-a21f-1dfcd844324b",
+      "opportunityId": "x402_service_execution",
+      "operatorAddress": "0xB3aae9496a6670d13e1b80B1Fb3ad445c635aC23",
+      "status": "queued",
+      "createdAt": "2026-05-16T16:33:56.644Z"
+    },
+    {
+      "id": "8491a9fe-c197-42e3-a55b-24a587ab6c5a",
+      "opportunityId": "x402_service_execution",
+      "operatorAddress": "0xB3aae9496a6670d13e1b80B1Fb3ad445c635aC23",
+      "status": "queued",
+      "createdAt": "2026-05-16T16:34:00.107Z"
+    }
+  ],
+  "subscriptions": []
+}

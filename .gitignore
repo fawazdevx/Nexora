@@ -1,6 +1,14 @@
 # Compiler files
 cache/
 out/
+dist/
+node_modules/
+.next/
+frontend/.next/
+frontend/dist/
+frontend/node_modules/
+backend/dist/
+backend/node_modules/
 
 # Ignores development broadcast logs
 !/broadcast
