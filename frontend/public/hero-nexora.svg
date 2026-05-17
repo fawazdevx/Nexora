@@ -1,0 +1,65 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="28" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.18 0 1 0 0 0.14 0 0 1 0 0.9 0 0 0 0.72 0"/>
+    </filter>
+    <linearGradient id="leftFade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#03040A"/>
+      <stop offset="0.36" stop-color="#03040A" stop-opacity="0.94"/>
+      <stop offset="0.62" stop-color="#03040A" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#03040A" stop-opacity="0.1"/>
+    </linearGradient>
+    <radialGradient id="cyanBloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1390 340) rotate(140) scale(680 360)">
+      <stop offset="0" stop-color="#1AD9FF" stop-opacity="0.46"/>
+      <stop offset="0.42" stop-color="#6D4CFF" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#03040A" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="violetBloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1060 660) rotate(-20) scale(760 300)">
+      <stop offset="0" stop-color="#ED3BFF" stop-opacity="0.34"/>
+      <stop offset="0.42" stop-color="#7C3DFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#03040A" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bottomVignette" x1="960" y1="522" x2="960" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#03040A" stop-opacity="0"/>
+      <stop offset="0.7" stop-color="#03040A" stop-opacity="0.68"/>
+      <stop offset="1" stop-color="#03040A"/>
+    </linearGradient>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" stroke="#6B7CFF" stroke-opacity="0.12" stroke-width="1"/>
+    </pattern>
+    <clipPath id="heroClip">
+      <rect width="1920" height="1080" rx="0"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#heroClip)">
+    <rect width="1920" height="1080" fill="#03040A"/>
+    <image href="/image.png" x="-455" y="-18" width="2168" height="1446" preserveAspectRatio="xMidYMid slice" opacity="0.9"/>
+    <rect width="1920" height="1080" fill="#03040A" opacity="0.2"/>
+    <rect x="0" y="0" width="900" height="1080" fill="#03040A" opacity="0.86"/>
+    <rect width="1920" height="1080" fill="url(#leftFade)"/>
+    <rect width="1920" height="1080" fill="url(#cyanBloom)"/>
+    <rect width="1920" height="1080" fill="url(#violetBloom)"/>
+    <rect width="1920" height="1080" fill="url(#bottomVignette)"/>
+    <rect width="1920" height="1080" fill="url(#grid)" opacity="0.38"/>
+
+    <g filter="url(#softGlow)" opacity="0.75">
+      <path d="M1040 810C1192 738 1397 719 1584 773" stroke="#F043FF" stroke-width="3"/>
+      <path d="M1104 850C1274 786 1480 791 1680 858" stroke="#17D8FF" stroke-width="2"/>
+    </g>
+
+    <g opacity="0.28">
+      <path d="M1140 782L1592 690L1806 842" stroke="#8C62FF" stroke-width="1.5"/>
+      <path d="M1228 846L1538 728L1724 918" stroke="#1AD9FF" stroke-width="1.25"/>
+      <circle cx="1140" cy="782" r="4" fill="#ED3BFF"/>
+      <circle cx="1592" cy="690" r="4" fill="#1AD9FF"/>
+      <circle cx="1806" cy="842" r="4" fill="#ED3BFF"/>
+      <circle cx="1228" cy="846" r="3" fill="#1AD9FF"/>
+      <circle cx="1538" cy="728" r="3" fill="#ED3BFF"/>
+      <circle cx="1724" cy="918" r="3" fill="#1AD9FF"/>
+    </g>
+
+    <rect x="0" y="0" width="1920" height="1080" fill="none" stroke="#A855F7" stroke-opacity="0.18" stroke-width="2"/>
+  </g>
+</svg>

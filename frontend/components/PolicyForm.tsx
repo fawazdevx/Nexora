@@ -1,42 +1,63 @@
-import {useState} from "react";
+import {useEffect, useMemo, useState} from "react";
 import {useAccount} from "wagmi";
 import {writeAgentPolicy} from "@/lib/contracts";
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
+import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 export function PolicyForm() {
   const {address, isConnected} = useAccount();
-  const [agentWallet, setAgentWallet] = useState("");
+  const snapshot = useAppSnapshot();
+  const agents = useMemo(() => snapshot.data?.agents ?? [], [snapshot.data?.agents]);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
   const [dailyLimit, setDailyLimit] = useState("400");
   const [transactionCap, setTransactionCap] = useState("45");
   const [contractAllowlist, setContractAllowlist] = useState("");
   const [recipientAllowlist, setRecipientAllowlist] = useState("");
   const [status, setStatus] = useState("");
 
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const contractAllowlistItems = splitAddresses(contractAllowlist);
   const recipientAllowlistItems = splitAddresses(recipientAllowlist);
+
+  useEffect(() => {
+    if (!selectedAgentId && agents[0]) {
+      setSelectedAgentId(agents[0].id);
+    }
+  }, [agents, selectedAgentId]);
+
+  useEffect(() => {
+    if (!selectedAgent) return;
+    setDailyLimit(String(selectedAgent.policy.dailyLimitUsdc));
+    setTransactionCap(String(selectedAgent.policy.transactionCapUsdc));
+    setContractAllowlist(selectedAgent.policy.contractAllowlist.join("\n"));
+    setRecipientAllowlist(selectedAgent.policy.recipientAllowlist.join("\n"));
+  }, [selectedAgent]);
 
   async function savePolicy() {
     if (!isConnected || !address) {
       setStatus("Connect your wallet before saving an agent policy.");
       return;
     }
-    if (!agentWallet.startsWith("0x")) {
-      setStatus("Enter a valid agent wallet address before submitting.");
+    if (!selectedAgent) {
+      setStatus("Create or select an agent wallet before saving a policy.");
       return;
     }
-    setStatus("Submitting policy...");
-    try {
-      const txHash = await writeAgentPolicy({
-        agentWallet,
-        dailyLimitUsdc: dailyLimit,
-        transactionCapUsdc: transactionCap,
-        contractAllowlist: contractAllowlistItems,
-        recipientAllowlist: recipientAllowlistItems,
-        active: true
-      });
 
-      await apiPost("/api/agents/local/policies", {
+    setStatus(selectedAgent.address ? "Submitting policy on Arc..." : "Saving policy while Circle wallet is pending...");
+    try {
+      const txHash = selectedAgent.address
+        ? await writeAgentPolicy({
+            agentWallet: selectedAgent.address,
+            dailyLimitUsdc: dailyLimit,
+            transactionCapUsdc: transactionCap,
+            contractAllowlist: contractAllowlistItems,
+            recipientAllowlist: recipientAllowlistItems,
+            active: true
+          })
+        : null;
+
+      await apiPost(`/api/agents/${selectedAgent.id}/policies`, {
         operatorAddress: address,
         dailyLimitUsdc: Number(dailyLimit),
         transactionCapUsdc: Number(transactionCap),
@@ -45,7 +66,12 @@ export function PolicyForm() {
         txHash
       });
 
-      setStatus(`Policy submitted from ${shortAddress(address)}: ${txHash}`);
+      await snapshot.refetch();
+      setStatus(
+        txHash
+          ? `Policy submitted from ${shortAddress(address)}: ${txHash}`
+          : "Policy saved. It will be ready for on-chain submission when Circle returns the agent wallet address."
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Policy update failed");
     }
@@ -59,9 +85,20 @@ export function PolicyForm() {
           <span className="font-mono text-white">{address ? shortAddress(address) : "Connect wallet"}</span>
         </div>
         <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
-          Agent wallet address
-          <input className="field" value={agentWallet} onChange={(event) => setAgentWallet(event.target.value)} placeholder="0x..." />
+          Agent
+          <select className="field" value={selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)}>
+            <option value="">Select an agent</option>
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.arcName ?? shortAddress(agent.operatorAddress)} - {agent.address ? shortAddress(agent.address) : "Circle pending"}
+              </option>
+            ))}
+          </select>
         </label>
+        <div className="surface md:col-span-2 flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+          <span className="text-slate-400">Agent wallet</span>
+          <span className="font-mono text-white">{selectedAgent?.address ? shortAddress(selectedAgent.address) : selectedAgent ? "Circle pending" : "No agent selected"}</span>
+        </div>
         <label className="grid gap-2 text-sm text-slate-300">
           Daily spending limit
           <input className="field" value={dailyLimit} onChange={(event) => setDailyLimit(event.target.value)} />
@@ -80,8 +117,9 @@ export function PolicyForm() {
         </label>
       </div>
       <div className="mt-6 flex flex-wrap items-center gap-3">
-        <button onClick={savePolicy} className="action-button" disabled={!isConnected}>Save policy on Arc</button>
-        <button className="danger-button">Pause agent</button>
+        <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent}>
+          {selectedAgent?.address ? "Save policy on Arc" : "Save pending policy"}
+        </button>
         {status ? <span className="max-w-full break-all rounded-md border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{status}</span> : null}
       </div>
     </>

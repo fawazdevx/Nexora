@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_NEXORA_API_URL ?? (import.meta.env.MODE === "development" ? "http://localhost:4000" : "");
+const API_URL = import.meta.env.VITE_NEXORA_API_URL ?? "";
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}));
@@ -11,18 +11,26 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`);
-  return parseResponse<T>(response);
+  try {
+    const response = await fetch(buildApiUrl(path));
+    return parseResponse<T>(response);
+  } catch {
+    throw new Error(apiConnectionHint(path));
+  }
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: {"content-type": "application/json"},
-    body: JSON.stringify(body)
-  });
+  try {
+    const response = await fetch(buildApiUrl(path), {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify(body)
+    });
 
-  return parseResponse<T>(response);
+    return parseResponse<T>(response);
+  } catch {
+    throw new Error(apiConnectionHint(path));
+  }
 }
 
 export type AppSnapshot = {
@@ -91,4 +99,15 @@ export type AppSnapshot = {
 
 export function appSnapshotPath(operator?: string) {
   return `/api/app${operator ? `?operator=${encodeURIComponent(operator)}` : ""}`;
+}
+
+function apiConnectionHint(path: string) {
+  const target = API_URL.trim().replace(/\/+$/, "") || "the current origin";
+  return `Could not reach ${target}${path.startsWith("/") ? path : `/${path}`}. Check VITE_NEXORA_API_URL or the backend server.`;
+}
+
+function buildApiUrl(path: string) {
+  const base = API_URL.trim().replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
 }

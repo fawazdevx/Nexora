@@ -5,6 +5,7 @@ import {ArcNameLabel} from "@/components/ArcNameLabel";
 import {navItems} from "@/lib/data";
 import {currentPath, navigateTo, NAVIGATE_EVENT, readNavigationPath} from "@/lib/router";
 import {WalletConnect} from "@/components/WalletConnect";
+import {Footer} from "@/components/Footer";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -31,7 +32,12 @@ export function Shell({children}: {children: React.ReactNode}) {
   }, []);
 
   if (publicPage) {
-    return <div className="min-h-screen overflow-hidden bg-void text-slate-100">{children}</div>;
+    return (
+      <div className="min-h-screen overflow-hidden bg-void text-slate-100">
+        {children}
+        <Footer />
+      </div>
+    );
   }
 
   return (
@@ -155,6 +161,7 @@ export function Shell({children}: {children: React.ReactNode}) {
           </aside>
         </div>
       </main>
+      <Footer />
     </div>
   );
 }

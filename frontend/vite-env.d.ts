@@ -12,6 +12,9 @@ interface ImportMetaEnv {
   readonly VITE_SAVE_EARN_VAULT_ADDRESS?: string;
   readonly VITE_USDC_ADDRESS?: string;
   readonly VITE_WC_PROJECT_ID?: string;
+  readonly VITE_NEXORA_X_URL?: string;
+  readonly VITE_NEXORA_GITHUB_URL?: string;
+  readonly VITE_NEXORA_CONTACT_URL?: string;
 }
 
 interface ImportMeta {

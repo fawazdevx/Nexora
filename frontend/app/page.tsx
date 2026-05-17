@@ -2,7 +2,6 @@ import {useState} from "react";
 import {Activity, Bot, CircleDollarSign, Gauge, RadioTower, ShieldCheck, Sparkles} from "lucide-react";
 import {useAccount} from "wagmi";
 import {MetricCard} from "@/components/MetricCard";
-import {SaveEarnPanel} from "@/components/SaveEarnPanel";
 import {ArcNameLabel} from "@/components/ArcNameLabel";
 import {navigateTo} from "@/lib/router";
 import {apiPost} from "@/lib/api";
@@ -35,12 +34,12 @@ export default function CommandPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <section className="panel relative overflow-hidden p-0">
         <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(155,92,246,0.12),transparent_34%)]" />
-        <div className="relative grid gap-0 lg:grid-cols-[1fr_390px]">
-          <div className="p-5 md:p-8">
-            <div className="mb-6 flex flex-wrap gap-2">
+        <div className="relative grid gap-0 lg:grid-cols-[1fr_340px]">
+          <div className="p-5 md:p-7">
+            <div className="mb-5 flex flex-wrap gap-2">
               <span className="status-pill border-plasma/25 bg-plasma/10 text-violet-100">
                 <Bot size={13} />
                 Agent commerce
@@ -55,22 +54,26 @@ export default function CommandPage() {
               </span>
             </div>
             <p className="section-kicker">Nexora command</p>
-            <h2 className="mt-3 max-w-4xl text-4xl font-semibold leading-tight text-white md:text-5xl">
+            <h2 className="mt-3 max-w-4xl text-3xl font-semibold leading-tight text-white md:text-5xl">
               Programmable USDC rails for AI agents and DeFi earning.
             </h2>
             <p className="muted-copy mt-4 max-w-2xl">
               {isConnected ? (
-                <>Signed in as <b className="text-white"><ArcNameLabel address={address} fallback={shortAddress(address)} /></b>. Launch Circle Agent Wallets, price APIs through x402, route idle USDC into earning strategies, and keep every autonomous action inside policy.</>
+                <>Signed in as <b className="text-white"><ArcNameLabel address={address} fallback={shortAddress(address)} /></b>. Create an agent wallet, route USDC, and keep autonomous actions inside policy.</>
               ) : (
-                "Connect your wallet to resolve your .arc name, launch Circle Agent Wallets, price APIs through x402, route idle USDC into earning strategies, and keep every autonomous action inside policy."
+                "Connect your wallet to create an agent wallet, route USDC, and manage autonomous spending policies."
               )}
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <button onClick={() => navigateTo("/earn")} className="action-button"><Sparkles size={16} /> Activate earning route</button>
-              <button onClick={() => navigateTo("/settings/policies")} className="secondary-button"><ShieldCheck size={16} /> Review policy mesh</button>
+              <button onClick={createAgentWallet} className="action-button" disabled={!isConnected}>
+                <Bot size={16} />
+                Create agent wallet
+              </button>
+              <button onClick={() => navigateTo("/earn")} className="secondary-button"><Sparkles size={16} /> Earn routes</button>
+              <button onClick={() => navigateTo("/settings/policies")} className="secondary-button"><ShieldCheck size={16} /> Policies</button>
             </div>
             {status ? <p className="mt-4 break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
-            <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-3">
+            <div className="mt-7 grid max-w-3xl gap-3 sm:grid-cols-3">
               {[
                 {label: "x402 rail", value: "Pay per request"},
                 {label: "Agent spend", value: "Policy capped"},
@@ -85,15 +88,15 @@ export default function CommandPage() {
           </div>
           <div className="border-t border-white/[0.08] bg-black/20 p-5 md:p-7 lg:border-l lg:border-t-0">
             <div className="mb-4 flex items-center justify-between">
-              <p className="text-sm font-medium text-white">Network telemetry</p>
+              <p className="text-sm font-medium text-white">Readiness</p>
               <Activity size={18} className="text-plasma" />
             </div>
             <div className="space-y-3">
               {[
-                ["Settlement rail", "x402 / USDC"],
-                ["Gas asset", "USDC"],
-                ["Policy state", "Enforced"],
-                ["Agent mode", isConnected ? "Wallet connected" : "Connect wallet"]
+                ["API", snapshot.data?.readiness.apiConfigured ? "Online" : "Offline"],
+                ["Contracts", snapshot.data?.readiness.onchainConfigured ? "Configured" : "Env needed"],
+                ["Circle", snapshot.data?.readiness.circleConfigured ? "Configured" : "API key needed"],
+                ["Wallet", isConnected ? "Connected" : "Connect wallet"]
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between rounded-md border border-white/[0.08] bg-white/[0.045] px-3 py-3 text-sm">
                   <span className="text-slate-400">{label}</span>
@@ -107,18 +110,12 @@ export default function CommandPage() {
                 Deployment readiness
               </div>
               <p className="mt-2 text-sm leading-6 text-slate-300/80">
-                Proxy addresses can drop straight into the frontend and backend env files after your Foundry deployment.
+                Circle wallet creation needs the backend to be reachable and configured with production secrets.
               </p>
             </div>
-            <button onClick={createAgentWallet} className="action-button mt-5 w-full" disabled={!isConnected}>
-              <Bot size={16} />
-              Create starter agent wallet
-            </button>
           </div>
         </div>
       </section>
-
-      <SaveEarnPanel />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {[
@@ -129,54 +126,23 @@ export default function CommandPage() {
         ].map((stat) => <MetricCard key={stat.label} {...stat} />)}
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="panel">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Autonomous agent fleet</h2>
-            <span className="status-pill">policy enforced</span>
-          </div>
-          <div className="space-y-3">
-            {(snapshot.data?.agents ?? []).map((agent) => (
-              <div key={agent.id} className="surface p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold text-white">{agent.arcName ?? agent.address ?? shortAddress(agent.operatorAddress)}</h3>
-                    <p className="text-sm text-slate-400">{agent.circleWalletStatus}</p>
-                  </div>
-                  <span className="status-pill">{agent.policy.active ? "Active" : "Paused"}</span>
-                </div>
-                <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
-                  <span>Wallet <b className="text-white">{agent.address ? shortAddress(agent.address) : "Pending"}</b></span>
-                  <span>Daily <b className="text-white">${agent.policy.dailyLimitUsdc}</b></span>
-                  <span>Tx cap <b className="text-white">${agent.policy.transactionCapUsdc}</b></span>
-                </div>
+      <section className="grid gap-4 md:grid-cols-3">
+        {[
+          {title: "Agent wallets", copy: "Create and review Circle-backed agent wallets.", href: "/agents", icon: Bot},
+          {title: "Marketplace", copy: "Publish services and test x402 payment flows.", href: "/marketplace", icon: CircleDollarSign},
+          {title: "Policy settings", copy: "Set spend caps and allowlists for autonomous actions.", href: "/settings/policies", icon: ShieldCheck}
+        ].map((item) => {
+          const Icon = item.icon;
+          return (
+            <button key={item.href} onClick={() => navigateTo(item.href)} className="panel text-left transition hover:border-white/[0.16] hover:bg-white/[0.055]">
+              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-orchid">
+                <Icon size={18} />
               </div>
-            ))}
-            {!snapshot.isLoading && (snapshot.data?.agents.length ?? 0) === 0 ? <p className="text-sm text-slate-400">No agent wallets created for this operator yet.</p> : null}
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Payment stream</h2>
-            <span className="status-pill">USDC</span>
-          </div>
-          <div className="space-y-3">
-            {(snapshot.data?.payments ?? []).map((payment) => (
-              <div key={payment.id} className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.035] p-4">
-                <div>
-                  <p className="font-medium text-white">{payment.serviceName}</p>
-                  <p className="text-xs text-slate-500">{payment.txHash ? shortAddress(payment.txHash) : shortAddress(payment.requestHash)}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-white">${payment.amountUsdc}</p>
-                  <p className={payment.status === "failed" || payment.status === "policy_blocked" ? "text-xs text-magenta" : "text-xs text-mint"}>{payment.status}</p>
-                </div>
-              </div>
-            ))}
-            {!snapshot.isLoading && (snapshot.data?.payments.length ?? 0) === 0 ? <p className="text-sm text-slate-400">No x402 payment activity yet.</p> : null}
-          </div>
-        </div>
+              <h3 className="text-base font-semibold text-white">{item.title}</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-400">{item.copy}</p>
+            </button>
+          );
+        })}
       </section>
     </div>
   );
