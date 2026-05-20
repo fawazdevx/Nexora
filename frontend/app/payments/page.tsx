@@ -4,19 +4,20 @@ import {PageHeader} from "@/components/PageHeader";
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
+import {settleX402Request} from "@/lib/contracts";
 
 export default function PaymentsPage() {
   const {address, isConnected} = useAccount();
   const [status, setStatus] = useState("");
   const snapshot = useAppSnapshot();
 
-  async function authorizePayment() {
+  async function runDemoPayment() {
     if (!isConnected || !address) {
       setStatus("Connect your wallet before authorizing an x402 payment.");
       return;
     }
 
-    setStatus("Requesting x402 authorization...");
+    setStatus("Preparing x402 demo payment...");
     try {
       const requestHash = `0x${crypto.randomUUID().replaceAll("-", "").padEnd(64, "0")}`;
       const firstService = snapshot.data?.services[0];
@@ -24,16 +25,33 @@ export default function PaymentsPage() {
         setStatus("Publish an x402 service before authorizing a payment.");
         return;
       }
-      const result = await apiPost<{authorizationId: string; status: string}>("/api/x402/authorize", {
+      const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number}}>("/api/x402/authorize", {
         serviceId: firstService.id,
         payer: address,
         requestHash,
         units: 1
       });
+      let txHash: string | null = null;
+      if (firstService.chainServiceId) {
+        setStatus(`Settling ${firstService.name} on Arc...`);
+        const tx = await settleX402Request({
+          chainServiceId: firstService.chainServiceId,
+          requestHash: requestHash as `0x${string}`,
+          payer: address,
+          units: 1,
+          amountUsdc: String(result.settlement.amountUsdc)
+        });
+        txHash = tx.settleHash;
+      }
+      await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash});
       await snapshot.refetch();
-      setStatus(`x402 authorization ${result.authorizationId} ${result.status} for ${shortAddress(address)}`);
+      setStatus(
+        txHash
+          ? `x402 payment settled for ${shortAddress(address)}: ${txHash}`
+          : `Demo payment recorded for ${firstService.name}. Publish the service on-chain to enable wallet settlement.`
+      );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "x402 authorization failed");
+      setStatus(error instanceof Error ? error.message : "x402 payment failed");
     }
   }
 
@@ -44,9 +62,12 @@ export default function PaymentsPage() {
           kicker="Facilitator receipts"
           title="x402 USDC payment activity"
           description="Track authorizations, settlements, and policy-blocked requests."
-          action={<button onClick={authorizePayment} className="action-button" disabled={!isConnected}>Authorize demo payment</button>}
+          action={<button onClick={runDemoPayment} className="action-button" disabled={!isConnected}>Run demo payment</button>}
         />
       </div>
+      <p className="mb-5 rounded-md border border-white/[0.08] bg-white/[0.035] p-3 text-sm leading-6 text-slate-300">
+        Payments are created when a buyer pays for a marketplace API. Publish an API first, then use Marketplace purchase or this demo button to create a receipt.
+      </p>
       {status ? <p className="mb-5 break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-sm">

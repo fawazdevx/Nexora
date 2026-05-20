@@ -1,4 +1,4 @@
-import {createPublicClient, createWalletClient, custom, http, parseUnits, type Address, type Hash} from "viem";
+import {createPublicClient, createWalletClient, custom, formatUnits, http, parseUnits, type Address, type Hash} from "viem";
 import {arcTestnet} from "@/lib/arc";
 
 const arcChain = {
@@ -111,8 +111,74 @@ export const saveEarnVaultAbi = [
     stateMutability: "nonpayable",
     inputs: [{name: "shares", type: "uint256"}],
     outputs: [{name: "assetsAfterFee", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{name: "account", type: "address"}],
+    outputs: [{name: "shares", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "previewWithdraw",
+    stateMutability: "view",
+    inputs: [{name: "shares", type: "uint256"}],
+    outputs: [
+      {name: "assets", type: "uint256"},
+      {name: "fee", type: "uint256"}
+    ]
+  },
+  {
+    type: "function",
+    name: "previewDeposit",
+    stateMutability: "view",
+    inputs: [{name: "assets", type: "uint256"}],
+    outputs: [{name: "shares", type: "uint256"}]
+  },
+  {
+    type: "event",
+    name: "Deposited",
+    inputs: [
+      {name: "user", type: "address", indexed: true},
+      {name: "assets", type: "uint256", indexed: false},
+      {name: "shares", type: "uint256", indexed: false}
+    ]
+  },
+  {
+    type: "event",
+    name: "Withdrawn",
+    inputs: [
+      {name: "user", type: "address", indexed: true},
+      {name: "assets", type: "uint256", indexed: false},
+      {name: "fee", type: "uint256", indexed: false},
+      {name: "shares", type: "uint256", indexed: false}
+    ]
+  },
+  {
+    type: "function",
+    name: "totalAssets",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{name: "assets", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "totalShares",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{name: "shares", type: "uint256"}]
   }
 ] as const;
+
+export const xylonet = {
+  router: "0x73742278c31a76dBb0D2587d03ef92E6E2141023",
+  vault: "0x240Eb85458CD41361bd8C3773253a1D78054f747",
+  usdcEurcPool: "0x3DF3966F5138143dce7a9cFDdC2c0310ce083BB1",
+  usdcUsycPool: "0x8296cC7477A9CD12cF632042fDDc2aB89151bb61",
+  eurc: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
+  usyc: "0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C"
+} as const;
 
 function requireAddress(value: string | undefined, label: string): Address {
   if (!value || !value.startsWith("0x")) {
@@ -251,7 +317,7 @@ export async function depositSaveEarn(amountUsdc: string): Promise<{approveHash:
   return {approveHash, depositHash};
 }
 
-export async function withdrawSaveEarn(sharesUsdc: string): Promise<Hash> {
+export async function withdrawSaveEarn(amountUsdc: string): Promise<Hash> {
   const client = await walletClient();
   const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
 
@@ -259,6 +325,89 @@ export async function withdrawSaveEarn(sharesUsdc: string): Promise<Hash> {
     address: vault,
     abi: saveEarnVaultAbi,
     functionName: "withdraw",
-    args: [parseUnits(sharesUsdc || "0", 6)]
+    args: [await sharesForWithdrawalAmount(amountUsdc)]
   });
+}
+
+export async function readSaveEarnPosition(account: string) {
+  const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
+  const client = publicClient();
+  const fromBlock = BigInt(Number(import.meta.env.VITE_SAVE_EARN_DEPLOY_BLOCK ?? 42_490_737));
+  const [shares, totalShares, totalAssets, depositLogs, withdrawLogs] = await Promise.all([
+    client.readContract({
+      address: vault,
+      abi: saveEarnVaultAbi,
+      functionName: "balanceOf",
+      args: [account as Address]
+    }),
+    client.readContract({
+      address: vault,
+      abi: saveEarnVaultAbi,
+      functionName: "totalShares"
+    }),
+    client.readContract({
+      address: vault,
+      abi: saveEarnVaultAbi,
+      functionName: "totalAssets"
+    }),
+    client.getContractEvents({
+      address: vault,
+      abi: saveEarnVaultAbi,
+      eventName: "Deposited",
+      args: {user: account as Address},
+      fromBlock
+    }),
+    client.getContractEvents({
+      address: vault,
+      abi: saveEarnVaultAbi,
+      eventName: "Withdrawn",
+      args: {user: account as Address},
+      fromBlock
+    })
+  ]);
+  const [assets, fee] = shares > 0n
+    ? await client.readContract({
+        address: vault,
+        abi: saveEarnVaultAbi,
+        functionName: "previewWithdraw",
+        args: [shares]
+      })
+    : [0n, 0n];
+  const depositedRaw = depositLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n), 0n);
+  const withdrawnRaw = withdrawLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n) + (log.args.fee ?? 0n), 0n);
+  const netDepositedRaw = depositedRaw > withdrawnRaw ? depositedRaw - withdrawnRaw : 0n;
+  const estimatedEarningsRaw = assets > netDepositedRaw ? assets - netDepositedRaw : 0n;
+
+  return {
+    sharesRaw: shares,
+    shares: formatUnits(shares, 6),
+    deposited: formatUnits(netDepositedRaw, 6),
+    currentAssets: formatUnits(assets, 6),
+    withdrawalFee: formatUnits(fee, 6),
+    withdrawableAssets: formatUnits(assets - fee, 6),
+    estimatedEarnings: formatUnits(estimatedEarningsRaw, 6),
+    totalAssets: formatUnits(totalAssets, 6),
+    totalShares: formatUnits(totalShares, 6)
+  };
+}
+
+async function sharesForWithdrawalAmount(amountUsdc: string) {
+  const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
+  const client = publicClient();
+  const assets = parseUnits(amountUsdc || "0", 6);
+  const [totalShares, totalAssets] = await Promise.all([
+    client.readContract({
+      address: vault,
+      abi: saveEarnVaultAbi,
+      functionName: "totalShares"
+    }),
+    client.readContract({
+      address: vault,
+      abi: saveEarnVaultAbi,
+      functionName: "totalAssets"
+    })
+  ]);
+
+  if (assets === 0n || totalAssets === 0n || totalShares === 0n) return assets;
+  return (assets * totalShares + totalAssets - 1n) / totalAssets;
 }

@@ -1,5 +1,5 @@
 import {useState} from "react";
-import {Activity, Bot, CircleDollarSign, Gauge, RadioTower, ShieldCheck, Sparkles} from "lucide-react";
+import {Activity, Bot, CircleDollarSign, Gauge, RadioTower, ShieldCheck, Sparkles, Store, WalletCards} from "lucide-react";
 import {useAccount} from "wagmi";
 import {MetricCard} from "@/components/MetricCard";
 import {ArcNameLabel} from "@/components/ArcNameLabel";
@@ -12,6 +12,14 @@ export default function CommandPage() {
   const {address, isConnected} = useAccount();
   const [status, setStatus] = useState("");
   const snapshot = useAppSnapshot();
+  const agents = snapshot.data?.agents ?? [];
+  const readyAgents = agents.filter((agent) => Boolean(agent.address)).length;
+  const pendingAgents = agents.length - readyAgents;
+  const services = snapshot.data?.services ?? [];
+  const payments = snapshot.data?.payments ?? [];
+  const latestPayment = payments[0];
+  const needsContracts = snapshot.data ? !snapshot.data.readiness.onchainConfigured : false;
+  const needsCircle = snapshot.data ? !snapshot.data.readiness.circleConfigured : false;
 
   async function createAgentWallet() {
     if (!isConnected || !address) {
@@ -53,15 +61,15 @@ export default function CommandPage() {
                 USDC native
               </span>
             </div>
-            <p className="section-kicker">Nexora command</p>
+            <p className="section-kicker">Operator command</p>
             <h2 className="mt-3 max-w-4xl text-3xl font-semibold leading-tight text-white md:text-5xl">
-              Programmable USDC rails for AI agents and DeFi earning.
+              Your workspace for agent wallets, policy, x402, and USDC automation.
             </h2>
             <p className="muted-copy mt-4 max-w-2xl">
               {isConnected ? (
-                <>Signed in as <b className="text-white"><ArcNameLabel address={address} fallback={shortAddress(address)} /></b>. Create an agent wallet, route USDC, and keep autonomous actions inside policy.</>
+                <>Signed in as <b className="text-white"><ArcNameLabel address={address} fallback={shortAddress(address)} /></b>. Start with an agent wallet, then add policies, services, and payments as each integration becomes ready.</>
               ) : (
-                "Connect your wallet to create an agent wallet, route USDC, and manage autonomous spending policies."
+                "Connect your wallet to create an agent wallet, manage policy, publish x402 services, and track readiness."
               )}
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
@@ -75,8 +83,8 @@ export default function CommandPage() {
             {status ? <p className="mt-4 break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
             <div className="mt-7 grid max-w-3xl gap-3 sm:grid-cols-3">
               {[
-                {label: "x402 rail", value: "Pay per request"},
-                {label: "Agent spend", value: "Policy capped"},
+                {label: "Agent wallets", value: `${readyAgents} ready / ${pendingAgents} pending`},
+                {label: "x402 services", value: String(services.length)},
                 {label: "Identity", value: isConnected ? <ArcNameLabel address={address} fallback={shortAddress(address)} /> : ".arc ready"}
               ].map(({label, value}) => (
                 <div key={label} className="surface px-4 py-3">
@@ -107,10 +115,14 @@ export default function CommandPage() {
             <div className="mt-5 rounded-lg border border-plasma/20 bg-plasma/10 p-4">
               <div className="flex items-center gap-2 text-sm font-medium text-white">
                 <Gauge size={16} className="text-plasma" />
-                Deployment readiness
+                Next setup step
               </div>
               <p className="mt-2 text-sm leading-6 text-slate-300/80">
-                Circle wallet creation needs the backend to be reachable and configured with production secrets.
+                {needsCircle
+                  ? "Add Circle credentials so created agents can receive real wallet addresses."
+                  : needsContracts
+                    ? "Add deployed contract addresses to enable on-chain policy and settlement."
+                    : "Core integrations are configured. Continue by testing policies and x402 payments."}
               </p>
             </div>
           </div>
@@ -128,9 +140,9 @@ export default function CommandPage() {
 
       <section className="grid gap-4 md:grid-cols-3">
         {[
-          {title: "Agent wallets", copy: "Create and review Circle-backed agent wallets.", href: "/agents", icon: Bot},
-          {title: "Marketplace", copy: "Publish services and test x402 payment flows.", href: "/marketplace", icon: CircleDollarSign},
-          {title: "Policy settings", copy: "Set spend caps and allowlists for autonomous actions.", href: "/settings/policies", icon: ShieldCheck}
+          {title: "Agent wallets", copy: pendingAgents > 0 ? `${pendingAgents} waiting for Circle wallet address.` : "Create and review Circle-backed agent wallets.", href: "/agents", icon: WalletCards},
+          {title: "Marketplace", copy: services.length > 0 ? `${services.length} service${services.length === 1 ? "" : "s"} available for x402 testing.` : "Publish services and test x402 payment flows.", href: "/marketplace", icon: Store},
+          {title: "Policy settings", copy: agents.length > 0 ? "Set spend caps and allowlists for your selected agent." : "Create an agent before saving policy.", href: "/settings/policies", icon: ShieldCheck}
         ].map((item) => {
           const Icon = item.icon;
           return (
@@ -143,6 +155,48 @@ export default function CommandPage() {
             </button>
           );
         })}
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="panel">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold text-white">Launch checklist</h3>
+            <span className="status-pill">MVP readiness</span>
+          </div>
+          <div className="grid gap-3">
+            {[
+              ["Connect wallet", isConnected],
+              ["Create agent", agents.length > 0],
+              ["Circle wallet address", readyAgents > 0],
+              ["Save agent policy", agents.some((agent) => agent.policy.contractAllowlist.length + agent.policy.recipientAllowlist.length > 0 || agent.policy.txHash)],
+              ["Publish or test x402 service", services.length > 0]
+            ].map(([label, complete]) => (
+              <div key={String(label)} className="surface flex items-center justify-between px-4 py-3 text-sm">
+                <span className="text-slate-300">{String(label)}</span>
+                <span className={complete ? "text-mint" : "text-slate-500"}>{complete ? "Done" : "Next"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold text-white">Recent activity</h3>
+            <button onClick={() => navigateTo("/payments")} className="secondary-button min-h-10 px-3 py-2 text-sm">Payments</button>
+          </div>
+          {latestPayment ? (
+            <div className="surface p-4">
+              <p className="font-medium text-white">{latestPayment.serviceName}</p>
+              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                <span className="text-slate-400">Amount <b className="text-white">${latestPayment.amountUsdc}</b></span>
+                <span className="text-slate-400">Status <b className="text-white">{latestPayment.status}</b></span>
+                <span className="text-slate-400">Request <b className="text-white">{shortAddress(latestPayment.txHash ?? latestPayment.requestHash)}</b></span>
+              </div>
+            </div>
+          ) : (
+            <p className="surface p-4 text-sm text-slate-400">No payment activity yet. Publish or test a marketplace service to create the first receipt.</p>
+          )}
+        </div>
       </section>
     </div>
   );

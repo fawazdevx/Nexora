@@ -154,7 +154,7 @@ FACILITATOR_PRIVATE_KEY=
 
 Without those secrets, contract-backed frontend writes still work where the user wallet signs them, but Circle wallet creation and server-side facilitator signing report as not configured through `/api/readiness` instead of silently failing.
 
-After deployment, add Xylonet/Synthra strategy adapters when their Arc testnet pool and receipt-token addresses are confirmed:
+After deployment, add the XyloNet strategy adapter using the Arc testnet vault and pool addresses:
 
 ```solidity
 ArcLendingUsdcStrategy xylonet = new ArcLendingUsdcStrategy(

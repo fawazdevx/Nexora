@@ -1,6 +1,6 @@
 import {config} from "./config.js";
 import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
-import {createAgentWallet, updateAgentPolicy} from "./circle/agent-wallets.js";
+import {createAgentWallet, refreshPendingCircleWallets, updateAgentPolicy} from "./circle/agent-wallets.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
 import {featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
@@ -38,7 +38,9 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
     }
 
     if (req.method === "GET" && path === "/api/app") {
-      return ok(await appSnapshot(optionalString(url.searchParams.get("operator"))));
+      const operator = optionalString(url.searchParams.get("operator"));
+      await refreshPendingCircleWallets(operator);
+      return ok(await appSnapshot(operator));
     }
 
     if (req.method === "POST" && path === "/api/auth/nonce") {

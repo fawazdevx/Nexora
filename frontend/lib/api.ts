@@ -11,26 +11,29 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
+  let response: Response;
   try {
-    const response = await fetch(buildApiUrl(path));
-    return parseResponse<T>(response);
+    response = await fetch(buildApiUrl(path));
   } catch {
     throw new Error(apiConnectionHint(path));
   }
+
+  return parseResponse<T>(response);
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  let response: Response;
   try {
-    const response = await fetch(buildApiUrl(path), {
+    response = await fetch(buildApiUrl(path), {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify(body)
     });
-
-    return parseResponse<T>(response);
   } catch {
     throw new Error(apiConnectionHint(path));
   }
+
+  return parseResponse<T>(response);
 }
 
 export type AppSnapshot = {

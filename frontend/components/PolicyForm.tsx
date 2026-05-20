@@ -94,6 +94,9 @@ export function PolicyForm() {
               </option>
             ))}
           </select>
+          {agents.length === 0 ? (
+            <span className="text-xs leading-5 text-slate-500">No agent is available yet. Create an agent wallet first; once Circle returns or starts creating the wallet, it will appear here.</span>
+          ) : null}
         </label>
         <div className="surface md:col-span-2 flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
           <span className="text-slate-400">Agent wallet</span>
@@ -110,10 +113,12 @@ export function PolicyForm() {
         <label className="grid gap-2 text-sm text-slate-300">
           Contract allowlist
           <textarea className="field min-h-24" value={contractAllowlist} onChange={(event) => setContractAllowlist(event.target.value)} placeholder="0x... one per line or comma separated" />
+          <span className="text-xs leading-5 text-slate-500">Contracts an autonomous agent may call for agent payments or service execution. Save/Earn routing is handled separately by Nexora and does not require users to enter vault contracts here.</span>
         </label>
         <label className="grid gap-2 text-sm text-slate-300">
           Recipient allowlist
           <textarea className="field min-h-24" value={recipientAllowlist} onChange={(event) => setRecipientAllowlist(event.target.value)} placeholder="0x... one per line or comma separated" />
+          <span className="text-xs leading-5 text-slate-500">Wallets the agent may send funds to, such as your treasury, your operator wallet, or approved service publishers.</span>
         </label>
       </div>
       <div className="mt-6 flex flex-wrap items-center gap-3">

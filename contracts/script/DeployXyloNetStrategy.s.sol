@@ -26,6 +26,7 @@ contract DeployXyloNetStrategy {
 
         strategy = address(new XyloNetUsdcVaultStrategy(ARC_TESTNET_USDC, XYLONET_ARC_TESTNET_VAULT, router));
         strategyId = NexoraYieldRouter(router).addStrategy(strategy, "XyloNet", uint16(expectedApyBps));
+        NexoraYieldRouter(router).activateStrategy(strategyId);
 
         vm.stopBroadcast();
     }

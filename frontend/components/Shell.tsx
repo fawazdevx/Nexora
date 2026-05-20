@@ -141,21 +141,21 @@ export function Shell({children}: {children: React.ReactNode}) {
             <div className="panel">
               <div className="flex items-center gap-2 text-base font-medium text-white">
                 <Sparkles size={18} className="text-orchid" />
-                Production track
+                Agent activity
               </div>
               <div className="mt-4 space-y-2 text-base leading-7 text-slate-300">
-                <p>Deploy proxy contracts, add addresses to env files, then connect Circle and x402 settlement keys.</p>
+                <p>Review wallets, policy limits, API purchases, and payment receipts from one workspace.</p>
               </div>
             </div>
 
             <div className="panel">
               <div className="flex items-center gap-2 text-base font-medium text-white">
                 <ShieldCheck size={18} className="text-mint" />
-                Deployment checklist
+                Controls
               </div>
               <div className="mt-4 space-y-2 text-base leading-7 text-slate-300">
-                <p>Set owner, treasury, and AI operator wallets.</p>
-                <p>Deploy contracts, then copy proxy addresses into frontend and backend env files.</p>
+                <p>Set spending caps and approved destinations before agents perform paid actions.</p>
+                <p>Keep Save/Earn deposits separate from agent payment policies.</p>
               </div>
             </div>
           </aside>

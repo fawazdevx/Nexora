@@ -8,8 +8,7 @@ interface IArcLendingPoolLike {
     function supply(address asset, uint256 amount, address onBehalfOf) external;
     function withdraw(address asset, uint256 amount, address to) external returns (uint256);
 }
-
-contract ArcLendingUsdcStrategy is IYieldStrategy {
+ is IYieldStrategy {
     IERC20 public immutable usdc;
     IERC20 public immutable receiptToken;
     IArcLendingPoolLike public immutable pool;

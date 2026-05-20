@@ -42,6 +42,9 @@ export default function AgentsPage() {
         description="Provision agent wallets, enforce spend rules, and monitor autonomous payment readiness."
         action={<button onClick={createAgentWallet} className="action-button" disabled={!isConnected}><Plus size={16} /> Create agent wallet</button>}
       />
+      <p className="rounded-md border border-white/[0.08] bg-white/[0.035] p-3 text-sm leading-6 text-slate-300">
+        Agent wallets may take a short moment to become ready. Nexora will keep checking for the wallet address automatically.
+      </p>
       {status ? <p className="break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -51,7 +54,13 @@ export default function AgentsPage() {
             <div className="mb-4 flex items-start justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-white">{agent.arcName ?? agent.address ?? shortAddress(agent.operatorAddress)}</h3>
-                <p className="text-sm text-slate-400">{agent.circleWalletStatus}</p>
+                <p className="text-sm text-slate-400">
+                  {agent.circleWalletStatus === "ready"
+                    ? "Circle wallet ready"
+                    : agent.circleWalletStatus === "circle_wallet_pending_address"
+                      ? "Circle accepted the request; address pending"
+                      : agent.circleWalletStatus}
+                </p>
               </div>
               <ShieldCheck className="text-mint" size={20} />
             </div>

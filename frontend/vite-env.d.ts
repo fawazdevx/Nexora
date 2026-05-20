@@ -10,6 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_X402_LEDGER_ADDRESS?: string;
   readonly VITE_REPUTATION_ADDRESS?: string;
   readonly VITE_SAVE_EARN_VAULT_ADDRESS?: string;
+  readonly VITE_SAVE_EARN_DEPLOY_BLOCK?: string;
   readonly VITE_USDC_ADDRESS?: string;
   readonly VITE_WC_PROJECT_ID?: string;
   readonly VITE_NEXORA_X_URL?: string;

@@ -28,11 +28,6 @@ export default function MarketplacePage() {
       setStatus("Connect your wallet before purchasing an x402 service.");
       return;
     }
-    if (!service.chainServiceId) {
-      setStatus("This service is indexed offchain only. Publish it on the x402 ledger before purchase.");
-      return;
-    }
-
     setStatus(`Authorizing x402 payment for ${service.name}...`);
     try {
       const requestHash = `0x${crypto.randomUUID().replaceAll("-", "").padEnd(64, "0")}` as `0x${string}`;
@@ -42,17 +37,25 @@ export default function MarketplacePage() {
         requestHash,
         units: 1
       });
-      setStatus(`Submitting USDC approval and x402 settlement for ${service.name}...`);
-      const tx = await settleX402Request({
-        chainServiceId: service.chainServiceId,
-        requestHash,
-        payer: address,
-        units: 1,
-        amountUsdc: String(result.settlement.amountUsdc)
-      });
-      await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash: tx.settleHash});
+      let txHash: string | null = null;
+      if (service.chainServiceId) {
+        setStatus(`Submitting USDC approval and x402 settlement for ${service.name}...`);
+        const tx = await settleX402Request({
+          chainServiceId: service.chainServiceId,
+          requestHash,
+          payer: address,
+          units: 1,
+          amountUsdc: String(result.settlement.amountUsdc)
+        });
+        txHash = tx.settleHash;
+      }
+      await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash});
       await snapshot.refetch();
-      setStatus(`Purchased ${service.name} for ${shortAddress(address)}. Settlement: ${tx.settleHash}`);
+      setStatus(
+        txHash
+          ? `Purchased ${service.name} for ${shortAddress(address)}. Settlement: ${txHash}`
+          : `Recorded test purchase for ${service.name}. Add the x402 ledger address to enable on-chain settlement.`
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Service purchase failed");
     }
@@ -100,10 +103,12 @@ export default function MarketplacePage() {
             </div>
             <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
               <span className="surface px-3 py-2">Price <b className="text-white">${service.pricePerUnitUsdc}</b></span>
-              <span className="surface px-3 py-2">Ledger <b className="text-white">{service.chainServiceId ?? "Pending"}</b></span>
+              <span className="surface px-3 py-2">Ledger <b className="text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
               <span className="surface px-3 py-2">Featured <b className="text-white">{service.featured ? "Yes" : "No"}</b></span>
             </div>
-            <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected}>Purchase per execution</button>
+            <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected}>
+              {service.chainServiceId ? "Purchase per execution" : "Test purchase"}
+            </button>
           </article>
         ))}
         {!snapshot.isLoading && (snapshot.data?.services.length ?? 0) === 0 ? (

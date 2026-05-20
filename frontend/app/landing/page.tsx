@@ -1,20 +1,17 @@
 import {
   ArrowRight,
   Bot,
-  Boxes,
   ChartNoAxesCombined,
   CircleDollarSign,
   DatabaseZap,
   FileText,
-  Gauge,
   Globe2,
   RadioTower,
   ShieldCheck,
   Sparkles,
   Store,
   UserRoundCheck,
-  WalletCards,
-  Zap
+  WalletCards
 } from "lucide-react";
 import {navigateTo} from "@/lib/router";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
@@ -49,17 +46,17 @@ export default function LandingPage() {
     [String(snapshot.data?.stats.agentWallets ?? 0), "Agent wallets"],
     [String(snapshot.data?.reputation.score ?? 0), "Reputation score"]
   ];
-  const totalBalance = snapshot.data?.stats.usdcSettled ?? 0;
-  const activeAgents = snapshot.data?.stats.agentWallets ?? 0;
-  const pendingPayments = snapshot.data?.payments.filter((payment) => payment.status === "authorized").length ?? 0;
-  const pendingAmount = snapshot.data?.payments
-    .filter((payment) => payment.status === "authorized")
-    .reduce((sum, payment) => sum + payment.amountUsdc, 0) ?? 0;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#05040b]">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(168,85,247,0.22),transparent_30rem),radial-gradient(circle_at_80%_10%,rgba(59,130,246,0.14),transparent_30rem),linear-gradient(180deg,#080611_0%,#05040b_48%,#030308_100%)]" />
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.024)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.024)_1px,transparent_1px)] bg-[size:78px_78px] opacity-35" />
+      <img
+        src="/hero_image.png"
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 h-full w-full object-cover opacity-46"
+      />
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(5,4,11,0.96)_0%,rgba(5,4,11,0.76)_42%,rgba(5,4,11,0.38)_100%),linear-gradient(180deg,rgba(5,4,11,0.18)_0%,rgba(5,4,11,0.72)_58%,#05040b_100%)]" />
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.026)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.026)_1px,transparent_1px)] bg-[size:78px_78px] opacity-30" />
 
       <header className="relative z-10 px-4 py-5 md:px-6">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
@@ -92,8 +89,8 @@ export default function LandingPage() {
       </header>
 
       <main className="relative z-10">
-        <section className="mx-auto grid max-w-[1500px] items-center gap-12 px-4 pb-10 pt-10 md:px-6 lg:min-h-[720px] lg:grid-cols-[0.88fr_1.12fr]">
-          <div>
+        <section className="mx-auto flex min-h-[calc(100vh-88px)] max-w-[1500px] items-center px-4 pb-16 pt-10 md:px-6">
+          <div className="max-w-3xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan">
               AI agent commerce. Programmable earnings. Autonomous payments.
             </p>
@@ -127,56 +124,15 @@ export default function LandingPage() {
                 </div>
               ))}
             </div>
-          </div>
 
-          <div className="relative min-h-[520px]">
-            <div className="absolute inset-x-0 bottom-0 h-48 rounded-[50%] bg-plasma/20 blur-3xl" />
-            <div className="absolute right-0 top-0 w-full max-w-[620px] rounded-xl border border-plasma/35 bg-[#090716]/90 p-4 shadow-[0_0_80px_rgba(168,85,247,0.26)] backdrop-blur-xl">
-              <div className="mb-4 flex items-center justify-between">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Agent wallet</p>
-                <span className="status-pill border-mint/20 bg-mint/10 text-mint">Active</span>
-              </div>
-              <div className="grid gap-4 lg:grid-cols-[1fr_0.76fr]">
-                <div className="space-y-4">
-                  <div className="surface p-5">
-                    <p className="text-sm text-slate-400">Total balance</p>
-                    <p className="mt-2 text-4xl font-semibold text-white">{totalBalance.toFixed(2)} <span className="text-base text-slate-400">USDC</span></p>
-                    <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/[0.06]">
-                      <div className="h-full w-[74%] rounded-full bg-gradient-to-r from-plasma to-cyan" />
-                    </div>
-                  </div>
-                  <div className="surface p-5">
-                    <div className="mb-4 flex items-center justify-between">
-                      <p className="text-sm font-medium text-white">Spending policy</p>
-                      <ShieldCheck size={18} className="text-mint" />
-                    </div>
-                    {[
-                      ["Agent wallets", String(activeAgents)],
-                      ["Published services", String(snapshot.data?.services.length ?? 0)],
-                      ["Settled payments", String(snapshot.data?.payments.filter((payment) => payment.status === "settled").length ?? 0)],
-                      ["Policy saves", String(snapshot.data?.stats.policySaves ?? 0)]
-                    ].map(([label, value]) => (
-                      <div key={label} className="flex items-center justify-between border-t border-white/[0.06] py-3 text-sm">
-                        <span className="text-slate-400">{label}</span>
-                        <b className="text-slate-100">{value}</b>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-4">
-                  <div className="surface p-5">
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">One-click earn</p>
-                    <p className="mt-4 text-4xl font-semibold text-white">{snapshot.data?.stats.earnRoutes ?? 0}</p>
-                    <p className="text-sm text-slate-400">Queued routes</p>
-                    <button onClick={() => navigateTo("/earn")} className="action-button mt-5 w-full">Open Earn</button>
-                  </div>
-                  <div className="surface p-5">
-                    <p className="text-sm text-slate-400">Today's earnings</p>
-                    <p className="mt-2 text-2xl font-semibold text-mint">${pendingAmount.toFixed(2)} USDC</p>
-                    <div className="mt-5 h-20 rounded-md bg-[linear-gradient(135deg,rgba(34,197,94,0.18),rgba(168,85,247,0.08))]" />
-                  </div>
-                </div>
-              </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <span className="status-pill border-mint/20 bg-mint/10 text-mint">
+                <ShieldCheck size={13} />
+                Policy guarded
+              </span>
+              <span className="status-pill border-white/[0.12] bg-black/25 text-slate-200">
+                {snapshot.data?.stats.agentWallets ?? 0} agent wallets monitored
+              </span>
             </div>
           </div>
         </section>
@@ -246,18 +202,20 @@ export default function LandingPage() {
               </aside>
               <div className="p-5">
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Overview</p>
-                <p className="mt-3 text-3xl font-semibold text-white">{totalBalance.toFixed(2)} <span className="text-sm text-slate-400">USDC</span></p>
+                <p className="mt-3 text-3xl font-semibold text-white">{(snapshot.data?.stats.usdcSettled ?? 0).toFixed(2)} <span className="text-sm text-slate-400">USDC</span></p>
                 <div className="mt-5 h-28 rounded-lg border border-white/[0.08] bg-[linear-gradient(135deg,rgba(168,85,247,0.16),rgba(6,182,212,0.05))]" />
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div className="surface p-4">
                     <p className="text-sm text-slate-400">Active agents</p>
-                    <p className="mt-1 text-2xl font-semibold text-white">{activeAgents}</p>
+                    <p className="mt-1 text-2xl font-semibold text-white">{snapshot.data?.stats.agentWallets ?? 0}</p>
                     <p className="mt-1 text-xs text-mint">All systems operational</p>
                   </div>
                   <div className="surface p-4">
                     <p className="text-sm text-slate-400">Pending payments</p>
-                    <p className="mt-1 text-2xl font-semibold text-white">{pendingPayments}</p>
-                    <p className="mt-1 text-xs text-slate-500">{pendingAmount.toFixed(2)} USDC total</p>
+                    <p className="mt-1 text-2xl font-semibold text-white">{snapshot.data?.payments.filter((payment) => payment.status === "authorized").length ?? 0}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {(snapshot.data?.payments.filter((payment) => payment.status === "authorized").reduce((sum, payment) => sum + payment.amountUsdc, 0) ?? 0).toFixed(2)} USDC total
+                    </p>
                   </div>
                 </div>
               </div>
@@ -286,10 +244,10 @@ export default function LandingPage() {
         <section id="docs" className="mx-auto max-w-[1500px] px-4 py-12 md:px-6">
           <div className="panel flex flex-col items-start justify-between gap-5 md:flex-row md:items-center">
             <div>
-              <p className="section-kicker">Ready for first deployment</p>
-              <h2 className="page-title">Deploy proxies, add addresses, and launch the console.</h2>
+              <p className="section-kicker">Start with Nexora</p>
+              <h2 className="page-title">Create an agent wallet and manage autonomous USDC workflows.</h2>
               <p className="muted-copy mt-3 max-w-2xl">
-                Nexora’s first deployment script creates implementations, deploys proxies, initializes modules, and wires policy, reputation, x402, router, and vault permissions.
+                Connect your wallet to create agent policies, publish or buy paid APIs, track payments, and save USDC through the Earn flow.
               </p>
             </div>
             <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button min-h-12 px-6">

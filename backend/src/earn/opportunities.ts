@@ -1,25 +1,16 @@
 export function listEarnOpportunities() {
-  const xylonetConfigured = Boolean(process.env.XYLONET_API_URL);
-  const synthraConfigured = Boolean(process.env.SYNTHRA_API_URL);
+  const xylonetVault = process.env.XYLONET_VAULT_ADDRESS ?? "0x240Eb85458CD41361bd8C3773253a1D78054f747";
 
   return [
     {
       id: "xylonet_best_yield",
-      title: "Xylonet USDC yield route",
+      title: "Nexora router: XyloNet USDC strategy",
       payoutAsset: "USDC",
-      automationEnabled: xylonetConfigured,
+      automationEnabled: Boolean(xylonetVault),
       risk: "medium",
       provider: "xylonet",
-      status: xylonetConfigured ? "available" : "requires_XYLONET_API_URL"
-    },
-    {
-      id: "synthra_best_yield",
-      title: "Synthra USDC yield route",
-      payoutAsset: "USDC",
-      automationEnabled: synthraConfigured,
-      risk: "medium",
-      provider: "synthra",
-      status: synthraConfigured ? "available" : "requires_SYNTHRA_API_URL"
+      status: "available",
+      contractAddress: xylonetVault
     },
     {
       id: "x402_service_execution",
