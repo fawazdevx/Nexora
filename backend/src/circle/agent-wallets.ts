@@ -1,4 +1,4 @@
-import {AccountType, Blockchain, initiateDeveloperControlledWalletsClient} from "@circle-fin/developer-controlled-wallets";
+import {Blockchain, initiateDeveloperControlledWalletsClient} from "@circle-fin/developer-controlled-wallets";
 import {config} from "../config.js";
 import {readStore, updateStore} from "../store.js";
 
@@ -32,7 +32,7 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
       idempotencyKey: crypto.randomUUID(),
       blockchains: [Blockchain.ArcTestnet],
       count: 1,
-      accountType: AccountType.Sca,
+      accountType: "SCA",
       metadata: [
         {
           name: `nexora-agent-${input.operatorAddress.slice(2, 10)}`,
