@@ -10,6 +10,7 @@ import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 export default function CommandPage() {
   const {address, isConnected} = useAccount();
+  const walletReady = Boolean(address);
   const [status, setStatus] = useState("");
   const snapshot = useAppSnapshot();
   const agents = snapshot.data?.agents ?? [];
@@ -22,7 +23,7 @@ export default function CommandPage() {
   const needsCircle = snapshot.data ? !snapshot.data.readiness.circleConfigured : false;
 
   async function createAgentWallet() {
-    if (!isConnected || !address) {
+    if (!walletReady || !address) {
       setStatus("Connect your wallet to activate an agent wallet.");
       return;
     }
@@ -73,9 +74,9 @@ export default function CommandPage() {
               )}
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <button onClick={createAgentWallet} className="action-button" disabled={!isConnected}>
+              <button onClick={createAgentWallet} className="action-button" disabled={!walletReady}>
                 <Bot size={16} />
-                Create agent wallet
+                {walletReady ? "Create agent wallet" : "Connect wallet first"}
               </button>
               <button onClick={() => navigateTo("/earn")} className="secondary-button"><Sparkles size={16} /> Earn routes</button>
               <button onClick={() => navigateTo("/settings/policies")} className="secondary-button"><ShieldCheck size={16} /> Policies</button>

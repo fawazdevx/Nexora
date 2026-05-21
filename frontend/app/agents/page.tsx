@@ -9,12 +9,13 @@ import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 export default function AgentsPage() {
   const {address, isConnected} = useAccount();
+  const walletReady = Boolean(address);
   const {arcName} = useArcName(address);
   const [status, setStatus] = useState("");
   const snapshot = useAppSnapshot();
 
   async function createAgentWallet() {
-    if (!isConnected || !address) {
+    if (!walletReady || !address) {
       setStatus("Connect your wallet before creating an agent wallet.");
       return;
     }
@@ -40,7 +41,7 @@ export default function AgentsPage() {
         kicker="Circle Agent Wallets"
         title="Agent wallet infrastructure"
         description="Provision agent wallets, enforce spend rules, and monitor autonomous payment readiness."
-        action={<button onClick={createAgentWallet} className="action-button" disabled={!isConnected}><Plus size={16} /> Create agent wallet</button>}
+        action={<button onClick={createAgentWallet} className="action-button" disabled={!walletReady}><Plus size={16} /> {walletReady ? "Create agent wallet" : "Connect wallet first"}</button>}
       />
       <p className="rounded-md border border-white/[0.08] bg-white/[0.035] p-3 text-sm leading-6 text-slate-300">
         Agent wallets may take a short moment to become ready. Nexora will keep checking for the wallet address automatically.
