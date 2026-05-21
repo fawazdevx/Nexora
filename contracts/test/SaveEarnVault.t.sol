@@ -124,7 +124,7 @@ contract SaveEarnVaultTest {
         assert(usdc.balanceOf(address(strategy)) == 1_000e6);
     }
 
-    function testWithdrawChargesPlatformFeeOnAssetsIncludingYield() external {
+    function testWithdrawChargesPlatformFeeOnlyOnProfit() external {
         setUp();
         usdc.mint(address(this), 1_000e6);
         usdc.approve(address(vault), 1_000e6);
@@ -133,8 +133,20 @@ contract SaveEarnVaultTest {
 
         vault.withdraw(1_000e6);
 
-        assert(usdc.balanceOf(treasury) == 11e6);
-        assert(usdc.balanceOf(address(this)) == 1_089e6);
+        assert(usdc.balanceOf(treasury) == 1e6);
+        assert(usdc.balanceOf(address(this)) == 1_099e6);
         assert(vault.totalShares() == 0);
+    }
+
+    function testWithdrawZeroFeeWhenNoProfit() external {
+        setUp();
+        usdc.mint(address(this), 1_000e6);
+        usdc.approve(address(vault), 1_000e6);
+        vault.deposit(1_000e6);
+
+        vault.withdraw(1_000e6);
+
+        assert(usdc.balanceOf(treasury) == 0);
+        assert(usdc.balanceOf(address(this)) == 1_000e6);
     }
 }

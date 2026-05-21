@@ -19,7 +19,7 @@ const forge = require('node-forge');
 const publicKeyString = `-----BEGIN PUBLIC KEY-----\nMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAyNiqj9RftFMMf0yR/35H\nw/RpZly4/zl0dOChCKOQJp/ZbIMW1XdlDo/AN8L8P5NlqIJOYJQV2guDnHGnGH97\ngw6ePu6kEdStq0b4CJy49VVtrHCXA7Kg3N+60DuXJMRWDTj3lJz6GWHnf06/4XaK\nt4ep0p0/mEM1faxlvmGwksjIrqBS6s72/J893Rb7W4bh7XxHE2H92oCHLRZTRwuA\n24rlWo2WNt8J456nwg3X8YuP4Wn2HcP5hZqNdZft2vWkeX1/PDnpyQuttPrK1r/Q\n1gKPyb8/4SOjk4K9Kdma1PhxsOoXOfO4n6Fe2pi7Sr9iQbNGnIM4WP+ldKqsuh6p\n7nFxisH2ErMJRkEzaxsD4ujk5FSuKBhpCM/V5NHvAgl9LBoCUIZxURLXtOpDtnUA\nwLPiLwfNtsuvlpZE26W1Af3872414mWxfES4Z7nrsRfWltBNQKbdHIkNwVh7K5BO\n9vFQhD1/XRio2FtDaNVteqz18s0DoVgPOCpZdklO0iRBaWnzala0ooZC/ATaSVb0\nNtHh8DwRxPlAO7SNR3ZpLmDHMJ0mtHej1Q8AWV1xx+cWW6xgG6Jj17536aKu8Ug1\nhcjwnF60xKQ4ljPJBYL9gw0PHChKmbqWd1ysgyH5eJynvfhwg/RcslYkiMNPoGNQ\nmydw36zueOJpBU9KQ9x+tEsCAwEAAQ==\n-----END PUBLIC KEY-----\n`
 
 // If you already have a hex encoded entity secret, you can paste it here. the length of the hex string should be 64.
-const hexEncodedEntitySecret = "1cb30fb5c39b8b99ee7029218898101eb8a199b2ce1f4b03f2c5d66cbb562968"
+const hexEncodedEntitySecret = "90ce48563009dafe7bf0aec3ba5461d3c7c32b5cda43f676ab4dfd5684bff2c4"
 
 // The following sample codes generate a distinct entity secret ciphertext with each execution
 function main() {

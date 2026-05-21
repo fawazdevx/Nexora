@@ -13,9 +13,11 @@ contract NexoraSaveEarnVault is NexoraUpgradeable {
     uint256 public totalShares;
 
     mapping(address => uint256) public balanceOf;
+    mapping(address => uint256) public principalOf;
 
     event Deposited(address indexed user, uint256 assets, uint256 shares);
     event Withdrawn(address indexed user, uint256 assets, uint256 fee, uint256 shares);
+    event PrincipalBackfilled(address indexed user, uint256 principal);
     event TreasuryUpdated(address indexed treasury);
     event WithdrawalFeeUpdated(uint16 withdrawalFeeBps);
     event YieldRouterUpdated(address indexed yieldRouter);
@@ -64,6 +66,14 @@ contract NexoraSaveEarnVault is NexoraUpgradeable {
         emit YieldRouterUpdated(yieldRouter_);
     }
 
+    function backfillPrincipal(address[] calldata users, uint256[] calldata principals) external onlyOwner {
+        require(users.length == principals.length, "LENGTH_MISMATCH");
+        for (uint256 i = 0; i < users.length; i++) {
+            principalOf[users[i]] = principals[i];
+            emit PrincipalBackfilled(users[i], principals[i]);
+        }
+    }
+
     function totalAssets() public view returns (uint256) {
         return yieldRouter.totalAssets();
     }
@@ -75,9 +85,17 @@ contract NexoraSaveEarnVault is NexoraUpgradeable {
     }
 
     function previewWithdraw(uint256 shares) public view returns (uint256 assets, uint256 fee) {
+        return previewWithdrawFor(msg.sender, shares);
+    }
+
+    function previewWithdrawFor(address user, uint256 shares) public view returns (uint256 assets, uint256 fee) {
         if (totalShares == 0) return (0, 0);
         assets = (totalAssets() * shares) / totalShares;
-        fee = (assets * withdrawalFeeBps) / 10_000;
+        uint256 userShares = balanceOf[user];
+        if (userShares == 0) return (assets, 0);
+        uint256 principalPortion = (principalOf[user] * shares) / userShares;
+        uint256 profit = assets > principalPortion ? assets - principalPortion : 0;
+        fee = (profit * withdrawalFeeBps) / 10_000;
     }
 
     function deposit(uint256 assets) external returns (uint256 shares) {
@@ -86,6 +104,7 @@ contract NexoraSaveEarnVault is NexoraUpgradeable {
         if (shares == 0) revert ZeroAmount();
 
         balanceOf[msg.sender] += shares;
+        principalOf[msg.sender] += assets;
         totalShares += shares;
 
         if (!usdc.transferFrom(msg.sender, address(this), assets)) revert TransferFailed();
@@ -99,12 +118,16 @@ contract NexoraSaveEarnVault is NexoraUpgradeable {
         if (shares == 0) revert ZeroAmount();
         if (balanceOf[msg.sender] < shares) revert InsufficientShares();
 
-        (uint256 assets, uint256 fee) = previewWithdraw(shares);
+        uint256 userShares = balanceOf[msg.sender];
+        (uint256 assets, uint256 fee) = previewWithdrawFor(msg.sender, shares);
+        uint256 principalPortion = (principalOf[msg.sender] * shares) / userShares;
         balanceOf[msg.sender] -= shares;
+        principalOf[msg.sender] -= principalPortion;
         totalShares -= shares;
 
         uint256 pulled = yieldRouter.withdrawTo(assets, address(this));
-        fee = (pulled * withdrawalFeeBps) / 10_000;
+        uint256 pulledProfit = pulled > principalPortion ? pulled - principalPortion : 0;
+        fee = (pulledProfit * withdrawalFeeBps) / 10_000;
         assetsAfterFee = pulled - fee;
 
         if (fee > 0 && !usdc.transfer(treasury, fee)) revert TransferFailed();

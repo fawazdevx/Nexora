@@ -131,6 +131,19 @@ export const saveEarnVaultAbi = [
   },
   {
     type: "function",
+    name: "previewWithdrawFor",
+    stateMutability: "view",
+    inputs: [
+      {name: "user", type: "address"},
+      {name: "shares", type: "uint256"}
+    ],
+    outputs: [
+      {name: "assets", type: "uint256"},
+      {name: "fee", type: "uint256"}
+    ]
+  },
+  {
+    type: "function",
     name: "previewDeposit",
     stateMutability: "view",
     inputs: [{name: "assets", type: "uint256"}],
@@ -355,8 +368,8 @@ export async function readSaveEarnPosition(account: string) {
     ? await client.readContract({
         address: vault,
         abi: saveEarnVaultAbi,
-        functionName: "previewWithdraw",
-        args: [shares]
+        functionName: "previewWithdrawFor",
+        args: [account as Address, shares]
       })
     : [0n, 0n];
 
