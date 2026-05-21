@@ -7,7 +7,7 @@ import {shortAddress} from "@/lib/arc";
 
 export function SaveEarnPanel() {
   const {address, isConnected} = useAccount();
-  const [amount, setAmount] = useState("250");
+  const [amount, setAmount] = useState("0");
   const [status, setStatus] = useState("");
   const position = useQuery({
     queryKey: ["save-earn-position", address],
@@ -16,10 +16,21 @@ export function SaveEarnPanel() {
     refetchInterval: 12_000
   });
   const positionData = position.data;
+  const amountIsPositive = Number(amount) > 0;
+  const metric = (value?: string, suffix = "") => {
+    if (!address) return "Connect wallet";
+    if (position.isLoading) return "Loading...";
+    if (position.isError) return "Unavailable";
+    return `${Number(value ?? 0).toFixed(2)}${suffix}`;
+  };
 
   async function deposit() {
     if (!isConnected || !address) {
       setStatus("Connect your wallet before routing USDC into Save/Earn.");
+      return;
+    }
+    if (!amountIsPositive) {
+      setStatus("Enter the USDC amount you want to save.");
       return;
     }
     setStatus("Approving USDC and routing deposit...");
@@ -35,6 +46,10 @@ export function SaveEarnPanel() {
   async function withdraw() {
     if (!isConnected || !address) {
       setStatus("Connect your wallet before withdrawing from Save/Earn.");
+      return;
+    }
+    if (!amountIsPositive) {
+      setStatus("Enter the USDC amount you want to withdraw.");
       return;
     }
     setStatus("Withdrawing from Save/Earn...");
@@ -79,12 +94,12 @@ export function SaveEarnPanel() {
                   <Gauge size={14} />
                   Current value
                 </p>
-                <p className="mt-3 text-4xl font-semibold text-white">{Number(positionData?.currentAssets ?? 0).toFixed(2)}</p>
+                <p className="mt-3 text-4xl font-semibold text-white">{metric(positionData?.currentAssets)}</p>
                 <p className="mt-1 text-sm text-slate-400">USDC in vault</p>
               </div>
               <div className="surface p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Estimated earnings</p>
-                <p className="mt-3 text-xl font-semibold text-white">{Number(positionData?.estimatedEarnings ?? 0).toFixed(2)} USDC</p>
+                <p className="mt-3 text-xl font-semibold text-white">{metric(positionData?.estimatedEarnings, " USDC")}</p>
               </div>
             </div>
           </div>
@@ -95,7 +110,7 @@ export function SaveEarnPanel() {
             <label className="text-sm text-slate-300">
               USDC amount
               <div className="mt-2 flex overflow-hidden rounded-lg border border-white/[0.1] bg-black/25">
-                <input value={amount} onChange={(event) => setAmount(event.target.value)} className="min-w-0 flex-1 bg-transparent px-4 py-4 text-2xl font-semibold text-white outline-none" />
+                <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" className="min-w-0 flex-1 bg-transparent px-4 py-4 text-2xl font-semibold text-white outline-none" />
                 <span className="border-l border-white/[0.1] px-4 py-5 text-sm text-slate-400">USDC</span>
               </div>
             </label>
@@ -103,18 +118,23 @@ export function SaveEarnPanel() {
               Operator wallet: <span className="font-mono text-white">{address ? shortAddress(address) : "Connect wallet"}</span>
             </div>
             <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-3">
-              <div className="surface px-3 py-2">Deposited <b className="text-white">{Number(positionData?.deposited ?? 0).toFixed(2)} USDC</b></div>
-              <div className="surface px-3 py-2">Shares <b className="text-white">{Number(positionData?.shares ?? 0).toFixed(2)}</b></div>
-              <div className="surface px-3 py-2">Withdrawable <b className="text-white">{Number(positionData?.withdrawableAssets ?? 0).toFixed(2)} USDC</b></div>
-              <div className="surface px-3 py-2">Earned <b className="text-white">{Number(positionData?.estimatedEarnings ?? 0).toFixed(2)} USDC</b></div>
-              <div className="surface px-3 py-2">Fee <b className="text-white">{Number(positionData?.withdrawalFee ?? 0).toFixed(2)} USDC</b></div>
+              <div className="surface px-3 py-2">Deposited <b className="text-white">{metric(positionData?.deposited, " USDC")}</b></div>
+              <div className="surface px-3 py-2">Shares <b className="text-white">{metric(positionData?.shares)}</b></div>
+              <div className="surface px-3 py-2">Withdrawable <b className="text-white">{metric(positionData?.withdrawableAssets, " USDC")}</b></div>
+              <div className="surface px-3 py-2">Earned <b className="text-white">{metric(positionData?.estimatedEarnings, " USDC")}</b></div>
+              <div className="surface px-3 py-2">Fee <b className="text-white">{metric(positionData?.withdrawalFee, " USDC")}</b></div>
             </div>
+            {position.isError ? (
+              <p className="mt-3 rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">
+                Save/Earn position could not be read from Arc. Refresh or check the connected wallet and RPC connection.
+              </p>
+            ) : null}
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <button onClick={deposit} className="action-button min-h-12" disabled={!isConnected}>
+              <button onClick={deposit} className="action-button min-h-12" disabled={!isConnected || !amountIsPositive}>
                 <ArrowDownToLine size={17} />
                 Save
               </button>
-              <button onClick={withdraw} className="danger-button min-h-12" disabled={!isConnected}>
+              <button onClick={withdraw} className="danger-button min-h-12" disabled={!isConnected || !amountIsPositive}>
                 <ArrowUpFromLine size={17} />
                 Withdraw selected USDC
               </button>

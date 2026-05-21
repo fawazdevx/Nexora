@@ -18,32 +18,42 @@ type AgentPolicyInput = {
 
 export async function createAgentWallet(input: CreateAgentWalletInput) {
   if (config.circle.apiKey) {
-    const client = circleClient();
-    const walletSet = await client.createWalletSet({
-      idempotencyKey: crypto.randomUUID(),
-      name: `nexora-${input.operatorAddress.slice(2, 10)}`
-    });
-    const walletSetId = walletSet.data?.walletSet?.id;
-    if (!walletSetId) {
-      throw new Error(circleErrorMessage("Circle wallet set creation failed", walletSet));
+    let walletSet;
+    let wallets;
+    let address: string | null;
+    let walletId: string | null;
+    let status: string;
+
+    try {
+      const client = circleClient();
+      walletSet = await client.createWalletSet({
+        idempotencyKey: crypto.randomUUID(),
+        name: `nexora-${input.operatorAddress.slice(2, 10)}`
+      });
+      const walletSetId = walletSet.data?.walletSet?.id;
+      if (!walletSetId) {
+        throw new Error(circleErrorMessage("Circle wallet set creation failed", walletSet));
+      }
+      wallets = await client.createWallets({
+        walletSetId,
+        idempotencyKey: crypto.randomUUID(),
+        blockchains: [Blockchain.ArcTestnet],
+        count: 1,
+        accountType: "SCA",
+        metadata: [
+          {
+            name: `nexora-agent-${input.operatorAddress.slice(2, 10)}`,
+            refId: input.operatorAddress
+          }
+        ]
+      });
+      const wallet = wallets.data?.wallets?.[0] ?? null;
+      address = wallet?.address ?? null;
+      walletId = wallet?.id ?? null;
+      status = address ? "ready" : walletId ? "circle_wallet_pending_address" : "circle_request_submitted";
+    } catch (error) {
+      throw new Error(circleFriendlyError(error));
     }
-    const wallets = await client.createWallets({
-      walletSetId,
-      idempotencyKey: crypto.randomUUID(),
-      blockchains: [Blockchain.ArcTestnet],
-      count: 1,
-      accountType: "SCA",
-      metadata: [
-        {
-          name: `nexora-agent-${input.operatorAddress.slice(2, 10)}`,
-          refId: input.operatorAddress
-        }
-      ]
-    });
-    const wallet = wallets.data?.wallets?.[0] ?? null;
-    const address = wallet?.address ?? null;
-    const walletId = wallet?.id ?? null;
-    const status = address ? "ready" : walletId ? "circle_wallet_pending_address" : "circle_request_submitted";
 
     return updateStore((store) => {
       const record = {
@@ -172,6 +182,14 @@ function circleErrorMessage(prefix: string, input: unknown) {
         ? data.code
         : "unknown Circle error";
   return `${prefix}: ${record.status ?? "unknown_status"} ${message}`;
+}
+
+function circleFriendlyError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/entity secret is invalid/i.test(message)) {
+    return "Circle entity secret is invalid. Use the exact 32-byte entity secret that was registered for this Circle API key, then redeploy the backend.";
+  }
+  return message;
 }
 
 function circleClient() {

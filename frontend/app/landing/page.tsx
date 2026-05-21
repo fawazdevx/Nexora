@@ -49,10 +49,13 @@ export default function LandingPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#05040b]">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_78%_22%,rgba(6,182,212,0.22),transparent_34%),radial-gradient(circle_at_18%_18%,rgba(217,70,239,0.18),transparent_30%),linear-gradient(135deg,#05040b_0%,#10071b_46%,#041018_100%)]" />
       <img
         src="/hero_image.png"
         alt=""
         aria-hidden="true"
+        fetchPriority="high"
+        decoding="async"
         className="pointer-events-none fixed inset-0 h-full w-full object-cover opacity-46"
       />
       <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(5,4,11,0.96)_0%,rgba(5,4,11,0.76)_42%,rgba(5,4,11,0.38)_100%),linear-gradient(180deg,rgba(5,4,11,0.18)_0%,rgba(5,4,11,0.72)_58%,#05040b_100%)]" />

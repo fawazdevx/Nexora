@@ -333,7 +333,7 @@ export async function readSaveEarnPosition(account: string) {
   const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
   const client = publicClient();
   const fromBlock = BigInt(Number(import.meta.env.VITE_SAVE_EARN_DEPLOY_BLOCK ?? 42_490_737));
-  const [shares, totalShares, totalAssets, depositLogs, withdrawLogs] = await Promise.all([
+  const [shares, totalShares, totalAssets] = await Promise.all([
     client.readContract({
       address: vault,
       abi: saveEarnVaultAbi,
@@ -349,7 +349,41 @@ export async function readSaveEarnPosition(account: string) {
       address: vault,
       abi: saveEarnVaultAbi,
       functionName: "totalAssets"
-    }),
+    })
+  ]);
+  const [assets, fee] = shares > 0n
+    ? await client.readContract({
+        address: vault,
+        abi: saveEarnVaultAbi,
+        functionName: "previewWithdraw",
+        args: [shares]
+      })
+    : [0n, 0n];
+
+  const eventTotals = await readSaveEarnEventTotals(account, vault, fromBlock).catch(() => null);
+  const netDepositedRaw = eventTotals
+    ? eventTotals.deposited > eventTotals.withdrawn
+      ? eventTotals.deposited - eventTotals.withdrawn
+      : 0n
+    : shares;
+  const estimatedEarningsRaw = assets > netDepositedRaw ? assets - netDepositedRaw : 0n;
+
+  return {
+    sharesRaw: shares,
+    shares: formatUnits(shares, 6),
+    deposited: formatUnits(netDepositedRaw, 6),
+    currentAssets: formatUnits(assets, 6),
+    withdrawalFee: formatUnits(fee, 6),
+    withdrawableAssets: formatUnits(assets - fee, 6),
+    estimatedEarnings: formatUnits(estimatedEarningsRaw, 6),
+    totalAssets: formatUnits(totalAssets, 6),
+    totalShares: formatUnits(totalShares, 6)
+  };
+}
+
+async function readSaveEarnEventTotals(account: string, vault: Address, fromBlock: bigint) {
+  const client = publicClient();
+  const [depositLogs, withdrawLogs] = await Promise.all([
     client.getContractEvents({
       address: vault,
       abi: saveEarnVaultAbi,
@@ -365,29 +399,10 @@ export async function readSaveEarnPosition(account: string) {
       fromBlock
     })
   ]);
-  const [assets, fee] = shares > 0n
-    ? await client.readContract({
-        address: vault,
-        abi: saveEarnVaultAbi,
-        functionName: "previewWithdraw",
-        args: [shares]
-      })
-    : [0n, 0n];
-  const depositedRaw = depositLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n), 0n);
-  const withdrawnRaw = withdrawLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n) + (log.args.fee ?? 0n), 0n);
-  const netDepositedRaw = depositedRaw > withdrawnRaw ? depositedRaw - withdrawnRaw : 0n;
-  const estimatedEarningsRaw = assets > netDepositedRaw ? assets - netDepositedRaw : 0n;
 
   return {
-    sharesRaw: shares,
-    shares: formatUnits(shares, 6),
-    deposited: formatUnits(netDepositedRaw, 6),
-    currentAssets: formatUnits(assets, 6),
-    withdrawalFee: formatUnits(fee, 6),
-    withdrawableAssets: formatUnits(assets - fee, 6),
-    estimatedEarnings: formatUnits(estimatedEarningsRaw, 6),
-    totalAssets: formatUnits(totalAssets, 6),
-    totalShares: formatUnits(totalShares, 6)
+    deposited: depositLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n), 0n),
+    withdrawn: withdrawLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n) + (log.args.fee ?? 0n), 0n)
   };
 }
 
