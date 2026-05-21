@@ -1,9 +1,17 @@
 const API_URL = import.meta.env.VITE_NEXORA_API_URL ?? "";
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const data = await response.json().catch(() => ({}));
+  const raw = await response.text().catch(() => "");
+  const data = raw ? tryParseJson(raw) : {};
   if (!response.ok) {
-    const message = typeof data?.error === "string" ? data.error : `API request failed: ${response.status}`;
+    const message =
+      typeof data?.error === "string"
+        ? data.error
+        : typeof data?.message === "string"
+          ? data.message
+          : raw.trim().length > 0
+            ? raw.trim()
+            : `API request failed: ${response.status}`;
     throw new Error(message);
   }
 
@@ -113,4 +121,12 @@ function buildApiUrl(path: string) {
   const base = API_URL.trim().replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${base}${normalizedPath}`;
+}
+
+function tryParseJson(raw: string) {
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }

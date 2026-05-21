@@ -8,6 +8,7 @@ export type AgentWalletRecord = {
   arcName: string | null;
   address: string | null;
   circleWalletStatus: string;
+  circleWalletSetId?: string | null;
   circleWalletId?: string | null;
   createdAt: string;
   policy: {
@@ -114,7 +115,8 @@ export async function appSnapshot(operatorAddress?: string) {
   const payments = operator
     ? store.payments.filter((payment) => payment.payer.toLowerCase() === operator || payment.publisherAddress.toLowerCase() === operator)
     : store.payments;
-  const agents = operator ? store.agents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : store.agents;
+  const scopedAgents = operator ? store.agents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : store.agents;
+  const agents = scopedAgents.map(sanitizeAgent);
   const subscriptions = operator
     ? store.subscriptions.filter((subscription) => subscription.operatorAddress.toLowerCase() === operator)
     : store.subscriptions;
@@ -149,6 +151,20 @@ export async function appSnapshot(operatorAddress?: string) {
       onchainConfigured: Boolean(config.contracts.usdc && config.contracts.x402Ledger && config.contracts.policyRegistry),
       circleConfigured: Boolean(config.circle.apiKey)
     }
+  };
+}
+
+function sanitizeAgent(agent: AgentWalletRecord) {
+  return {
+    id: agent.id,
+    operatorAddress: agent.operatorAddress,
+    arcName: agent.arcName,
+    address: agent.address,
+    circleWalletStatus: agent.circleWalletStatus,
+    circleWalletSetId: agent.circleWalletSetId ?? null,
+    circleWalletId: agent.circleWalletId ?? null,
+    createdAt: agent.createdAt,
+    policy: agent.policy
   };
 }
 

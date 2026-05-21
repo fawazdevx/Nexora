@@ -20,6 +20,7 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
   if (config.circle.apiKey) {
     let walletSet;
     let wallets;
+    let walletSetId: string | null = null;
     let address: string | null;
     let walletId: string | null;
     let status: string;
@@ -30,7 +31,7 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
         idempotencyKey: crypto.randomUUID(),
         name: `nexora-${input.operatorAddress.slice(2, 10)}`
       });
-      const walletSetId = walletSet.data?.walletSet?.id;
+      walletSetId = walletSet.data?.walletSet?.id ?? null;
       if (!walletSetId) {
         throw new Error(circleErrorMessage("Circle wallet set creation failed", walletSet));
       }
@@ -62,12 +63,9 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
         arcName: input.arcName ?? null,
         address,
         circleWalletStatus: status,
+        circleWalletSetId: walletSetId,
         circleWalletId: walletId,
         createdAt: new Date().toISOString(),
-        circle: {
-          walletSet,
-          wallet: wallets
-        },
         policy: {
           dailyLimitUsdc: input.dailyLimitUsdc,
           transactionCapUsdc: input.transactionCapUsdc,
@@ -188,6 +186,9 @@ function circleFriendlyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (/entity secret is invalid/i.test(message)) {
     return "Circle entity secret is invalid. Use the exact 32-byte entity secret that was registered for this Circle API key, then redeploy the backend.";
+  }
+  if (/already been set/i.test(message)) {
+    return "Circle entity secret is already registered for this Circle project. Update the backend env to use the raw secret that matches the registered Circle API key.";
   }
   return message;
 }
