@@ -8,7 +8,7 @@ import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
-export default function CommandPage() {
+export default function HomePage() {
   const {address, isConnected} = useAccount();
   const walletReady = Boolean(address);
   const [status, setStatus] = useState("");
@@ -62,15 +62,15 @@ export default function CommandPage() {
                 USDC native
               </span>
             </div>
-            <p className="section-kicker">Operator command</p>
+            <p className="section-kicker">Nexora home</p>
             <h2 className="mt-3 max-w-4xl text-3xl font-semibold leading-tight text-white md:text-5xl">
-              Your workspace for agent wallets, policy, x402, and USDC automation.
+              Start with an agent wallet, then control what it can spend.
             </h2>
             <p className="muted-copy mt-4 max-w-2xl">
               {isConnected ? (
-                <>Signed in as <b className="text-white"><ArcNameLabel address={address} fallback={shortAddress(address)} /></b>. Start with an agent wallet, then add policies, services, and payments as each integration becomes ready.</>
+                <>Signed in as <b className="text-white"><ArcNameLabel address={address} fallback={shortAddress(address)} /></b>. Create or review your agent wallet, set spending rules, and use Earn, Market, and Payments from one place.</>
               ) : (
-                "Connect your wallet to create an agent wallet, manage policy, publish x402 services, and track readiness."
+                "Connect your wallet to create an agent wallet, save USDC, publish paid APIs, and track payments."
               )}
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
@@ -78,14 +78,14 @@ export default function CommandPage() {
                 <Bot size={16} />
                 {walletReady ? "Create agent wallet" : "Connect wallet first"}
               </button>
-              <button onClick={() => navigateTo("/earn")} className="secondary-button"><Sparkles size={16} /> Earn routes</button>
-              <button onClick={() => navigateTo("/settings/policies")} className="secondary-button"><ShieldCheck size={16} /> Policies</button>
+              <button onClick={() => navigateTo("/earn")} className="secondary-button"><Sparkles size={16} /> Save and earn</button>
+              <button onClick={() => navigateTo("/settings/policies")} className="secondary-button"><ShieldCheck size={16} /> Spending rules</button>
             </div>
             {status ? <p className="mt-4 break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
             <div className="mt-7 grid max-w-3xl gap-3 sm:grid-cols-3">
               {[
                 {label: "Agent wallets", value: `${readyAgents} ready / ${pendingAgents} pending`},
-                {label: "x402 services", value: String(services.length)},
+                {label: "Market services", value: String(services.length)},
                 {label: "Identity", value: isConnected ? <ArcNameLabel address={address} fallback={shortAddress(address)} /> : ".arc ready"}
               ].map(({label, value}) => (
                 <div key={label} className="surface px-4 py-3">
@@ -103,8 +103,8 @@ export default function CommandPage() {
             <div className="space-y-3">
               {[
                 ["API", snapshot.data?.readiness.apiConfigured ? "Online" : "Offline"],
-                ["Contracts", snapshot.data?.readiness.onchainConfigured ? "Configured" : "Env needed"],
-                ["Circle", snapshot.data?.readiness.circleConfigured ? "Configured" : "API key needed"],
+                ["Contracts", snapshot.data?.readiness.onchainConfigured ? "Ready" : "Setup needed"],
+                ["Circle", snapshot.data?.readiness.circleConfigured ? "Ready" : "Setup needed"],
                 ["Wallet", isConnected ? "Connected" : "Connect wallet"]
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between rounded-md border border-white/[0.08] bg-white/[0.045] px-3 py-3 text-sm">
@@ -116,14 +116,16 @@ export default function CommandPage() {
             <div className="mt-5 rounded-lg border border-plasma/20 bg-plasma/10 p-4">
               <div className="flex items-center gap-2 text-sm font-medium text-white">
                 <Gauge size={16} className="text-plasma" />
-                Next setup step
+                Next step
               </div>
               <p className="mt-2 text-sm leading-6 text-slate-300/80">
                 {needsCircle
-                  ? "Add Circle credentials so created agents can receive real wallet addresses."
+                  ? "Agent wallet creation needs Circle credentials before it can return a wallet address."
                   : needsContracts
-                    ? "Add deployed contract addresses to enable on-chain policy and settlement."
-                    : "Core integrations are configured. Continue by testing policies and x402 payments."}
+                    ? "Some on-chain features still need contract addresses before they can submit transactions."
+                    : agents.length === 0
+                      ? "Create your first agent wallet to begin."
+                      : "Set spending rules, then try Save/Earn or Market payments."}
               </p>
             </div>
           </div>
@@ -134,16 +136,16 @@ export default function CommandPage() {
         {[
           {label: "Agent wallets", value: String(snapshot.data?.stats.agentWallets ?? 0), delta: "connected operator"},
           {label: "USDC settled", value: `$${(snapshot.data?.stats.usdcSettled ?? 0).toFixed(2)}`, delta: "x402 volume"},
-          {label: "Earn routes", value: String(snapshot.data?.stats.earnRoutes ?? 0), delta: "queued actions"},
-          {label: "Policy saves", value: String(snapshot.data?.stats.policySaves ?? 0), delta: "onchain submissions"}
+          {label: "Earn actions", value: String(snapshot.data?.stats.earnRoutes ?? 0), delta: "save activity"},
+          {label: "Rules saved", value: String(snapshot.data?.stats.policySaves ?? 0), delta: "agent controls"}
         ].map((stat) => <MetricCard key={stat.label} {...stat} />)}
       </section>
 
       <section className="grid gap-4 md:grid-cols-3">
         {[
           {title: "Agent wallets", copy: pendingAgents > 0 ? `${pendingAgents} waiting for Circle wallet address.` : "Create and review Circle-backed agent wallets.", href: "/agents", icon: WalletCards},
-          {title: "Marketplace", copy: services.length > 0 ? `${services.length} service${services.length === 1 ? "" : "s"} available for x402 testing.` : "Publish services and test x402 payment flows.", href: "/marketplace", icon: Store},
-          {title: "Policy settings", copy: agents.length > 0 ? "Set spend caps and allowlists for your selected agent." : "Create an agent before saving policy.", href: "/settings/policies", icon: ShieldCheck}
+          {title: "Market", copy: services.length > 0 ? `${services.length} service${services.length === 1 ? "" : "s"} available.` : "Publish paid APIs or test service payments.", href: "/marketplace", icon: Store},
+          {title: "Spending rules", copy: agents.length > 0 ? "Set limits and approved destinations for your agent." : "Create an agent before saving rules.", href: "/settings/policies", icon: ShieldCheck}
         ].map((item) => {
           const Icon = item.icon;
           return (
@@ -161,16 +163,16 @@ export default function CommandPage() {
       <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="panel">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-white">Launch checklist</h3>
-            <span className="status-pill">MVP readiness</span>
+            <h3 className="text-lg font-semibold text-white">Getting started</h3>
+            <span className="status-pill">Setup</span>
           </div>
           <div className="grid gap-3">
             {[
               ["Connect wallet", isConnected],
               ["Create agent", agents.length > 0],
               ["Circle wallet address", readyAgents > 0],
-              ["Save agent policy", agents.some((agent) => agent.policy.contractAllowlist.length + agent.policy.recipientAllowlist.length > 0 || agent.policy.txHash)],
-              ["Publish or test x402 service", services.length > 0]
+              ["Save spending rules", agents.some((agent) => agent.policy.contractAllowlist.length + agent.policy.recipientAllowlist.length > 0 || agent.policy.txHash)],
+              ["Publish or test a service", services.length > 0]
             ].map(([label, complete]) => (
               <div key={String(label)} className="surface flex items-center justify-between px-4 py-3 text-sm">
                 <span className="text-slate-300">{String(label)}</span>

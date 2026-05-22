@@ -1,5 +1,7 @@
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
+import {createConnection, type Socket} from "node:net";
+import {connect as connectTls, type TLSSocket} from "node:tls";
 import {config} from "./config.js";
 
 export type AgentWalletRecord = {
@@ -75,25 +77,27 @@ type StoreShape = {
   subscriptions: SubscriptionRecord[];
 };
 
-const emptyStore = (): StoreShape => ({
-  agents: [],
-  services: [],
-  payments: [],
-  earnActivations: [],
-  subscriptions: []
-});
-
+const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
 const writableStorePath = process.env.VERCEL || process.env.NETLIFY ? "/tmp/nexora-store.json" : ".nexora-data/store.json";
 const storePath = resolve(process.env.NEXORA_STORE_PATH ?? writableStorePath);
+
 let cache: StoreShape | null = null;
 let writeQueue = Promise.resolve();
 
 export async function readStore() {
   if (cache) return cache;
 
+  if (hasRedis()) {
+    const loaded = await readRedisStore();
+    if (loaded) {
+      cache = loaded;
+      return cache;
+    }
+  }
+
   try {
     const raw = await readFile(storePath, "utf8");
-    cache = {...emptyStore(), ...JSON.parse(raw)} as StoreShape;
+    cache = normalizeStore(JSON.parse(raw));
   } catch {
     cache = emptyStore();
     await persist();
@@ -169,10 +173,136 @@ function sanitizeAgent(agent: AgentWalletRecord) {
 }
 
 async function persist() {
+  if (hasRedis()) {
+    await persistRedisStore();
+    return;
+  }
+
   writeQueue = writeQueue.then(async () => {
     if (!cache) return;
     await mkdir(dirname(storePath), {recursive: true});
     await writeFile(storePath, JSON.stringify(cache, null, 2));
   });
   await writeQueue;
+}
+
+function emptyStore(): StoreShape {
+  return {
+    agents: [],
+    services: [],
+    payments: [],
+    earnActivations: [],
+    subscriptions: []
+  };
+}
+
+function normalizeStore(value: unknown): StoreShape {
+  return {...emptyStore(), ...(value && typeof value === "object" ? value : {})} as StoreShape;
+}
+
+function hasRedis() {
+  return Boolean(config.redisUrl) && !/localhost|127\.0\.0\.1/.test(config.redisUrl);
+}
+
+async function readRedisStore(): Promise<StoreShape | null> {
+  const raw = await redisCommand<string | null>(["GET", STORE_KEY]);
+  if (!raw) return null;
+  return normalizeStore(JSON.parse(raw));
+}
+
+async function persistRedisStore() {
+  if (!cache) return;
+  await redisCommand(["SET", STORE_KEY, JSON.stringify(cache)]);
+}
+
+async function redisCommand<T = string | null>(parts: Array<string>): Promise<T> {
+  const url = new URL(config.redisUrl);
+  const useTls = url.protocol === "rediss:";
+  const port = Number(url.port || (useTls ? 6380 : 6379));
+  const host = url.hostname;
+  const password = url.password ? decodeURIComponent(url.password) : undefined;
+  const username = url.username ? decodeURIComponent(url.username) : undefined;
+  const socket = await openRedisSocket(host, port, useTls);
+
+  try {
+    if (password || username) {
+      const authParts = username ? ["AUTH", username, password ?? ""] : ["AUTH", password ?? ""];
+      await sendRedis(socket, authParts);
+    }
+
+    const response = await sendRedis(socket, parts);
+    return response as T;
+  } finally {
+    socket.destroy();
+  }
+}
+
+function openRedisSocket(host: string, port: number, useTls: boolean) {
+  return new Promise<Socket | TLSSocket>((resolveSocket, reject) => {
+    const socket = useTls
+      ? connectTls({host, port, servername: host, rejectUnauthorized: false}, () => resolveSocket(socket))
+      : createConnection({host, port}, () => resolveSocket(socket));
+
+    socket.once("error", reject);
+  });
+}
+
+function sendRedis(socket: Socket | TLSSocket, parts: Array<string>) {
+  const payload = encodeResp(parts);
+  return new Promise<string | null | number>((resolve, reject) => {
+    let buffer = "";
+
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const parsed = parseResp(buffer);
+      if (!parsed.complete) return;
+      cleanup();
+      if (parsed.error) reject(parsed.error);
+      else resolve(parsed.value ?? null);
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("error", onError);
+    };
+
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.write(payload);
+  });
+}
+
+function encodeResp(parts: Array<string>) {
+  const lines = [`*${parts.length}`];
+  for (const part of parts) {
+    const value = Buffer.from(part, "utf8");
+    lines.push(`$${value.length}`);
+    lines.push(part);
+  }
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+function parseResp(raw: string): {complete: boolean; value?: string | number | null; error?: Error} {
+  const type = raw[0];
+  const firstLineEnd = raw.indexOf("\r\n");
+  if (firstLineEnd === -1) return {complete: false};
+
+  const body = raw.slice(1, firstLineEnd);
+  if (type === "+") return {complete: true, value: body};
+  if (type === ":") return {complete: true, value: Number(body)};
+  if (type === "-") return {complete: true, error: new Error(body)};
+  if (type === "$") {
+    if (body === "-1") return {complete: true, value: null};
+    const length = Number(body);
+    const valueStart = firstLineEnd + 2;
+    const valueEnd = valueStart + length;
+    if (raw.length < valueEnd + 2) return {complete: false};
+    return {complete: true, value: raw.slice(valueStart, valueEnd)};
+  }
+  return {complete: false};
 }

@@ -6,7 +6,7 @@ loadLocalEnv();
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   databaseUrl: process.env.DATABASE_URL ?? "",
-  redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
+  redisUrl: process.env.REDIS_URL ?? "",
   arc: {
     rpcUrl: process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.network",
     chainId: Number(process.env.ARC_CHAIN_ID ?? 5042002),

@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from "react";
 import LandingPage from "@/app/landing/page";
-import CommandPage from "@/app/page";
+import HomePage from "@/app/page";
 import AgentsPage from "@/app/agents/page";
 import EarnPage from "@/app/earn/page";
 import MarketplacePage from "@/app/marketplace/page";
@@ -14,7 +14,7 @@ import {currentPath, NAVIGATE_EVENT, readNavigationPath} from "@/lib/router";
 
 const routes: Record<string, React.ComponentType> = {
   "/": LandingPage,
-  "/app": CommandPage,
+  "/app": HomePage,
   "/agents": AgentsPage,
   "/earn": EarnPage,
   "/marketplace": MarketplacePage,

@@ -1,7 +1,7 @@
-import {Bot, Coins, Gauge, KeyRound, ShieldCheck, Store, Terminal, Zap} from "lucide-react";
+import {Bot, Coins, Gauge, Home, KeyRound, ShieldCheck, Store, Zap} from "lucide-react";
 
 export const navItems = [
-  {href: "/app", label: "Command", icon: Terminal},
+  {href: "/app", label: "Home", icon: Home},
   {href: "/agents", label: "Agents", icon: Bot},
   {href: "/earn", label: "Earn", icon: Zap},
   {href: "/marketplace", label: "Market", icon: Store},
