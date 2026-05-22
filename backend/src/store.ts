@@ -88,10 +88,14 @@ export async function readStore() {
   if (cache) return cache;
 
   if (hasRedis()) {
-    const loaded = await readRedisStore();
-    if (loaded) {
-      cache = loaded;
-      return cache;
+    try {
+      const loaded = await readRedisStore();
+      if (loaded) {
+        cache = loaded;
+        return cache;
+      }
+    } catch (error) {
+      console.warn("Nexora Redis store unavailable; falling back to local store", error);
     }
   }
 
@@ -174,8 +178,12 @@ function sanitizeAgent(agent: AgentWalletRecord) {
 
 async function persist() {
   if (hasRedis()) {
-    await persistRedisStore();
-    return;
+    try {
+      await persistRedisStore();
+      return;
+    } catch (error) {
+      console.warn("Nexora Redis store persist failed; falling back to local store", error);
+    }
   }
 
   writeQueue = writeQueue.then(async () => {
@@ -201,7 +209,8 @@ function normalizeStore(value: unknown): StoreShape {
 }
 
 function hasRedis() {
-  return Boolean(config.redisUrl) && !/localhost|127\.0\.0\.1/.test(config.redisUrl);
+  const value = normalizeRedisUrl(config.redisUrl);
+  return Boolean(value) && !/localhost|127\.0\.0\.1/.test(value);
 }
 
 async function readRedisStore(): Promise<StoreShape | null> {
@@ -216,7 +225,9 @@ async function persistRedisStore() {
 }
 
 async function redisCommand<T = string | null>(parts: Array<string>): Promise<T> {
-  const url = new URL(config.redisUrl);
+  const redisUrl = normalizeRedisUrl(config.redisUrl);
+  if (!redisUrl) throw new Error("REDIS_URL is not configured");
+  const url = new URL(redisUrl);
   const useTls = url.protocol === "rediss:";
   const port = Number(url.port || (useTls ? 6380 : 6379));
   const host = url.hostname;
@@ -235,6 +246,13 @@ async function redisCommand<T = string | null>(parts: Array<string>): Promise<T>
   } finally {
     socket.destroy();
   }
+}
+
+function normalizeRedisUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/^rediss?:\/\//i.test(trimmed)) return trimmed;
+  return `redis://${trimmed}`;
 }
 
 function openRedisSocket(host: string, port: number, useTls: boolean) {
