@@ -5,6 +5,24 @@ import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
+const contractOptions = [
+  {
+    label: "x402 payments",
+    address: import.meta.env.VITE_X402_LEDGER_ADDRESS,
+    description: "Marketplace API payments and settlement"
+  },
+  {
+    label: "Reputation",
+    address: import.meta.env.VITE_REPUTATION_ADDRESS,
+    description: "Operator reputation updates"
+  },
+  {
+    label: "Policy registry",
+    address: import.meta.env.VITE_POLICY_REGISTRY_ADDRESS,
+    description: "Agent spending rule management"
+  }
+].filter((item): item is {label: string; address: string; description: string} => Boolean(item.address?.startsWith("0x")));
+
 export function PolicyForm() {
   const {address, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
@@ -19,6 +37,7 @@ export function PolicyForm() {
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const contractAllowlistItems = splitAddresses(contractAllowlist);
   const recipientAllowlistItems = splitAddresses(recipientAllowlist);
+  const selectedContracts = new Set(contractAllowlistItems.map((item) => item.toLowerCase()));
 
   useEffect(() => {
     if (!selectedAgentId && agents[0]) {
@@ -112,13 +131,29 @@ export function PolicyForm() {
         </label>
         <label className="grid gap-2 text-sm text-slate-300">
           Contract allowlist
-          <textarea className="field min-h-24" value={contractAllowlist} onChange={(event) => setContractAllowlist(event.target.value)} placeholder="0x... one per line or comma separated" />
-          <span className="text-xs leading-5 text-slate-500">Contracts an autonomous agent may call for agent payments or service execution. Save/Earn routing is handled separately by Nexora and does not require users to enter vault contracts here.</span>
+          <div className="grid gap-2">
+            {contractOptions.map((contract) => {
+              const checked = selectedContracts.has(contract.address.toLowerCase());
+              return (
+                <label key={contract.address} className="surface flex cursor-pointer items-center justify-between gap-3 px-3 py-3">
+                  <span>
+                    <span className="block text-sm font-medium text-white">{contract.label}</span>
+                    <span className="mt-1 block text-xs text-slate-500">{contract.description} · {shortAddress(contract.address)}</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(event) => setContractAllowlist(toggleAddress(contractAllowlistItems, contract.address, event.target.checked).join("\n"))}
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <textarea className="field min-h-20" value={contractAllowlist} onChange={(event) => setContractAllowlist(event.target.value)} placeholder="0x... optional custom contract" />
         </label>
         <label className="grid gap-2 text-sm text-slate-300">
           Recipient allowlist
           <textarea className="field min-h-24" value={recipientAllowlist} onChange={(event) => setRecipientAllowlist(event.target.value)} placeholder="0x... one per line or comma separated" />
-          <span className="text-xs leading-5 text-slate-500">Wallets the agent may send funds to, such as your treasury, your operator wallet, or approved service publishers.</span>
         </label>
       </div>
       <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -136,4 +171,10 @@ function splitAddresses(value: string) {
     .split(/[\s,]+/)
     .map((item) => item.trim())
     .filter((item) => item.startsWith("0x"));
+}
+
+function toggleAddress(addresses: string[], address: string, checked: boolean) {
+  const normalized = address.toLowerCase();
+  const withoutAddress = addresses.filter((item) => item.toLowerCase() !== normalized);
+  return checked ? [...withoutAddress, address] : withoutAddress;
 }
