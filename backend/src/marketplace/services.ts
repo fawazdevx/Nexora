@@ -123,6 +123,26 @@ export async function executeMarketplaceService(input: {
     };
   }
 
+  if (kind === "website_analyzer") {
+    const url = requiredString(args.url, "url");
+    return {
+      serviceId: service.id,
+      kind,
+      input: {url},
+      result: await analyzeWebsite(url)
+    };
+  }
+
+  if (kind === "github_repo_analyzer") {
+    const repo = requiredString(args.repo ?? args.url, "repo");
+    return {
+      serviceId: service.id,
+      kind,
+      input: {repo},
+      result: await analyzeGitHubRepo(repo)
+    };
+  }
+
   return {
     serviceId: service.id,
     kind,
@@ -137,7 +157,114 @@ export async function executeMarketplaceService(input: {
 function normalizeServiceKind(service: Awaited<ReturnType<typeof getService>>) {
   const marker = `${service?.name ?? ""} ${service?.endpointHash ?? ""}`.toLowerCase();
   if (marker.includes("x account") || marker.includes("x-account") || marker.includes("twitter")) return "x_account_analyzer";
+  if (marker.includes("website") || marker.includes("url analyzer") || marker.includes("site analyzer")) return "website_analyzer";
+  if (marker.includes("github") || marker.includes("repo analyzer") || marker.includes("repository")) return "github_repo_analyzer";
   return "generic";
+}
+
+async function analyzeWebsite(inputUrl: string) {
+  const url = normalizeHttpUrl(inputUrl);
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": "NexoraWebsiteAnalyzer/1.0"
+    },
+    signal: AbortSignal.timeout(12_000)
+  });
+
+  if (!response.ok) {
+    return {
+      status: "error",
+      message: `Website returned ${response.status}`,
+      url
+    };
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const html = await response.text();
+  const title = extractTagContent(html, "title");
+  const description = extractMeta(html, "description") ?? extractMeta(html, "og:description");
+  const ogTitle = extractMeta(html, "og:title");
+  const canonical = extractCanonical(html);
+  const headings = extractHeadings(html).slice(0, 8);
+  const links = extractLinks(html, url).slice(0, 12);
+  const text = stripHtml(html).replace(/\s+/g, " ").trim();
+
+  return {
+    status: "ok",
+    url,
+    contentType,
+    title: ogTitle ?? title ?? "Untitled",
+    description: description ?? "",
+    canonical,
+    headings,
+    links,
+    wordCount: text ? text.split(/\s+/).length : 0,
+    summary: summarizeText(text)
+  };
+}
+
+async function analyzeGitHubRepo(input: string) {
+  const repo = parseGitHubRepo(input);
+  const headers = {
+    "accept": "application/vnd.github+json",
+    "user-agent": "NexoraGitHubRepoAnalyzer/1.0"
+  };
+  const repoResponse = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}`, {
+    headers,
+    signal: AbortSignal.timeout(12_000)
+  });
+
+  if (!repoResponse.ok) {
+    return {
+      status: "error",
+      message: `GitHub returned ${repoResponse.status}`,
+      repo
+    };
+  }
+
+  const data = await repoResponse.json() as {
+    full_name?: string;
+    description?: string | null;
+    html_url?: string;
+    stargazers_count?: number;
+    forks_count?: number;
+    open_issues_count?: number;
+    language?: string | null;
+    default_branch?: string;
+    pushed_at?: string;
+    updated_at?: string;
+    license?: {spdx_id?: string} | null;
+  };
+  const readme = await fetchGitHubReadme(repo.owner, repo.name, headers);
+
+  return {
+    status: "ok",
+    repo: data.full_name ?? `${repo.owner}/${repo.name}`,
+    url: data.html_url,
+    description: data.description ?? "",
+    language: data.language ?? "Unknown",
+    stars: data.stargazers_count ?? 0,
+    forks: data.forks_count ?? 0,
+    openIssues: data.open_issues_count ?? 0,
+    defaultBranch: data.default_branch,
+    pushedAt: data.pushed_at,
+    updatedAt: data.updated_at,
+    license: data.license?.spdx_id ?? "Unspecified",
+    readmeSummary: readme ? summarizeText(readme) : "No README found.",
+    signal: repoSignal(data.stargazers_count ?? 0, data.forks_count ?? 0, data.pushed_at)
+  };
+}
+
+async function fetchGitHubReadme(owner: string, repo: string, headers: Record<string, string>) {
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/readme`, {
+    headers,
+    signal: AbortSignal.timeout(12_000)
+  });
+  if (!response.ok) return "";
+
+  const data = await response.json() as {content?: string; encoding?: string};
+  if (!data.content || data.encoding !== "base64") return "";
+  return Buffer.from(data.content, "base64").toString("utf8").replace(/[#*_`>\[\]()]/g, " ");
 }
 
 async function analyzeXAccount(handle: string) {
@@ -217,5 +344,99 @@ async function analyzeXAccount(handle: string) {
 
 function requiredString(value: unknown, label: string) {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${label} is required`);
-  return value;
+  return value.trim();
+}
+
+function normalizeHttpUrl(value: string) {
+  const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+  const parsed = new URL(withProtocol);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("url must use http or https");
+  return parsed.toString();
+}
+
+function extractTagContent(html: string, tag: string) {
+  const match = html.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match?.[1] ? decodeHtml(match[1].trim()) : null;
+}
+
+function extractMeta(html: string, name: string) {
+  const patterns = [
+    new RegExp(`<meta[^>]+name=["']${escapeRegExp(name)}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+property=["']${escapeRegExp(name)}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']${escapeRegExp(name)}["'][^>]*>`, "i")
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return decodeHtml(match[1].trim());
+  }
+  return null;
+}
+
+function extractCanonical(html: string) {
+  const match = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["'][^>]*>/i);
+  return match?.[1] ? decodeHtml(match[1].trim()) : null;
+}
+
+function extractHeadings(html: string) {
+  const matches = [...html.matchAll(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi)];
+  return matches.map((match) => stripHtml(match[1] ?? "").replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+
+function extractLinks(html: string, baseUrl: string) {
+  const matches = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  return matches.map((match) => {
+    const href = resolveUrl(match[1] ?? "", baseUrl);
+    const label = stripHtml(match[2] ?? "").replace(/\s+/g, " ").trim();
+    return {label: label.slice(0, 80), href};
+  }).filter((link) => link.href && link.label);
+}
+
+function resolveUrl(value: string, baseUrl: string) {
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function stripHtml(html: string) {
+  return decodeHtml(html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " "));
+}
+
+function decodeHtml(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
+}
+
+function summarizeText(text: string) {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "No readable text found.";
+  const sentences = cleaned.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.length > 40);
+  return (sentences.slice(0, 3).join(" ") || cleaned.slice(0, 360)).slice(0, 700);
+}
+
+function parseGitHubRepo(input: string) {
+  const trimmed = input.trim();
+  const urlMatch = trimmed.match(/github\.com\/([^/\s]+)\/([^/\s#?]+)/i);
+  const slashMatch = trimmed.match(/^([^/\s]+)\/([^/\s]+)$/);
+  const owner = urlMatch?.[1] ?? slashMatch?.[1];
+  const name = (urlMatch?.[2] ?? slashMatch?.[2])?.replace(/\.git$/, "");
+  if (!owner || !name) throw new Error("repo must be a GitHub URL or owner/repo");
+  return {owner, name};
+}
+
+function repoSignal(stars: number, forks: number, pushedAt?: string) {
+  const daysSincePush = pushedAt ? Math.floor((Date.now() - new Date(pushedAt).getTime()) / 86_400_000) : null;
+  if (daysSincePush !== null && daysSincePush <= 30 && stars >= 100) return "Active and established";
+  if (daysSincePush !== null && daysSincePush <= 90) return "Recently active";
+  if (stars >= 1000 || forks >= 200) return "Established but activity should be reviewed";
+  return "Early or low-signal repository";
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

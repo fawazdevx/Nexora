@@ -50,13 +50,13 @@ export function PublishServiceForm() {
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Service name
-        <input className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Stablecoin Risk Oracle" />
-        <span className="text-xs leading-5 text-slate-500">Examples: risk score API, AI summarizer API, token price feed, compliance check endpoint, transaction simulation endpoint.</span>
+        <input className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Website Analyzer" />
+        <span className="text-xs leading-5 text-slate-500">Examples: Website Analyzer, GitHub Repo Analyzer, X Account Analyzer, Contract Safety Check.</span>
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Endpoint hash / manifest URI
-        <input className="field" value={endpointHash} onChange={(event) => setEndpointHash(event.target.value)} placeholder="ipfs://..." />
-        <span className="text-xs leading-5 text-slate-500">Publish a manifest URI or endpoint hash that describes where buyers can call your API after x402 payment authorization.</span>
+        <input className="field" value={endpointHash} onChange={(event) => setEndpointHash(event.target.value)} placeholder="website-analyzer-v1" />
+        <span className="text-xs leading-5 text-slate-500">Use website-analyzer-v1, github-repo-analyzer-v1, or x-account-analyzer-v1 for built-in Nexora execution.</span>
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Price per unit in USDC

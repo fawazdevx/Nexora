@@ -16,7 +16,7 @@ function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
 export default function MarketplacePage() {
   const {address, isConnected} = useAccount();
   const [status, setStatus] = useState("");
-  const [xHandle, setXHandle] = useState("");
+  const [serviceInputs, setServiceInputs] = useState<Record<string, string>>({});
   const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
   const snapshot = useAppSnapshot();
 
@@ -49,9 +49,7 @@ export default function MarketplacePage() {
       await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash});
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
         payer: address,
-        args: {
-          handle: xHandle
-        }
+        args: executionArgs(service, serviceInputs[service.id] ?? "")
       });
       await snapshot.refetch();
       setServiceResults((current) => ({...current, [service.id]: execution.result}));
@@ -91,10 +89,15 @@ export default function MarketplacePage() {
               <span className="surface px-3 py-2">Ledger <b className="text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
               <span className="surface px-3 py-2">Featured <b className="text-white">{service.featured ? "Yes" : "No"}</b></span>
             </div>
-            {isXAnalyzer(service) ? (
+            {serviceInputLabel(service) ? (
               <label className="mt-5 grid gap-2 text-sm text-slate-300">
-                X account
-                <input className="field" value={xHandle} onChange={(event) => setXHandle(event.target.value)} placeholder="@username" />
+                {serviceInputLabel(service)}
+                <input
+                  className="field"
+                  value={serviceInputs[service.id] ?? ""}
+                  onChange={(event) => setServiceInputs((current) => ({...current, [service.id]: event.target.value}))}
+                  placeholder={serviceInputPlaceholder(service)}
+                />
               </label>
             ) : null}
             <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected}>
@@ -121,4 +124,35 @@ export default function MarketplacePage() {
 function isXAnalyzer(service: {name: string; endpointHash: string}) {
   const marker = `${service.name} ${service.endpointHash}`.toLowerCase();
   return marker.includes("x account") || marker.includes("x-account") || marker.includes("twitter");
+}
+
+function isWebsiteAnalyzer(service: {name: string; endpointHash: string}) {
+  const marker = `${service.name} ${service.endpointHash}`.toLowerCase();
+  return marker.includes("website") || marker.includes("url analyzer") || marker.includes("site analyzer");
+}
+
+function isGitHubAnalyzer(service: {name: string; endpointHash: string}) {
+  const marker = `${service.name} ${service.endpointHash}`.toLowerCase();
+  return marker.includes("github") || marker.includes("repo analyzer") || marker.includes("repository");
+}
+
+function serviceInputLabel(service: {name: string; endpointHash: string}) {
+  if (isXAnalyzer(service)) return "X account";
+  if (isWebsiteAnalyzer(service)) return "Website URL";
+  if (isGitHubAnalyzer(service)) return "GitHub repository";
+  return "";
+}
+
+function serviceInputPlaceholder(service: {name: string; endpointHash: string}) {
+  if (isXAnalyzer(service)) return "@username";
+  if (isWebsiteAnalyzer(service)) return "https://example.com";
+  if (isGitHubAnalyzer(service)) return "owner/repo or GitHub URL";
+  return "";
+}
+
+function executionArgs(service: {name: string; endpointHash: string}, value: string) {
+  if (isXAnalyzer(service)) return {handle: value};
+  if (isWebsiteAnalyzer(service)) return {url: value};
+  if (isGitHubAnalyzer(service)) return {repo: value};
+  return {};
 }
