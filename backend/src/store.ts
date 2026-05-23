@@ -1,7 +1,6 @@
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
-import {createConnection, type Socket} from "node:net";
-import {connect as connectTls, type TLSSocket} from "node:tls";
+import {Pool, type PoolClient} from "pg";
 import {config} from "./config.js";
 
 export type AgentWalletRecord = {
@@ -83,21 +82,12 @@ const storePath = resolve(process.env.NEXORA_STORE_PATH ?? writableStorePath);
 
 let cache: StoreShape | null = null;
 let writeQueue = Promise.resolve();
+let pool: Pool | null = null;
+let databaseReady = false;
 
 export async function readStore() {
+  if (config.databaseUrl) return readDatabaseStore();
   if (cache) return cache;
-
-  if (hasRedis()) {
-    try {
-      const loaded = await readRedisStore();
-      if (loaded) {
-        cache = loaded;
-        return cache;
-      }
-    } catch (error) {
-      console.warn("Nexora Redis store unavailable; falling back to local store", error);
-    }
-  }
 
   try {
     const raw = await readFile(storePath, "utf8");
@@ -111,6 +101,8 @@ export async function readStore() {
 }
 
 export async function updateStore<T>(mutate: (store: StoreShape) => T | Promise<T>) {
+  if (config.databaseUrl) return updateDatabaseStore(mutate);
+
   const store = await readStore();
   const result = await mutate(store);
   await persist();
@@ -177,15 +169,6 @@ function sanitizeAgent(agent: AgentWalletRecord) {
 }
 
 async function persist() {
-  if (hasRedis()) {
-    try {
-      await persistRedisStore();
-      return;
-    } catch (error) {
-      console.warn("Nexora Redis store persist failed; falling back to local store", error);
-    }
-  }
-
   writeQueue = writeQueue.then(async () => {
     if (!cache) return;
     await mkdir(dirname(storePath), {recursive: true});
@@ -208,119 +191,72 @@ function normalizeStore(value: unknown): StoreShape {
   return {...emptyStore(), ...(value && typeof value === "object" ? value : {})} as StoreShape;
 }
 
-function hasRedis() {
-  const value = normalizeRedisUrl(config.redisUrl);
-  return Boolean(value) && !/localhost|127\.0\.0\.1/.test(value);
+async function readDatabaseStore() {
+  await ensureDatabase();
+  const result = await database().query("select value from app_store where key = $1", [STORE_KEY]);
+  const store = result.rows[0]?.value ? normalizeStore(result.rows[0].value) : emptyStore();
+
+  if (!result.rows[0]) {
+    await database().query("insert into app_store (key, value) values ($1, $2::jsonb) on conflict (key) do nothing", [
+      STORE_KEY,
+      JSON.stringify(store)
+    ]);
+  }
+
+  return store;
 }
 
-async function readRedisStore(): Promise<StoreShape | null> {
-  const raw = await redisCommand<string | null>(["GET", STORE_KEY]);
-  if (!raw) return null;
-  return normalizeStore(JSON.parse(raw));
-}
-
-async function persistRedisStore() {
-  if (!cache) return;
-  await redisCommand(["SET", STORE_KEY, JSON.stringify(cache)]);
-}
-
-async function redisCommand<T = string | null>(parts: Array<string>): Promise<T> {
-  const redisUrl = normalizeRedisUrl(config.redisUrl);
-  if (!redisUrl) throw new Error("REDIS_URL is not configured");
-  const url = new URL(redisUrl);
-  const useTls = url.protocol === "rediss:";
-  const port = Number(url.port || (useTls ? 6380 : 6379));
-  const host = url.hostname;
-  const password = url.password ? decodeURIComponent(url.password) : undefined;
-  const username = url.username ? decodeURIComponent(url.username) : undefined;
-  const socket = await openRedisSocket(host, port, useTls);
+async function updateDatabaseStore<T>(mutate: (store: StoreShape) => T | Promise<T>) {
+  await ensureDatabase();
+  const client = await database().connect();
 
   try {
-    if (password || username) {
-      const authParts = username ? ["AUTH", username, password ?? ""] : ["AUTH", password ?? ""];
-      await sendRedis(socket, authParts);
-    }
-
-    const response = await sendRedis(socket, parts);
-    return response as T;
+    await client.query("begin");
+    const selected = await client.query("select value from app_store where key = $1 for update", [STORE_KEY]);
+    const store = selected.rows[0]?.value ? normalizeStore(selected.rows[0].value) : emptyStore();
+    const result = await mutate(store);
+    await client.query(
+      `insert into app_store (key, value, updated_at)
+       values ($1, $2::jsonb, now())
+       on conflict (key) do update set value = excluded.value, updated_at = now()`,
+      [STORE_KEY, JSON.stringify(store)]
+    );
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
   } finally {
-    socket.destroy();
+    client.release();
   }
 }
 
-function normalizeRedisUrl(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (/^rediss?:\/\//i.test(trimmed)) return trimmed;
-  return `redis://${trimmed}`;
+async function ensureDatabase() {
+  if (databaseReady) return;
+  await ensureStoreTable(database());
+  databaseReady = true;
 }
 
-function openRedisSocket(host: string, port: number, useTls: boolean) {
-  return new Promise<Socket | TLSSocket>((resolveSocket, reject) => {
-    const socket = useTls
-      ? connectTls({host, port, servername: host, rejectUnauthorized: false}, () => resolveSocket(socket))
-      : createConnection({host, port}, () => resolveSocket(socket));
-
-    socket.once("error", reject);
-  });
+async function ensureStoreTable(client: Pool | PoolClient) {
+  await client.query(`
+    create table if not exists app_store (
+      key text primary key,
+      value jsonb not null,
+      updated_at timestamptz not null default now()
+    )
+  `);
 }
 
-function sendRedis(socket: Socket | TLSSocket, parts: Array<string>) {
-  const payload = encodeResp(parts);
-  return new Promise<string | null | number>((resolve, reject) => {
-    let buffer = "";
-
-    const onData = (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
-      const parsed = parseResp(buffer);
-      if (!parsed.complete) return;
-      cleanup();
-      if (parsed.error) reject(parsed.error);
-      else resolve(parsed.value ?? null);
-    };
-
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-
-    const cleanup = () => {
-      socket.off("data", onData);
-      socket.off("error", onError);
-    };
-
-    socket.on("data", onData);
-    socket.on("error", onError);
-    socket.write(payload);
-  });
-}
-
-function encodeResp(parts: Array<string>) {
-  const lines = [`*${parts.length}`];
-  for (const part of parts) {
-    const value = Buffer.from(part, "utf8");
-    lines.push(`$${value.length}`);
-    lines.push(part);
+function database() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: config.databaseUrl,
+      ssl: isLocalDatabase(config.databaseUrl) ? undefined : {rejectUnauthorized: false}
+    });
   }
-  return `${lines.join("\r\n")}\r\n`;
+  return pool;
 }
 
-function parseResp(raw: string): {complete: boolean; value?: string | number | null; error?: Error} {
-  const type = raw[0];
-  const firstLineEnd = raw.indexOf("\r\n");
-  if (firstLineEnd === -1) return {complete: false};
-
-  const body = raw.slice(1, firstLineEnd);
-  if (type === "+") return {complete: true, value: body};
-  if (type === ":") return {complete: true, value: Number(body)};
-  if (type === "-") return {complete: true, error: new Error(body)};
-  if (type === "$") {
-    if (body === "-1") return {complete: true, value: null};
-    const length = Number(body);
-    const valueStart = firstLineEnd + 2;
-    const valueEnd = valueStart + length;
-    if (raw.length < valueEnd + 2) return {complete: false};
-    return {complete: true, value: raw.slice(valueStart, valueEnd)};
-  }
-  return {complete: false};
+function isLocalDatabase(databaseUrl: string) {
+  return /localhost|127\.0\.0\.1/.test(databaseUrl);
 }

@@ -16,12 +16,6 @@ export function integrationReadiness() {
       requiredFor: "operators, services, x402 requests, reputation, and webhook state"
     },
     {
-      key: "REDIS_URL",
-      label: "Redis",
-      configured: Boolean(config.redisUrl),
-      requiredFor: "settlement, indexing, and agent action queues"
-    },
-    {
       key: "CIRCLE_API_KEY",
       label: "Circle API key",
       configured: Boolean(config.circle.apiKey),

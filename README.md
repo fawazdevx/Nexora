@@ -142,18 +142,18 @@ npm install
 npm run dev -- --port 5173
 ```
 
-The backend now loads `backend/.env`, persists app state to Redis when `REDIS_URL` is configured, falls back to `NEXORA_STORE_PATH` for local development, and exposes live endpoints for the operator snapshot, marketplace services, x402 authorizations/settlements, earn opportunities, monetization plans, Circle agent wallet requests, policy saves, payments, and reputation. On Vercel, set `VITE_NEXORA_API_URL` to the deployed backend URL; a static frontend deployment alone cannot create Circle wallets, persist marketplace data, or settle x402 requests.
+The backend now loads `backend/.env`, persists app state to PostgreSQL when `DATABASE_URL` is configured, falls back to `NEXORA_STORE_PATH` for local development, and exposes live endpoints for the operator snapshot, marketplace services, x402 authorizations/settlements, earn opportunities, monetization plans, Circle agent wallet requests, policy saves, payments, and reputation. On Vercel, set `VITE_NEXORA_API_URL` to the deployed backend URL; a static frontend deployment alone cannot create Circle wallets, persist marketplace data, or settle x402 requests.
 
 Required production secrets:
 
 ```shell
 CIRCLE_API_KEY=
 CIRCLE_ENTITY_SECRET=
-REDIS_URL=
+DATABASE_URL=
 FACILITATOR_PRIVATE_KEY=
 ```
 
-Use a durable Redis provider for production, such as Vercel KV/Redis or Upstash. Without `REDIS_URL`, serverless deployments fall back to `/tmp`, so created agent wallets can disappear after cold starts or redeploys.
+Use a durable PostgreSQL database for production, such as Supabase or Vercel Postgres. Without `DATABASE_URL`, serverless deployments fall back to `/tmp`, so created agent wallets can disappear after cold starts or redeploys.
 
 Without those secrets, contract-backed frontend writes still work where the user wallet signs them, but Circle wallet creation and server-side facilitator signing report as not configured through `/api/readiness` instead of silently failing.
 
