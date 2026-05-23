@@ -4,6 +4,9 @@ out/
 lib/
 broadcast/
 
+.agents/skills
+.codex/
+
 # Ignores development broadcast logs
 # !/broadcast
 # /broadcast/*/31337/
