@@ -109,6 +109,24 @@ export async function updateStore<T>(mutate: (store: StoreShape) => T | Promise<
   return result;
 }
 
+export async function assertStoreReady() {
+  await readStore();
+}
+
+export function storageFriendlyError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/ENOTFOUND|getaddrinfo/i.test(message)) {
+    return "Nexora database is unreachable. Check DATABASE_URL in the backend environment; the database host cannot be resolved.";
+  }
+  if (/ECONNREFUSED|timeout|ETIMEDOUT|ECONNRESET/i.test(message)) {
+    return "Nexora database connection failed. Check DATABASE_URL, database availability, and network access from the backend.";
+  }
+  if (/password authentication failed|28P01/i.test(message)) {
+    return "Nexora database authentication failed. Check the username and password in DATABASE_URL.";
+  }
+  return message;
+}
+
 export async function appSnapshot(operatorAddress?: string) {
   const store = await readStore();
   const operator = operatorAddress?.toLowerCase();

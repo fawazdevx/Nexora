@@ -26,6 +26,9 @@ export const config = {
   facilitator: {
     signingMode: process.env.FACILITATOR_SIGNING_MODE ?? "wallet",
     privateKey: process.env.FACILITATOR_PRIVATE_KEY ?? ""
+  },
+  integrations: {
+    xBearerToken: process.env.X_BEARER_TOKEN ?? ""
   }
 };
 

@@ -1,6 +1,6 @@
 import {Blockchain, initiateDeveloperControlledWalletsClient} from "@circle-fin/developer-controlled-wallets";
 import {config} from "../config.js";
-import {readStore, updateStore} from "../store.js";
+import {assertStoreReady, readStore, updateStore} from "../store.js";
 
 type CreateAgentWalletInput = {
   operatorAddress: string;
@@ -18,6 +18,8 @@ type AgentPolicyInput = {
 
 export async function createAgentWallet(input: CreateAgentWalletInput) {
   if (config.circle.apiKey) {
+    await assertStoreReady();
+
     let walletSet;
     let wallets;
     let walletSetId: string | null = null;

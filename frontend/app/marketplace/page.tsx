@@ -2,12 +2,11 @@ import {useState} from "react";
 import {Plus} from "lucide-react";
 import {useAccount} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
-import {apiGet, apiPost} from "@/lib/api";
+import {apiPost} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {settleX402Request} from "@/lib/contracts";
-import {useQuery} from "@tanstack/react-query";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -17,11 +16,9 @@ function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
 export default function MarketplacePage() {
   const {address, isConnected} = useAccount();
   const [status, setStatus] = useState("");
+  const [xHandle, setXHandle] = useState("");
+  const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
   const snapshot = useAppSnapshot();
-  const plans = useQuery({
-    queryKey: ["monetization-plans"],
-    queryFn: () => apiGet<{plans: Array<{id: string; name: string; amountUsdc: number; interval: string; benefit: string}>}>("/api/monetization/plans")
-  });
 
   async function purchase(service: NonNullable<typeof snapshot.data>["services"][number]) {
     if (!isConnected || !address) {
@@ -50,33 +47,21 @@ export default function MarketplacePage() {
         txHash = tx.settleHash;
       }
       await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash});
+      const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
+        payer: address,
+        args: {
+          handle: xHandle
+        }
+      });
       await snapshot.refetch();
+      setServiceResults((current) => ({...current, [service.id]: execution.result}));
       setStatus(
         txHash
           ? `Purchased ${service.name} for ${shortAddress(address)}. Settlement: ${txHash}`
-          : `Recorded test purchase for ${service.name}. Add the x402 ledger address to enable on-chain settlement.`
+          : `Recorded test purchase for ${service.name}.`
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Service purchase failed");
-    }
-  }
-
-  async function subscribe(plan: {id: string; name: string; amountUsdc: number}) {
-    if (!isConnected || !address) {
-      setStatus("Connect your wallet before activating a Nexora monetization plan.");
-      return;
-    }
-
-    try {
-      await apiPost("/api/monetization/subscribe", {
-        operatorAddress: address,
-        plan: plan.id,
-        amountUsdc: plan.amountUsdc
-      });
-      await snapshot.refetch();
-      setStatus(`${plan.name} created for ${shortAddress(address)}. Payment settlement can be wired to the x402 ledger treasury plan.`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Plan activation failed");
     }
   }
 
@@ -106,9 +91,20 @@ export default function MarketplacePage() {
               <span className="surface px-3 py-2">Ledger <b className="text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
               <span className="surface px-3 py-2">Featured <b className="text-white">{service.featured ? "Yes" : "No"}</b></span>
             </div>
+            {isXAnalyzer(service) ? (
+              <label className="mt-5 grid gap-2 text-sm text-slate-300">
+                X account
+                <input className="field" value={xHandle} onChange={(event) => setXHandle(event.target.value)} placeholder="@username" />
+              </label>
+            ) : null}
             <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected}>
               {service.chainServiceId ? "Purchase per execution" : "Test purchase"}
             </button>
+            {serviceResults[service.id] ? (
+              <pre className="mt-4 max-h-64 overflow-auto rounded-md border border-white/[0.08] bg-black/30 p-3 text-xs leading-5 text-slate-200">
+                {JSON.stringify(serviceResults[service.id], null, 2)}
+              </pre>
+            ) : null}
           </article>
         ))}
         {!snapshot.isLoading && (snapshot.data?.services.length ?? 0) === 0 ? (
@@ -118,29 +114,11 @@ export default function MarketplacePage() {
         ) : null}
       </div>
 
-      <section className="panel">
-        <PageHeader
-          kicker="Nexora monetization"
-          title="Platform revenue products"
-          description="Activate marketplace and operator plans that Nexora can monetize through USDC settlement."
-        />
-        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-          {(plans.data?.plans ?? []).map((plan) => (
-            <article key={plan.id} className="surface p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="font-semibold text-white">{plan.name}</h3>
-                  <p className="mt-2 text-sm text-slate-400">{plan.benefit}</p>
-                </div>
-                <span className="status-pill">${plan.amountUsdc} {plan.interval}</span>
-              </div>
-              <button onClick={() => void subscribe(plan)} className="secondary-button mt-4 w-full" disabled={!isConnected}>
-                Activate plan
-              </button>
-            </article>
-          ))}
-        </div>
-      </section>
     </div>
   );
+}
+
+function isXAnalyzer(service: {name: string; endpointHash: string}) {
+  const marker = `${service.name} ${service.endpointHash}`.toLowerCase();
+  return marker.includes("x account") || marker.includes("x-account") || marker.includes("twitter");
 }

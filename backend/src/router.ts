@@ -2,10 +2,10 @@ import {config} from "./config.js";
 import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
 import {createAgentWallet, refreshPendingCircleWallets, updateAgentPolicy} from "./circle/agent-wallets.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
-import {featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
+import {executeMarketplaceService, featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
-import {appSnapshot, updateStore} from "./store.js";
+import {appSnapshot, storageFriendlyError, updateStore} from "./store.js";
 
 export type AppRequest = {
   method: string;
@@ -97,6 +97,15 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       }));
     }
 
+    if (req.method === "POST" && path.startsWith("/api/marketplace/services/") && path.endsWith("/execute")) {
+      const serviceId = path.split("/")[4] ?? "";
+      return ok(await executeMarketplaceService({
+        serviceId,
+        payer: requiredString(body.payer, "payer"),
+        args: body.args && typeof body.args === "object" ? body.args as Record<string, unknown> : {}
+      }));
+    }
+
     if (req.method === "GET" && path === "/api/monetization/plans") {
       return ok({plans: await platformPlans()});
     }
@@ -170,7 +179,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     return response(404, {error: "not_found", path: rawPath, normalizedPath: path});
   } catch (error) {
-    return response(400, {error: error instanceof Error ? error.message : "bad_request"});
+    return response(400, {error: storageFriendlyError(error)});
   }
 }
 
