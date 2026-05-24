@@ -50,11 +50,9 @@ export function Shell({children}: {children: React.ReactNode}) {
 
       <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-void/88 px-3 py-3 backdrop-blur-xl sm:px-4 md:px-6 md:py-4">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 sm:gap-4">
-          <a href="/app" onClick={(event) => navigate(event, "/app")} className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-plasma/25 bg-plasma/10 text-orchid sm:h-11 sm:w-11">
-              <Activity size={18} className="sm:h-5 sm:w-5" />
-            </div>
-            <div className="min-w-0 shrink-0">
+          <a href="/app" onClick={(event) => navigate(event, "/app")} className="flex w-[132px] shrink-0 items-center gap-2 sm:w-[220px] sm:gap-3">
+            <img src="/nexora-logo.svg" alt="Nexora" className="h-9 w-9 shrink-0 rounded-xl sm:h-11 sm:w-11" />
+            <div className="min-w-0">
               <div className="whitespace-nowrap text-lg font-semibold leading-none tracking-normal text-white min-[380px]:text-xl sm:text-2xl sm:leading-none">Nexora</div>
               <div className="mt-1 hidden text-sm text-slate-400 sm:block">
                 {isConnected ? <ArcNameLabel address={address} fallback="Agent Finance Network" /> : "Agent Finance Network"}
@@ -62,7 +60,7 @@ export function Shell({children}: {children: React.ReactNode}) {
             </div>
           </a>
 
-          <nav className="hidden items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.035] p-1 2xl:flex">
+          <nav className="hidden min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.035] p-1 min-[1840px]:flex">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = isActive(pathname, item.href);
@@ -75,7 +73,7 @@ export function Shell({children}: {children: React.ReactNode}) {
             })}
           </nav>
 
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3 min-[1840px]:flex-none">
             <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-[15px] text-slate-400 min-[1700px]:flex">
               <Search size={16} />
               <span className="w-52 truncate">Search agents, markets, policies</span>
@@ -88,7 +86,7 @@ export function Shell({children}: {children: React.ReactNode}) {
           </div>
         </div>
 
-        <nav className="mx-auto mt-3 flex max-w-[1440px] gap-2 overflow-x-auto 2xl:hidden">
+        <nav className="mx-auto mt-3 flex max-w-[1440px] gap-2 overflow-x-auto min-[1840px]:hidden">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(pathname, item.href);
