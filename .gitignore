@@ -21,5 +21,6 @@ docs/
 # Dotenv file
 .env
 frontend/.env.arbitrum-sepolia
+frontend/.env.arbitrum-one
 backend/.env.arbitrum-sepolia
 backend/.env.arbitrum-one

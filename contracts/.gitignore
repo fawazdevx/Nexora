@@ -18,5 +18,5 @@ docs/
 
 # Dotenv file
 .env
-.env.arbitrum-sepolia
 .env.arbitrum-one
+.env.arbitrum-sepolia
