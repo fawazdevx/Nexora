@@ -120,6 +120,7 @@ export type AppSnapshot = {
     counterpartyNetUsdc: number;
     status: string;
     deliverableUrl?: string | null;
+    deliverableResult?: unknown;
     verifierNotes?: string | null;
     txHash?: string | null;
     createdAt: string;

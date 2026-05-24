@@ -2,7 +2,7 @@ import {config} from "./config.js";
 import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
 import {createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy} from "./circle/agent-wallets.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
-import {executeMarketplaceService, featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
+import {executeBuiltInService, executeMarketplaceService, featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
 import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
@@ -200,7 +200,8 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
     if (req.method === "POST" && path.startsWith("/api/escrows/") && path.endsWith("/submit")) {
       const escrowId = path.split("/")[3] ?? "";
       return ok(await updateEscrow(escrowId, "submitted", {
-        deliverableUrl: optionalString(body.deliverableUrl)
+        deliverableUrl: optionalString(body.deliverableUrl),
+        autoExecute: Boolean(body.autoExecute)
       }));
     }
 
@@ -379,14 +380,19 @@ async function createEscrow(input: {
   });
 }
 
-async function updateEscrow(escrowId: string, status: "funded" | "submitted" | "verified" | "released", fields: Record<string, string | undefined>) {
+async function updateEscrow(escrowId: string, status: "funded" | "submitted" | "verified" | "released", fields: Record<string, string | boolean | undefined>) {
+  const autoResult = status === "submitted" && fields.autoExecute ? await runEscrowAgent(escrowId) : null;
   return updateStore((store) => {
     const escrow = store.escrows.find((item) => item.id === escrowId);
     if (!escrow) throw new Error("escrow not found");
     escrow.status = status;
-    if (fields.txHash !== undefined) escrow.txHash = fields.txHash;
-    if (fields.deliverableUrl !== undefined) escrow.deliverableUrl = fields.deliverableUrl;
-    if (fields.verifierNotes !== undefined) escrow.verifierNotes = fields.verifierNotes;
+    if (typeof fields.txHash === "string") escrow.txHash = fields.txHash;
+    if (typeof fields.deliverableUrl === "string") escrow.deliverableUrl = fields.deliverableUrl;
+    if (typeof fields.verifierNotes === "string") escrow.verifierNotes = fields.verifierNotes;
+    if (autoResult) {
+      escrow.deliverableUrl = autoResult.deliverableUrl;
+      escrow.deliverableResult = autoResult.result;
+    }
     const now = new Date().toISOString();
     if (status === "funded") escrow.fundedAt = now;
     if (status === "submitted") escrow.submittedAt = now;
@@ -419,6 +425,61 @@ async function updateEscrow(escrowId: string, status: "funded" | "submitted" | "
 
 function roundUsdc(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+async function runEscrowAgent(escrowId: string) {
+  const store = await readStore();
+  const escrow = store.escrows.find((item) => item.id === escrowId);
+  if (!escrow) throw new Error("escrow not found");
+  const text = `${escrow.title}\n${escrow.description}`;
+  const github = text.match(/github\.com\/[^\s)]+|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/i)?.[0];
+  const url = text.match(/https?:\/\/[^\s)]+/i)?.[0];
+  const xHandle = text.match(/@[A-Za-z0-9_]{1,15}/)?.[0];
+
+  if (github && /github\.com\/|^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(github)) {
+    return {
+      deliverableUrl: `nexora://escrows/${escrowId}/github-analysis`,
+      result: {
+        kind: "github_repo_analyzer",
+        input: {repo: github},
+        output: await executeBuiltInService("github_repo_analyzer", {repo: github})
+      }
+    };
+  }
+
+  if (url) {
+    return {
+      deliverableUrl: `nexora://escrows/${escrowId}/website-analysis`,
+      result: {
+        kind: "website_analyzer",
+        input: {url},
+        output: await executeBuiltInService("website_analyzer", {url})
+      }
+    };
+  }
+
+  if (xHandle) {
+    return {
+      deliverableUrl: `nexora://escrows/${escrowId}/x-analysis`,
+      result: {
+        kind: "x_account_analyzer",
+        input: {handle: xHandle},
+        output: await executeBuiltInService("x_account_analyzer", {handle: xHandle})
+      }
+    };
+  }
+
+  return {
+    deliverableUrl: `nexora://escrows/${escrowId}/manual-deliverable`,
+    result: {
+      kind: "generic",
+      input: {description: escrow.description},
+      output: {
+        status: "manual_review",
+        summary: "No URL, GitHub repository, or X handle was found in the escrow details. Attach a manual deliverable."
+      }
+    }
+  };
 }
 
 function normalizePath(path: string) {

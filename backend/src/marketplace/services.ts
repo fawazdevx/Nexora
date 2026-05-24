@@ -127,45 +127,33 @@ export async function executeMarketplaceService(input: {
 
   const args = input.args ?? {};
   const kind = service.manifest.kind;
-
-  if (kind === "x_account_analyzer") {
-    const handle = requiredString(args.handle ?? args.username, "handle");
-    return {
-      serviceId: service.id,
-      kind,
-      input: {handle},
-      result: await analyzeXAccount(handle)
-    };
-  }
-
-  if (kind === "website_analyzer") {
-    const url = requiredString(args.url, "url");
-    return {
-      serviceId: service.id,
-      kind,
-      input: {url},
-      result: await analyzeWebsite(url)
-    };
-  }
-
-  if (kind === "github_repo_analyzer") {
-    const repo = requiredString(args.repo ?? args.url, "repo");
-    return {
-      serviceId: service.id,
-      kind,
-      input: {repo},
-      result: await analyzeGitHubRepo(repo)
-    };
-  }
-
   return {
     serviceId: service.id,
     kind,
     input: args,
-    result: {
-      summary: "Service executed",
-      note: "Define a backend execution handler for this endpointHash to return structured output."
-    }
+    result: await executeBuiltInService(kind, args)
+  };
+}
+
+export async function executeBuiltInService(kind: ServiceManifest["kind"], args: Record<string, unknown>) {
+  if (kind === "x_account_analyzer") {
+    const handle = requiredString(args.handle ?? args.username, "handle");
+    return analyzeXAccount(handle);
+  }
+
+  if (kind === "website_analyzer") {
+    const url = requiredString(args.url, "url");
+    return analyzeWebsite(url);
+  }
+
+  if (kind === "github_repo_analyzer") {
+    const repo = requiredString(args.repo ?? args.url, "repo");
+    return analyzeGitHubRepo(repo);
+  }
+
+  return {
+    summary: "Service executed",
+    note: "Define a backend execution handler for this endpointHash to return structured output."
   };
 }
 

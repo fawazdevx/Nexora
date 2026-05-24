@@ -61,11 +61,16 @@ export default function EscrowPage() {
       let txHash: string | null = null;
       if (escrowConfigured && escrow && chainEscrowId) {
         if (action === "fund") txHash = (await fundOnchainEscrow(chainEscrowId, escrow.amountUsdc, escrow.performanceBondUsdc)).fundHash;
-        if (action === "submit") txHash = await submitOnchainEscrow(chainEscrowId, "https://example.com/deliverable");
+        if (action === "submit") txHash = await submitOnchainEscrow(chainEscrowId, escrowDeliverableReference(escrow.id, escrow.description));
         if (action === "verify") txHash = await verifyOnchainEscrow(chainEscrowId, "Verified by Nexora operator");
         if (action === "release") txHash = await releaseOnchainEscrow(chainEscrowId);
       }
-      await apiPost(`/api/escrows/${id}/${action}`, action === "submit" ? {deliverableUrl: "https://example.com/deliverable", txHash} : {txHash});
+      await apiPost(
+        `/api/escrows/${id}/${action}`,
+        action === "submit"
+          ? {deliverableUrl: escrow ? escrowDeliverableReference(escrow.id, escrow.description) : undefined, autoExecute: true, txHash}
+          : {txHash}
+      );
       await snapshot.refetch();
       notify({title: `Escrow ${action}`, detail: escrow?.title ?? id});
       setStatus(txHash ? `Escrow ${action} submitted: ${txHash}` : `Escrow ${action} recorded.`);
@@ -123,6 +128,7 @@ export default function EscrowPage() {
             </div>
             {escrow.chainEscrowId ? <p className="mt-3 text-xs text-slate-500">Escrow #{escrow.chainEscrowId} on Arc</p> : null}
             <p className="mt-4 text-sm leading-6 text-slate-300">{escrow.description}</p>
+            <EscrowAgentResult result={escrow.deliverableResult} />
             <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
               <span className="surface px-3 py-2">Amount <b className="text-white">${escrow.amountUsdc}</b></span>
               <span className="surface px-3 py-2">Fee <b className="text-white">${escrow.platformFeeUsdc}</b></span>
@@ -130,7 +136,7 @@ export default function EscrowPage() {
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "fund")} disabled={!canFund}>Fund</button>
-              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "submit")} disabled={!canSubmit}>Submit</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "submit")} disabled={!canSubmit}>Run agent & submit</button>
               <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "verify")} disabled={!canVerify}>Verify</button>
               <button className="action-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "release")} disabled={!canRelease}>Release</button>
             </div>
@@ -140,6 +146,47 @@ export default function EscrowPage() {
       </section>
     </div>
   );
+}
+
+function escrowDeliverableReference(escrowId: string, description: string) {
+  const url = description.match(/https?:\/\/[^\s)]+/i)?.[0];
+  return url ?? `nexora://escrows/${escrowId}/deliverable`;
+}
+
+function EscrowAgentResult({result}: {result: unknown}) {
+  if (!result || typeof result !== "object") return null;
+  const record = result as {kind?: string; input?: unknown; output?: unknown};
+  const output = record.output && typeof record.output === "object" ? record.output as Record<string, unknown> : {};
+  const status = typeof output.status === "string" ? output.status : "ok";
+  const summary = typeof output.summary === "string"
+    ? output.summary
+    : typeof output.description === "string"
+      ? output.description
+      : typeof output.signal === "string"
+        ? output.signal
+        : "Agent execution completed.";
+
+  return (
+    <div className="mt-4 rounded-lg border border-mint/20 bg-mint/10 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-white">Agent deliverable</p>
+        <span className="status-pill border-mint/20 bg-mint/10 text-mint">{String(record.kind ?? status).replaceAll("_", " ")}</span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-200">{summary}</p>
+      <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+        {numberMetric("Words", output.wordCount)}
+        {numberMetric("Stars", output.stars)}
+        {numberMetric("Score", output.score)}
+      </div>
+      {typeof output.title === "string" ? <p className="mt-3 text-sm text-slate-300">Title: <b className="text-white">{output.title}</b></p> : null}
+      {typeof output.repo === "string" ? <p className="mt-3 text-sm text-slate-300">Repo: <b className="text-white">{output.repo}</b></p> : null}
+    </div>
+  );
+}
+
+function numberMetric(label: string, value: unknown) {
+  if (typeof value !== "number") return null;
+  return <span className="surface px-3 py-2">{label} <b className="text-white">{value}</b></span>;
 }
 
 function escrowRole(address: string | undefined, creator: string, counterparty: string) {

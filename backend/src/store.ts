@@ -101,6 +101,7 @@ export type EscrowRecord = {
   counterpartyNetUsdc: number;
   status: "draft" | "funded" | "submitted" | "verified" | "released" | "disputed" | "cancelled";
   deliverableUrl?: string | null;
+  deliverableResult?: unknown;
   verifierNotes?: string | null;
   txHash?: string | null;
   createdAt: string;
