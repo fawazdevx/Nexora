@@ -10,9 +10,9 @@ export default function EscrowPage() {
   const {address, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
   const [counterparty, setCounterparty] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("5");
+  const [title, setTitle] = useState("Analyze my website and send a growth report");
+  const [description, setDescription] = useState("Review https://nexora.finance, list the top conversion issues, summarize SEO problems, and deliver a short action plan in a shared document.");
+  const [amount, setAmount] = useState("10");
   const [bond, setBond] = useState("1");
   const [status, setStatus] = useState("");
   const escrowConfigured = Boolean(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS);
@@ -75,7 +75,7 @@ export default function EscrowPage() {
       <PageHeader
         kicker="Agent escrow"
         title="USDC work agreements"
-        description="Create escrow records for API builders, agents, and service operators with platform fees tracked separately."
+        description="Hold USDC for a task, let the worker submit proof, then release payment after review."
       />
       <section className="panel grid gap-4 md:grid-cols-2">
         <label className="grid gap-2 text-sm text-slate-300">
@@ -84,11 +84,11 @@ export default function EscrowPage() {
         </label>
         <label className="grid gap-2 text-sm text-slate-300">
           Title
-          <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Build API manifest" />
+          <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Analyze my website and send a growth report" />
         </label>
         <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
           Work details
-          <textarea className="field min-h-24" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe the deliverable." />
+          <textarea className="field min-h-24" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Example: Review my website, list conversion issues, summarize SEO problems, and send a report link." />
         </label>
         <label className="grid gap-2 text-sm text-slate-300">
           Payment USDC
@@ -102,7 +102,13 @@ export default function EscrowPage() {
         {status ? <p className="break-all text-sm text-slate-300 md:col-span-2">{status}</p> : null}
       </section>
       <section className="grid gap-4 lg:grid-cols-2">
-        {(snapshot.data?.escrows ?? []).map((escrow) => (
+        {(snapshot.data?.escrows ?? []).map((escrow) => {
+          const role = escrowRole(address, escrow.creatorAddress, escrow.counterpartyAddress);
+          const canFund = role === "creator" && escrow.status === "draft";
+          const canSubmit = role === "counterparty" && escrow.status === "funded";
+          const canVerify = role === "creator" && escrow.status === "submitted";
+          const canRelease = role === "creator" && escrow.status === "verified";
+          return (
           <article key={escrow.id} className="panel">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -119,14 +125,32 @@ export default function EscrowPage() {
               <span className="surface px-3 py-2">Net <b className="text-white">${escrow.counterpartyNetUsdc}</b></span>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "fund")}>Fund</button>
-              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "submit")}>Submit</button>
-              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "verify")}>Verify</button>
-              <button className="action-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "release")}>Release</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "fund")} disabled={!canFund}>Fund</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "submit")} disabled={!canSubmit}>Submit</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "verify")} disabled={!canVerify}>Verify</button>
+              <button className="action-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "release")} disabled={!canRelease}>Release</button>
             </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">{escrowHint(role, escrow.status)}</p>
           </article>
-        ))}
+        );})}
       </section>
     </div>
   );
+}
+
+function escrowRole(address: string | undefined, creator: string, counterparty: string) {
+  const current = address?.toLowerCase();
+  if (!current) return "viewer";
+  if (current === creator.toLowerCase()) return "creator";
+  if (current === counterparty.toLowerCase()) return "counterparty";
+  return "viewer";
+}
+
+function escrowHint(role: string, status: string) {
+  if (role === "creator" && status === "draft") return "You created this escrow. Fund it to lock USDC for the task.";
+  if (role === "counterparty" && status === "funded") return "You are the worker. Submit the deliverable after finishing the task.";
+  if (role === "creator" && status === "submitted") return "Review the submitted work. Verify it if it meets the agreement.";
+  if (role === "creator" && status === "verified") return "Release the escrow to pay the worker and close the task.";
+  if (role === "counterparty") return "Only the creator can fund, verify, or release this escrow.";
+  return "Connect the creator or counterparty wallet to take action.";
 }

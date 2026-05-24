@@ -12,9 +12,9 @@ export function PublishServiceForm() {
   const [price, setPrice] = useState("0.025");
   const [manifestKind, setManifestKind] = useState("generic");
   const [description, setDescription] = useState("");
-  const [platformFeeBps, setPlatformFeeBps] = useState("200");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [status, setStatus] = useState("");
+  const platformFeeBps = 200;
 
   async function publish() {
     if (!isConnected || !address) {
@@ -37,7 +37,7 @@ export function PublishServiceForm() {
         txHash: chainResult?.txHash ?? null,
         manifestKind,
         description,
-        platformFeeBps: Number(platformFeeBps),
+        platformFeeBps,
         webhookUrl: webhookUrl || null
       });
       setStatus(
@@ -68,22 +68,23 @@ export function PublishServiceForm() {
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Manifest type
-        <select className="field" value={manifestKind} onChange={(event) => setManifestKind(event.target.value)}>
+        <select className="field bg-slate-950 text-white" value={manifestKind} onChange={(event) => setManifestKind(event.target.value)}>
           <option value="generic">Generic API</option>
           <option value="website_analyzer">Website Analyzer</option>
           <option value="github_repo_analyzer">GitHub Repo Analyzer</option>
           <option value="x_account_analyzer">X Account Analyzer</option>
         </select>
+        <span className="text-xs leading-5 text-slate-500">Choose the kind of API you are publishing. Nexora uses this to show the right input and result layout.</span>
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Description
         <textarea className="field min-h-24" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Short public description of the API." />
       </label>
       <div className="grid gap-4 md:grid-cols-2">
-        <label className="grid gap-2 text-sm text-slate-300">
-          Platform fee bps
-          <input className="field" value={platformFeeBps} onChange={(event) => setPlatformFeeBps(event.target.value)} />
-        </label>
+        <div className="surface px-4 py-3">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Platform fee</p>
+          <p className="mt-2 text-sm text-white">{(platformFeeBps / 100).toFixed(2)}% to Nexora treasury</p>
+        </div>
         <label className="grid gap-2 text-sm text-slate-300">
           Webhook URL
           <input className="field" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://api.example.com/webhook" />

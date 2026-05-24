@@ -28,6 +28,12 @@ textarea {
   font: inherit;
 }
 
+select,
+option {
+  color: #f8fafc;
+  background: #0b1020;
+}
+
 @layer components {
   .panel {
     @apply rounded-xl border border-white/[0.09] bg-panel/90 p-6 shadow-neon backdrop-blur-xl;
