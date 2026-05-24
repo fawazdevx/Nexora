@@ -1,10 +1,19 @@
 import {createContext, useContext, useMemo, useState} from "react";
-import {Bell, CheckCircle2, X} from "lucide-react";
+import {Bell, CheckCircle2, Clock3, X} from "lucide-react";
 
 type Notification = {
   id: string;
   title: string;
   detail?: string;
+  createdAt: string;
+};
+
+export type ActivityItem = {
+  id: string;
+  title: string;
+  detail?: string | null;
+  kind: string;
+  txHash?: string | null;
   createdAt: string;
 };
 
@@ -25,6 +34,9 @@ export function NotificationsProvider({children}: {children: React.ReactNode}) {
         createdAt: new Date().toISOString()
       };
       setItems((current) => [item, ...current].slice(0, 8));
+      window.setTimeout(() => {
+        setItems((current) => current.filter((entry) => entry.id !== item.id));
+      }, 6_000);
     }
   }), []);
 
@@ -70,12 +82,58 @@ export function useNotifications() {
   return context;
 }
 
-export function NotificationsButton({count = 0}: {count?: number}) {
+export function NotificationsButton({items = []}: {items?: ActivityItem[]}) {
+  const [open, setOpen] = useState(false);
+  const count = items.length;
   return (
-    <button type="button" className="secondary-button hidden min-h-11 px-4 py-2 text-sm lg:inline-flex">
-      <Bell size={16} />
-      Activity
-      {count > 0 ? <span className="status-pill px-2 py-0.5 text-[11px]">{count}</span> : null}
-    </button>
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="secondary-button hidden min-h-11 px-4 py-2 text-sm lg:inline-flex">
+        <Bell size={16} />
+        Activity
+        {count > 0 ? <span className="status-pill px-2 py-0.5 text-[11px]">{count}</span> : null}
+      </button>
+      {open ? (
+        <div className="fixed inset-0 z-50">
+          <button type="button" className="absolute inset-0 bg-black/45" onClick={() => setOpen(false)} aria-label="Close activity" />
+          <aside className="absolute right-0 top-0 h-full w-[min(420px,100vw)] border-l border-white/[0.1] bg-[#0c101b] p-5 shadow-neon">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm uppercase tracking-[0.16em] text-orchid">Activity</p>
+                <h2 className="mt-1 text-xl font-semibold text-white">Nexora actions</h2>
+              </div>
+              <button type="button" onClick={() => setOpen(false)} className="secondary-button min-h-10 px-3 py-2" aria-label="Close activity">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 overflow-y-auto pr-1">
+              {items.map((item) => (
+                <article key={item.id} className="rounded-lg border border-white/[0.08] bg-white/[0.04] p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 text-mint"><Clock3 size={16} /></div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-white">{item.title}</p>
+                        <span className="status-pill px-2 py-0.5 text-[11px]">{item.kind}</span>
+                      </div>
+                      {item.detail ? <p className="mt-2 break-words text-sm leading-6 text-slate-400">{item.detail}</p> : null}
+                      <p className="mt-2 text-xs text-slate-500">{formatActivityTime(item.createdAt)}</p>
+                    </div>
+                  </div>
+                </article>
+              ))}
+              {items.length === 0 ? (
+                <p className="rounded-lg border border-white/[0.08] bg-white/[0.04] p-4 text-sm text-slate-400">No activity yet. Actions such as payments, escrow updates, policy saves, and agent wallet creation will appear here.</p>
+              ) : null}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+    </>
   );
+}
+
+function formatActivityTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
 }

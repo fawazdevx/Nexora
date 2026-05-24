@@ -381,7 +381,7 @@ async function createEscrow(input: {
 }
 
 async function updateEscrow(escrowId: string, status: "funded" | "submitted" | "verified" | "released", fields: Record<string, string | boolean | undefined>) {
-  const autoResult = status === "submitted" && fields.autoExecute ? await runEscrowAgent(escrowId) : null;
+  const autoResult = status === "submitted" && fields.autoExecute ? await runEscrowAgentSafe(escrowId) : null;
   return updateStore((store) => {
     const escrow = store.escrows.find((item) => item.id === escrowId);
     if (!escrow) throw new Error("escrow not found");
@@ -432,8 +432,8 @@ async function runEscrowAgent(escrowId: string) {
   const escrow = store.escrows.find((item) => item.id === escrowId);
   if (!escrow) throw new Error("escrow not found");
   const text = `${escrow.title}\n${escrow.description}`;
-  const github = text.match(/github\.com\/[^\s)]+|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/i)?.[0];
-  const url = text.match(/https?:\/\/[^\s)]+/i)?.[0];
+  const github = cleanExtractedValue(text.match(/github\.com\/[^\s)]+|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/i)?.[0]);
+  const url = cleanExtractedValue(text.match(/https?:\/\/[^\s)]+/i)?.[0]);
   const xHandle = text.match(/@[A-Za-z0-9_]{1,15}/)?.[0];
 
   if (github && /github\.com\/|^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(github)) {
@@ -480,6 +480,30 @@ async function runEscrowAgent(escrowId: string) {
       }
     }
   };
+}
+
+async function runEscrowAgentSafe(escrowId: string) {
+  try {
+    return await runEscrowAgent(escrowId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Agent execution failed";
+    return {
+      deliverableUrl: `nexora://escrows/${escrowId}/agent-error`,
+      result: {
+        kind: "agent_error",
+        input: {escrowId},
+        output: {
+          status: "error",
+          summary: "The on-chain submission succeeded, but Nexora could not complete the automatic agent analysis.",
+          message
+        }
+      }
+    };
+  }
+}
+
+function cleanExtractedValue(value: string | undefined) {
+  return value?.replace(/[.,;:!?]+$/g, "");
 }
 
 function normalizePath(path: string) {

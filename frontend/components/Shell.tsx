@@ -7,6 +7,7 @@ import {currentPath, navigateTo, NAVIGATE_EVENT, readNavigationPath} from "@/lib
 import {WalletConnect} from "@/components/WalletConnect";
 import {Footer} from "@/components/Footer";
 import {NotificationsButton} from "@/components/Notifications";
+import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -20,6 +21,7 @@ function isActive(pathname: string, href: string) {
 export function Shell({children}: {children: React.ReactNode}) {
   const [pathname, setPathname] = useState(() => currentPath());
   const {address, isConnected} = useAccount();
+  const snapshot = useAppSnapshot();
   const publicPage = pathname === "/" || pathname === "/maintenance";
 
   useEffect(() => {
@@ -77,7 +79,7 @@ export function Shell({children}: {children: React.ReactNode}) {
               <Search size={16} />
               <span className="w-52 truncate">Search agents, markets, policies</span>
             </div>
-            <NotificationsButton />
+            <NotificationsButton items={snapshot.data?.notifications ?? []} />
             <WalletConnect />
           </div>
         </div>

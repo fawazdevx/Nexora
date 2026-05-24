@@ -64,6 +64,7 @@ export default function EscrowPage() {
         if (action === "submit") {
           await assertCanSubmitOnchain(chainEscrowId, address);
           txHash = await submitOnchainEscrow(chainEscrowId, escrowDeliverableReference(escrow.id, escrow.description));
+          notify({title: "Escrow submitted on-chain", detail: escrow.title});
         }
         if (action === "verify") txHash = await verifyOnchainEscrow(chainEscrowId, "Verified by Nexora operator");
         if (action === "release") txHash = await releaseOnchainEscrow(chainEscrowId);
