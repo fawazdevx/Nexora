@@ -72,8 +72,10 @@ export default function IdentityPage() {
           <div className="mt-5 rounded-lg border border-white/[0.08] bg-white/[0.035] p-4 text-sm leading-6 text-slate-300">
             {arcName ? (
               <p>Nexora will use <b className="text-white">{arcName}</b> as your operator identity for agent wallets, x402 publishing, payments, reputation, and Save/Earn activity.</p>
+            ) : address ? (
+              <p>Nexora will use <b className="text-white">{shortAddress(address)}</b> as your operator identity until a primary .arc name resolves for this wallet.</p>
             ) : (
-              <p>After connecting the wallet that owns <b className="text-white">fawaz.arc</b>, set it as the primary name in the Arc Names app if it still resolves to your address instead of the name.</p>
+              <p>Connect a wallet to create your Nexora operator identity.</p>
             )}
           </div>
         </section>

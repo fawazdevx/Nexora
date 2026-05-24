@@ -58,7 +58,7 @@ export function Shell({children}: {children: React.ReactNode}) {
             </div>
           </a>
 
-          <nav className="hidden items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.035] p-1 xl:flex">
+          <nav className="hidden items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.035] p-1 2xl:flex">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = isActive(pathname, item.href);
@@ -71,8 +71,8 @@ export function Shell({children}: {children: React.ReactNode}) {
             })}
           </nav>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-[15px] text-slate-400 2xl:flex">
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-[15px] text-slate-400 min-[1700px]:flex">
               <Search size={16} />
               <span className="w-52 truncate">Search agents, markets, policies</span>
             </div>
@@ -80,7 +80,7 @@ export function Shell({children}: {children: React.ReactNode}) {
           </div>
         </div>
 
-        <nav className="mx-auto mt-3 flex max-w-[1440px] gap-2 overflow-x-auto xl:hidden">
+        <nav className="mx-auto mt-3 flex max-w-[1440px] gap-2 overflow-x-auto 2xl:hidden">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(pathname, item.href);
