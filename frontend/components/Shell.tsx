@@ -6,6 +6,7 @@ import {navItems} from "@/lib/data";
 import {currentPath, navigateTo, NAVIGATE_EVENT, readNavigationPath} from "@/lib/router";
 import {WalletConnect} from "@/components/WalletConnect";
 import {Footer} from "@/components/Footer";
+import {NotificationsButton} from "@/components/Notifications";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -76,6 +77,7 @@ export function Shell({children}: {children: React.ReactNode}) {
               <Search size={16} />
               <span className="w-52 truncate">Search agents, markets, policies</span>
             </div>
+            <NotificationsButton />
             <WalletConnect />
           </div>
         </div>

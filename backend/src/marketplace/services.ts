@@ -1,4 +1,5 @@
 import {readStore, updateStore, type ServiceManifest, type ServiceRecord} from "../store.js";
+import {pushNotification} from "../store.js";
 import {config} from "../config.js";
 
 type ServiceInput = {
@@ -47,6 +48,12 @@ export async function publishService(input: ServiceInput) {
     );
     if (existingIndex >= 0) store.services[existingIndex] = service;
     else store.services.push(service);
+    pushNotification(store, {
+      operatorAddress: service.publisherAddress,
+      title: "API published",
+      detail: `${service.name} · ${service.pricePerUnitUsdc} USDC per call`,
+      kind: "system"
+    });
 
     return service;
   });

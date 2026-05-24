@@ -1,6 +1,6 @@
 import {getService} from "../marketplace/services.js";
 import type {ServiceRecord} from "../store.js";
-import {readStore, updateStore} from "../store.js";
+import {pushNotification, readStore, updateStore} from "../store.js";
 
 type AuthorizeInput = {
   serviceId: string;
@@ -112,6 +112,18 @@ export async function authorizeX402(input: AuthorizeInput) {
 
   await updateStore((store) => {
     store.payments.push(payment);
+    pushNotification(store, {
+      operatorAddress: input.payer,
+      title: "Payment authorized",
+      detail: `${payment.amountUsdc} USDC for ${service.name}`,
+      kind: "payment"
+    });
+    pushNotification(store, {
+      operatorAddress: service.publisherAddress,
+      title: "API purchase authorized",
+      detail: `${payment.amountUsdc} USDC for ${service.name}`,
+      kind: "payment"
+    });
   });
 
   return {
@@ -141,6 +153,20 @@ export async function settleX402(input: SettleInput) {
     item.status = "settled";
     item.txHash = input.txHash ?? null;
     item.settledAt = new Date().toISOString();
+    pushNotification(store, {
+      operatorAddress: item.payer,
+      title: "Payment settled",
+      detail: `${item.amountUsdc} USDC paid for ${item.serviceName}`,
+      kind: "payment",
+      txHash: item.txHash
+    });
+    pushNotification(store, {
+      operatorAddress: item.publisherAddress,
+      title: "Revenue received",
+      detail: `${item.publisherNetUsdc ?? item.amountUsdc} USDC net from ${item.serviceName}`,
+      kind: "payment",
+      txHash: item.txHash
+    });
     return item;
   });
 

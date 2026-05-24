@@ -110,6 +110,16 @@ export type EscrowRecord = {
   releasedAt?: string | null;
 };
 
+export type NotificationRecord = {
+  id: string;
+  operatorAddress?: string | null;
+  title: string;
+  detail?: string | null;
+  kind: "agent" | "payment" | "earn" | "escrow" | "policy" | "system";
+  txHash?: string | null;
+  createdAt: string;
+};
+
 type StoreShape = {
   agents: AgentWalletRecord[];
   services: ServiceRecord[];
@@ -117,6 +127,7 @@ type StoreShape = {
   earnActivations: EarnActivationRecord[];
   subscriptions: SubscriptionRecord[];
   escrows: EscrowRecord[];
+  notifications: NotificationRecord[];
 };
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
@@ -184,6 +195,9 @@ export async function appSnapshot(operatorAddress?: string) {
   const escrows = operator
     ? store.escrows.filter((escrow) => escrow.creatorAddress.toLowerCase() === operator || escrow.counterpartyAddress.toLowerCase() === operator)
     : store.escrows;
+  const notifications = operator
+    ? store.notifications.filter((item) => !item.operatorAddress || item.operatorAddress.toLowerCase() === operator)
+    : store.notifications;
 
   const settledPayments = payments.filter((payment) => payment.status === "settled");
   const marketplaceSales = settledPayments.length;
@@ -197,6 +211,7 @@ export async function appSnapshot(operatorAddress?: string) {
     payments,
     subscriptions,
     escrows,
+    notifications: notifications.slice(0, 20),
     reputation: {
       successfulPayments,
       completedTasks,
@@ -249,7 +264,8 @@ function emptyStore(): StoreShape {
     payments: [],
     earnActivations: [],
     subscriptions: [],
-    escrows: []
+    escrows: [],
+    notifications: []
   };
 }
 
@@ -321,6 +337,15 @@ function defaultManifestForService(name: string, endpointHash: string): ServiceM
 
 function roundUsdc(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+export function pushNotification(store: StoreShape, input: Omit<NotificationRecord, "id" | "createdAt">) {
+  store.notifications.unshift({
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    ...input
+  });
+  store.notifications = store.notifications.slice(0, 200);
 }
 
 async function readDatabaseStore() {

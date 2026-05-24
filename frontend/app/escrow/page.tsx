@@ -5,6 +5,7 @@ import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {createOnchainEscrow, fundOnchainEscrow, releaseOnchainEscrow, submitOnchainEscrow, verifyOnchainEscrow} from "@/lib/contracts";
+import {useNotifications} from "@/components/Notifications";
 
 export default function EscrowPage() {
   const {address, isConnected} = useAccount();
@@ -15,6 +16,7 @@ export default function EscrowPage() {
   const [amount, setAmount] = useState("10");
   const [bond, setBond] = useState("1");
   const [status, setStatus] = useState("");
+  const {notify} = useNotifications();
   const escrowConfigured = Boolean(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS);
 
   async function createEscrow() {
@@ -45,6 +47,7 @@ export default function EscrowPage() {
         txHash: chain?.txHash ?? null
       });
       await snapshot.refetch();
+      notify({title: "Escrow created", detail: `${amount} USDC for ${title}`});
       setStatus(chain ? `Escrow created on Arc: ${chain.txHash}` : "Escrow created.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Escrow creation failed");
@@ -64,6 +67,7 @@ export default function EscrowPage() {
       }
       await apiPost(`/api/escrows/${id}/${action}`, action === "submit" ? {deliverableUrl: "https://example.com/deliverable", txHash} : {txHash});
       await snapshot.refetch();
+      notify({title: `Escrow ${action}`, detail: escrow?.title ?? id});
       setStatus(txHash ? `Escrow ${action} submitted: ${txHash}` : `Escrow ${action} recorded.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Escrow update failed");

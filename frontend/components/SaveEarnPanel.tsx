@@ -4,11 +4,13 @@ import {useAccount} from "wagmi";
 import {useQuery} from "@tanstack/react-query";
 import {depositSaveEarn, readSaveEarnPosition, withdrawSaveEarn} from "@/lib/contracts";
 import {shortAddress} from "@/lib/arc";
+import {useNotifications} from "@/components/Notifications";
 
 export function SaveEarnPanel() {
   const {address, isConnected} = useAccount();
   const [amount, setAmount] = useState("0");
   const [status, setStatus] = useState("");
+  const {notify} = useNotifications();
   const position = useQuery({
     queryKey: ["save-earn-position", address],
     queryFn: () => readSaveEarnPosition(address as string),
@@ -36,6 +38,7 @@ export function SaveEarnPanel() {
     setStatus("Approving USDC and routing deposit...");
     try {
       const result = await depositSaveEarn(amount);
+      notify({title: "USDC saved", detail: `${amount} USDC submitted for routing.`});
       await position.refetch();
       setStatus(`Deposit submitted from ${shortAddress(address)}: ${result.depositHash}`);
     } catch (error) {
@@ -55,6 +58,7 @@ export function SaveEarnPanel() {
     setStatus("Withdrawing from Save/Earn...");
     try {
       const hash = await withdrawSaveEarn(amount);
+      notify({title: "Withdrawal submitted", detail: `${amount} USDC withdraw request sent.`});
       await position.refetch();
       setStatus(`Withdrawal submitted from ${shortAddress(address)}: ${hash}`);
     } catch (error) {

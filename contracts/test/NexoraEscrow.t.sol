@@ -58,6 +58,18 @@ contract Actor {
     function submit(uint256 escrowId) external {
         escrow.submitDeliverable(escrowId, "https://example.com/deliverable");
     }
+
+    function verify(uint256 escrowId) external {
+        escrow.verifyDeliverable(escrowId, "ok");
+    }
+
+    function release(uint256 escrowId) external {
+        escrow.releaseEscrow(escrowId);
+    }
+
+    function cancel(uint256 escrowId) external {
+        escrow.cancelEscrow(escrowId);
+    }
 }
 
 contract NexoraEscrowTest {
@@ -79,8 +91,8 @@ contract NexoraEscrowTest {
 
         creator.fund(escrowId);
         counterparty.submit(escrowId);
-        escrow.verifyDeliverable(escrowId, "ok");
-        escrow.releaseEscrow(escrowId);
+        creator.verify(escrowId);
+        creator.release(escrowId);
 
         assert(usdc.balanceOf(treasury) == 2e6);
         assert(usdc.balanceOf(address(counterparty)) == 98e6);

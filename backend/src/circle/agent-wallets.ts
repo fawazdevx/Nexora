@@ -1,6 +1,6 @@
 import {Blockchain, initiateDeveloperControlledWalletsClient} from "@circle-fin/developer-controlled-wallets";
 import {config} from "../config.js";
-import {assertStoreReady, readStore, updateStore} from "../store.js";
+import {assertStoreReady, pushNotification, readStore, updateStore} from "../store.js";
 
 type CreateAgentWalletInput = {
   operatorAddress: string;
@@ -77,6 +77,12 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
         }
       };
       store.agents.push(record);
+      pushNotification(store, {
+        operatorAddress: record.operatorAddress,
+        title: "Agent wallet created",
+        detail: record.address ? `Wallet ready at ${record.address}` : "Wallet pending Circle confirmation",
+        kind: "agent"
+      });
       return record;
     });
   }
@@ -97,9 +103,15 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
         active: true
       }
     };
-    store.agents.push(record);
-    return record;
-  });
+      store.agents.push(record);
+      pushNotification(store, {
+        operatorAddress: record.operatorAddress,
+        title: "Agent wallet saved locally",
+        detail: "Circle API key is required to complete wallet creation",
+        kind: "agent"
+      });
+      return record;
+    });
 }
 
 export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput & {txHash?: string | null}) {
@@ -115,6 +127,13 @@ export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput
         active: true,
         txHash: input.txHash ?? null
       };
+      pushNotification(store, {
+        operatorAddress: agent.operatorAddress,
+        title: "Policy updated",
+        detail: `${input.dailyLimitUsdc} daily / ${input.transactionCapUsdc} per transaction`,
+        kind: "policy",
+        txHash: input.txHash ?? null
+      });
     }
     return {
       agentId,

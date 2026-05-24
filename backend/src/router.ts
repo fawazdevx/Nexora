@@ -5,7 +5,7 @@ import {listEarnOpportunities} from "./earn/opportunities.js";
 import {executeMarketplaceService, featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
-import {appSnapshot, readStore, storageFriendlyError, updateStore} from "./store.js";
+import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
 
 export type AppRequest = {
   method: string;
@@ -235,6 +235,12 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
           createdAt: new Date().toISOString()
         };
         store.earnActivations.push(record);
+        pushNotification(store, {
+          operatorAddress: record.operatorAddress,
+          title: "Save/Earn route requested",
+          detail: `${opportunity.title} activation queued`,
+          kind: "earn"
+        });
         return record;
       });
       return ok({...activation, queue: "agent-actions"});
@@ -355,6 +361,20 @@ async function createEscrow(input: {
       txHash: input.txHash ?? null
     };
     store.escrows.push(escrow);
+    pushNotification(store, {
+      operatorAddress: input.creatorAddress,
+      title: "Escrow created",
+      detail: `${input.amountUsdc} USDC for ${input.title}`,
+      kind: "escrow",
+      txHash: input.txHash ?? null
+    });
+    pushNotification(store, {
+      operatorAddress: input.counterpartyAddress,
+      title: "Escrow assigned",
+      detail: `${input.amountUsdc} USDC task: ${input.title}`,
+      kind: "escrow",
+      txHash: input.txHash ?? null
+    });
     return escrow;
   });
 }
@@ -372,6 +392,27 @@ async function updateEscrow(escrowId: string, status: "funded" | "submitted" | "
     if (status === "submitted") escrow.submittedAt = now;
     if (status === "verified") escrow.verifiedAt = now;
     if (status === "released") escrow.releasedAt = now;
+    const title = status === "funded"
+      ? "Escrow funded"
+      : status === "submitted"
+        ? "Escrow deliverable submitted"
+        : status === "verified"
+          ? "Escrow verified"
+          : "Escrow released";
+    pushNotification(store, {
+      operatorAddress: escrow.creatorAddress,
+      title,
+      detail: escrow.title,
+      kind: "escrow",
+      txHash: escrow.txHash ?? null
+    });
+    pushNotification(store, {
+      operatorAddress: escrow.counterpartyAddress,
+      title,
+      detail: escrow.title,
+      kind: "escrow",
+      txHash: escrow.txHash ?? null
+    });
     return escrow;
   });
 }

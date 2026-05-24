@@ -110,8 +110,9 @@ contract NexoraEscrow is NexoraUpgradeable {
         emit EscrowSubmitted(escrowId, deliverableUrl);
     }
 
-    function verifyDeliverable(uint256 escrowId, string calldata verifierNotes) external onlyOwner {
+    function verifyDeliverable(uint256 escrowId, string calldata verifierNotes) external {
         Escrow storage escrow = escrows[escrowId];
+        if (msg.sender != escrow.creator) revert NotParticipant();
         if (escrow.status != Status.Submitted) revert InvalidStatus();
         escrow.status = Status.Verified;
         escrow.verifierNotes = verifierNotes;

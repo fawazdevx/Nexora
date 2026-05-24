@@ -128,6 +128,15 @@ export type AppSnapshot = {
     verifiedAt?: string | null;
     releasedAt?: string | null;
   }>;
+  notifications: Array<{
+    id: string;
+    operatorAddress?: string | null;
+    title: string;
+    detail?: string | null;
+    kind: string;
+    txHash?: string | null;
+    createdAt: string;
+  }>;
   reputation: {
     successfulPayments: number;
     completedTasks: number;
