@@ -7,6 +7,7 @@ import {OperatorReputation} from "../src/OperatorReputation.sol";
 import {X402FacilitatorLedger} from "../src/X402FacilitatorLedger.sol";
 import {NexoraYieldRouter} from "../src/NexoraYieldRouter.sol";
 import {NexoraSaveEarnVault} from "../src/NexoraSaveEarnVault.sol";
+import {NexoraEscrow} from "../src/NexoraEscrow.sol";
 
 interface Vm {
     function startBroadcast() external;
@@ -31,6 +32,8 @@ contract DeployNexoraUpgradeable {
         address yieldRouterProxy;
         address saveEarnVaultImplementation;
         address saveEarnVaultProxy;
+        address escrowImplementation;
+        address escrowProxy;
     }
 
     function run() external returns (DeployedContracts memory deployed) {
@@ -90,6 +93,12 @@ contract DeployNexoraUpgradeable {
             )
         );
 
+        NexoraEscrow escrowImplementation = new NexoraEscrow();
+        NexoraProxy escrowProxy = new NexoraProxy(
+            address(escrowImplementation),
+            abi.encodeCall(NexoraEscrow.initialize, (owner, usdc, treasury))
+        );
+
         NexoraPolicyRegistry(address(policyProxy)).setFacilitator(address(ledgerProxy), true);
         OperatorReputation(address(reputationProxy)).setUpdater(address(ledgerProxy), true);
         NexoraYieldRouter(address(yieldRouterProxy)).setVault(address(saveEarnVaultProxy));
@@ -104,7 +113,9 @@ contract DeployNexoraUpgradeable {
             yieldRouterImplementation: address(yieldRouterImplementation),
             yieldRouterProxy: address(yieldRouterProxy),
             saveEarnVaultImplementation: address(saveEarnVaultImplementation),
-            saveEarnVaultProxy: address(saveEarnVaultProxy)
+            saveEarnVaultProxy: address(saveEarnVaultProxy),
+            escrowImplementation: address(escrowImplementation),
+            escrowProxy: address(escrowProxy)
         });
     }
 }

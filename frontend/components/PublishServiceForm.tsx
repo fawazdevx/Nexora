@@ -10,6 +10,10 @@ export function PublishServiceForm() {
   const [name, setName] = useState("");
   const [endpointHash, setEndpointHash] = useState("");
   const [price, setPrice] = useState("0.025");
+  const [manifestKind, setManifestKind] = useState("generic");
+  const [description, setDescription] = useState("");
+  const [platformFeeBps, setPlatformFeeBps] = useState("200");
+  const [webhookUrl, setWebhookUrl] = useState("");
   const [status, setStatus] = useState("");
 
   async function publish() {
@@ -30,7 +34,11 @@ export function PublishServiceForm() {
         endpointHash,
         pricePerUnitUsdc: Number(price),
         chainServiceId: chainResult?.chainServiceId ?? null,
-        txHash: chainResult?.txHash ?? null
+        txHash: chainResult?.txHash ?? null,
+        manifestKind,
+        description,
+        platformFeeBps: Number(platformFeeBps),
+        webhookUrl: webhookUrl || null
       });
       setStatus(
         chainResult
@@ -58,6 +66,29 @@ export function PublishServiceForm() {
         <input className="field" value={endpointHash} onChange={(event) => setEndpointHash(event.target.value)} placeholder="website-analyzer-v1" />
         <span className="text-xs leading-5 text-slate-500">Use website-analyzer-v1, github-repo-analyzer-v1, or x-account-analyzer-v1 for built-in Nexora execution.</span>
       </label>
+      <label className="grid gap-2 text-sm text-slate-300">
+        Manifest type
+        <select className="field" value={manifestKind} onChange={(event) => setManifestKind(event.target.value)}>
+          <option value="generic">Generic API</option>
+          <option value="website_analyzer">Website Analyzer</option>
+          <option value="github_repo_analyzer">GitHub Repo Analyzer</option>
+          <option value="x_account_analyzer">X Account Analyzer</option>
+        </select>
+      </label>
+      <label className="grid gap-2 text-sm text-slate-300">
+        Description
+        <textarea className="field min-h-24" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Short public description of the API." />
+      </label>
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="grid gap-2 text-sm text-slate-300">
+          Platform fee bps
+          <input className="field" value={platformFeeBps} onChange={(event) => setPlatformFeeBps(event.target.value)} />
+        </label>
+        <label className="grid gap-2 text-sm text-slate-300">
+          Webhook URL
+          <input className="field" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://api.example.com/webhook" />
+        </label>
+      </div>
       <label className="grid gap-2 text-sm text-slate-300">
         Price per unit in USDC
         <input className="field" value={price} onChange={(event) => setPrice(event.target.value)} />

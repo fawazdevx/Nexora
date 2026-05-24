@@ -50,6 +50,8 @@ export type AppSnapshot = {
     operatorAddress: string;
     arcName: string | null;
     address: string | null;
+    circleWalletSetId?: string | null;
+    circleWalletId?: string | null;
     circleWalletStatus: string;
     createdAt: string;
     policy: {
@@ -68,6 +70,16 @@ export type AppSnapshot = {
     name: string;
     endpointHash: string;
     pricePerUnitUsdc: number;
+    manifest: {
+      kind: string;
+      version: string;
+      description: string;
+      inputSchema: Array<{name: string; label: string; type: string; required: boolean; placeholder?: string}>;
+      outputSchema: string[];
+      revenueMode: string;
+      platformFeeBps: number;
+      webhookUrl?: string | null;
+    };
     active: boolean;
     featured: boolean;
     txHash?: string | null;
@@ -78,15 +90,44 @@ export type AppSnapshot = {
     serviceId: string;
     serviceName: string;
     payer: string;
+    agentId?: string | null;
+    agentWallet?: string | null;
     publisherAddress: string;
     amountUsdc: number;
+    grossAmountUsdc?: number;
+    platformFeeUsdc?: number;
+    publisherNetUsdc?: number;
+    facilitatorFeeBps?: number;
     units: number;
     requestHash: string;
     status: string;
+    policyReason?: string | null;
     txHash?: string | null;
     createdAt: string;
   }>;
   subscriptions: Array<{id: string; operatorAddress: string; plan: string; amountUsdc: number; status: string}>;
+  escrows: Array<{
+    id: string;
+    chainEscrowId?: number | null;
+    creatorAddress: string;
+    counterpartyAddress: string;
+    title: string;
+    description: string;
+    amountUsdc: number;
+    performanceBondUsdc: number;
+    platformFeeBps: number;
+    platformFeeUsdc: number;
+    counterpartyNetUsdc: number;
+    status: string;
+    deliverableUrl?: string | null;
+    verifierNotes?: string | null;
+    txHash?: string | null;
+    createdAt: string;
+    fundedAt?: string | null;
+    submittedAt?: string | null;
+    verifiedAt?: string | null;
+    releasedAt?: string | null;
+  }>;
   reputation: {
     successfulPayments: number;
     completedTasks: number;

@@ -1,11 +1,11 @@
 import {config} from "./config.js";
 import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
-import {createAgentWallet, refreshPendingCircleWallets, updateAgentPolicy} from "./circle/agent-wallets.js";
+import {createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy} from "./circle/agent-wallets.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
 import {executeMarketplaceService, featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
-import {appSnapshot, storageFriendlyError, updateStore} from "./store.js";
+import {appSnapshot, readStore, storageFriendlyError, updateStore} from "./store.js";
 
 export type AppRequest = {
   method: string;
@@ -132,13 +132,88 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
         serviceId: requiredString(body.serviceId, "serviceId"),
         payer: requiredString(body.payer, "payer"),
         requestHash: requiredString(body.requestHash, "requestHash"),
-        units: requiredNumber(body.units, "units")
+        units: requiredNumber(body.units, "units"),
+        agentId: optionalString(body.agentId)
       }));
     }
 
     if (req.method === "POST" && path === "/api/x402/settle") {
+      const authorizationId = requiredString(body.authorizationId, "authorizationId");
+      const agentId = optionalString(body.agentId);
+      if (agentId) {
+        const store = await readStore();
+        const payment = store.payments.find((item) => item.authorizationId === authorizationId || item.id === authorizationId);
+        const service = payment ? store.services.find((item) => item.id === payment.serviceId) : null;
+        if (!payment || !service) throw new Error("settlement authorization not found");
+        if (!service.chainServiceId) throw new Error("service is not published on-chain");
+        const circleSettlement = await submitAgentX402Settlement({
+          agentId,
+          serviceId: service.chainServiceId,
+          requestHash: payment.requestHash,
+          amountUsdc: payment.amountUsdc,
+          units: payment.units
+        });
+        if (circleSettlement.state === "PENDING") {
+          return ok({
+            authorizationId,
+            status: "pending_settlement",
+            ...circleSettlement
+          });
+        }
+        return ok(await settleX402({authorizationId, txHash: circleSettlement.txHash ?? undefined}));
+      }
       return ok(await settleX402({
-        authorizationId: requiredString(body.authorizationId, "authorizationId"),
+        authorizationId,
+        txHash: optionalString(body.txHash)
+      }));
+    }
+
+    if (req.method === "GET" && path.startsWith("/api/developers/") && path.endsWith("/dashboard")) {
+      return ok(await developerDashboard(decodeURIComponent(path.split("/")[3] ?? "")));
+    }
+
+    if (req.method === "GET" && path === "/api/escrows") {
+      return ok({escrows: (await readStore()).escrows});
+    }
+
+    if (req.method === "POST" && path === "/api/escrows") {
+      return response(201, await createEscrow({
+        creatorAddress: requiredString(body.creatorAddress, "creatorAddress"),
+        counterpartyAddress: requiredString(body.counterpartyAddress, "counterpartyAddress"),
+        title: requiredString(body.title, "title"),
+        description: requiredString(body.description, "description"),
+        amountUsdc: requiredNumber(body.amountUsdc, "amountUsdc"),
+        performanceBondUsdc: requiredNumber(body.performanceBondUsdc, "performanceBondUsdc"),
+        platformFeeBps: optionalNumber(body.platformFeeBps) ?? 100,
+        chainEscrowId: optionalNumber(body.chainEscrowId),
+        txHash: optionalString(body.txHash)
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/escrows/") && path.endsWith("/fund")) {
+      const escrowId = path.split("/")[3] ?? "";
+      return ok(await updateEscrow(escrowId, "funded", {
+        txHash: optionalString(body.txHash)
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/escrows/") && path.endsWith("/submit")) {
+      const escrowId = path.split("/")[3] ?? "";
+      return ok(await updateEscrow(escrowId, "submitted", {
+        deliverableUrl: optionalString(body.deliverableUrl)
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/escrows/") && path.endsWith("/verify")) {
+      const escrowId = path.split("/")[3] ?? "";
+      return ok(await updateEscrow(escrowId, "verified", {
+        verifierNotes: optionalString(body.verifierNotes)
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/escrows/") && path.endsWith("/release")) {
+      const escrowId = path.split("/")[3] ?? "";
+      return ok(await updateEscrow(escrowId, "released", {
         txHash: optionalString(body.txHash)
       }));
     }
@@ -223,6 +298,86 @@ function requiredNumber(value: unknown, label: string) {
 
 function arrayOfStrings(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+async function developerDashboard(address: string) {
+  const store = await readStore();
+  const lower = address.toLowerCase();
+  const services = store.services.filter((service) => service.publisherAddress.toLowerCase() === lower);
+  const payments = store.payments.filter((payment) => payment.publisherAddress.toLowerCase() === lower);
+  const escrows = store.escrows.filter((escrow) => escrow.creatorAddress.toLowerCase() === lower || escrow.counterpartyAddress.toLowerCase() === lower);
+  const settled = payments.filter((payment) => payment.status === "settled");
+  const platformRevenue = settled.reduce((sum, payment) => sum + (payment.platformFeeUsdc ?? 0), 0);
+  const grossRevenue = settled.reduce((sum, payment) => sum + (payment.grossAmountUsdc ?? payment.amountUsdc), 0);
+  return {
+    address,
+    services,
+    payments,
+    escrows,
+    summary: {
+      publishedServices: services.length,
+      totalExecutions: settled.length,
+      grossRevenueUsdc: grossRevenue,
+      platformRevenueUsdc: platformRevenue,
+      netRevenueUsdc: grossRevenue - platformRevenue,
+      activeEscrows: escrows.filter((escrow) => escrow.status !== "released" && escrow.status !== "cancelled").length
+    }
+  };
+}
+
+async function createEscrow(input: {
+  creatorAddress: string;
+  counterpartyAddress: string;
+  title: string;
+  description: string;
+  amountUsdc: number;
+  performanceBondUsdc: number;
+  platformFeeBps: number;
+  chainEscrowId?: number;
+  txHash?: string;
+}) {
+  return updateStore((store) => {
+    const platformFeeUsdc = roundUsdc((input.amountUsdc * input.platformFeeBps) / 10_000);
+    const escrow = {
+      id: crypto.randomUUID(),
+      chainEscrowId: input.chainEscrowId ?? null,
+      creatorAddress: input.creatorAddress,
+      counterpartyAddress: input.counterpartyAddress,
+      title: input.title,
+      description: input.description,
+      amountUsdc: input.amountUsdc,
+      performanceBondUsdc: input.performanceBondUsdc,
+      platformFeeBps: input.platformFeeBps,
+      platformFeeUsdc,
+      counterpartyNetUsdc: roundUsdc(input.amountUsdc - platformFeeUsdc),
+      status: "draft" as const,
+      createdAt: new Date().toISOString(),
+      txHash: input.txHash ?? null
+    };
+    store.escrows.push(escrow);
+    return escrow;
+  });
+}
+
+async function updateEscrow(escrowId: string, status: "funded" | "submitted" | "verified" | "released", fields: Record<string, string | undefined>) {
+  return updateStore((store) => {
+    const escrow = store.escrows.find((item) => item.id === escrowId);
+    if (!escrow) throw new Error("escrow not found");
+    escrow.status = status;
+    if (fields.txHash !== undefined) escrow.txHash = fields.txHash;
+    if (fields.deliverableUrl !== undefined) escrow.deliverableUrl = fields.deliverableUrl;
+    if (fields.verifierNotes !== undefined) escrow.verifierNotes = fields.verifierNotes;
+    const now = new Date().toISOString();
+    if (status === "funded") escrow.fundedAt = now;
+    if (status === "submitted") escrow.submittedAt = now;
+    if (status === "verified") escrow.verifiedAt = now;
+    if (status === "released") escrow.releasedAt = now;
+    return escrow;
+  });
+}
+
+function roundUsdc(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 function normalizePath(path: string) {

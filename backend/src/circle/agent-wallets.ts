@@ -124,6 +124,58 @@ export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput
   });
 }
 
+export async function submitAgentX402Settlement(input: {
+  agentId: string;
+  serviceId: number;
+  requestHash: string;
+  amountUsdc: number;
+  units: number;
+}) {
+  if (!config.circle.apiKey) throw new Error("Circle API key is required for agent-wallet settlement");
+  if (!config.contracts.usdc || !config.contracts.x402Ledger) throw new Error("USDC and x402 ledger addresses are required for agent-wallet settlement");
+
+  const store = await readStore();
+  const agent = store.agents.find((item) => item.id === input.agentId);
+  if (!agent) throw new Error("agent wallet not found");
+  if (!agent.circleWalletId) throw new Error("agent Circle wallet id is missing");
+  if (!agent.address) throw new Error("agent wallet address is not ready");
+
+  const client = circleClient();
+  const amountBaseUnits = String(Math.round(input.amountUsdc * 1_000_000));
+  const approve = await client.createContractExecutionTransaction({
+    walletId: agent.circleWalletId,
+    contractAddress: config.contracts.usdc,
+    abiFunctionSignature: "approve(address,uint256)",
+    abiParameters: [config.contracts.x402Ledger, amountBaseUnits],
+    idempotencyKey: crypto.randomUUID(),
+    refId: `nexora-x402-approve-${input.serviceId}`,
+    fee: {type: "level", config: {feeLevel: "MEDIUM"}}
+  });
+  const approveTransactionId = approve.data?.id;
+  if (!approveTransactionId) throw new Error(circleErrorMessage("Circle approval transaction failed", approve));
+
+  const settle = await client.createContractExecutionTransaction({
+    walletId: agent.circleWalletId,
+    contractAddress: config.contracts.x402Ledger,
+    abiFunctionSignature: "settleAgentRequest(uint256,bytes32,uint256)",
+    abiParameters: [String(input.serviceId), input.requestHash, String(input.units)],
+    idempotencyKey: crypto.randomUUID(),
+    refId: `nexora-x402-settle-${input.serviceId}`,
+    fee: {type: "level", config: {feeLevel: "MEDIUM"}}
+  });
+  const settlementTransactionId = settle.data?.id;
+  if (!settlementTransactionId) throw new Error(circleErrorMessage("Circle settlement transaction failed", settle));
+
+  const settlement = await pollCircleTransaction(settlementTransactionId);
+  return {
+    agentWallet: agent.address,
+    approveTransactionId,
+    settlementTransactionId,
+    state: settlement.state,
+    txHash: settlement.txHash ?? null
+  };
+}
+
 export async function refreshPendingCircleWallets(operatorAddress?: string) {
   if (!config.circle.apiKey) return;
 
@@ -201,4 +253,19 @@ function circleClient() {
     apiKey: config.circle.apiKey,
     entitySecret: config.circle.entitySecret
   });
+}
+
+async function pollCircleTransaction(transactionId: string) {
+  const client = circleClient();
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const response = await client.getTransaction({id: transactionId});
+    const transaction = response.data?.transaction;
+    const state = transaction?.state ?? "UNKNOWN";
+    if (["COMPLETE", "FAILED", "DENIED", "CANCELLED"].includes(state)) {
+      if (state !== "COMPLETE") throw new Error(`Circle transaction ${transactionId} ended with ${state}`);
+      return {state, txHash: transaction?.txHash ?? null};
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+  return {state: "PENDING", txHash: null};
 }

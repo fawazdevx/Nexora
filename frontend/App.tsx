@@ -5,6 +5,8 @@ import AgentsPage from "@/app/agents/page";
 import EarnPage from "@/app/earn/page";
 import MarketplacePage from "@/app/marketplace/page";
 import NewMarketplaceServicePage from "@/app/marketplace/new/page";
+import DeveloperDashboardPage from "@/app/developer/page";
+import EscrowPage from "@/app/escrow/page";
 import PaymentsPage from "@/app/payments/page";
 import IdentityPage from "@/app/identity/page";
 import ReputationPage from "@/app/reputation/page";
@@ -19,6 +21,8 @@ const routes: Record<string, React.ComponentType> = {
   "/earn": EarnPage,
   "/marketplace": MarketplacePage,
   "/marketplace/new": NewMarketplaceServicePage,
+  "/developer": DeveloperDashboardPage,
+  "/escrow": EscrowPage,
   "/payments": PaymentsPage,
   "/identity": IdentityPage,
   "/reputation": ReputationPage,

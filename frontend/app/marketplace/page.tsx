@@ -1,12 +1,11 @@
 import {useState} from "react";
-import {ExternalLink, GitFork, Plus, Star} from "lucide-react";
+import {ExternalLink, GitFork, Plus, ShieldCheck, Star} from "lucide-react";
 import {useAccount} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
 import {apiPost} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
-import {settleX402Request} from "@/lib/contracts";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -18,11 +17,18 @@ export default function MarketplacePage() {
   const [status, setStatus] = useState("");
   const [serviceInputs, setServiceInputs] = useState<Record<string, string>>({});
   const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
+  const [selectedAgentId, setSelectedAgentId] = useState("");
   const snapshot = useAppSnapshot();
+  const agents = snapshot.data?.agents ?? [];
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
 
   async function purchase(service: NonNullable<typeof snapshot.data>["services"][number]) {
     if (!isConnected || !address) {
       setStatus("Connect your wallet before purchasing an x402 service.");
+      return;
+    }
+    if (!selectedAgent) {
+      setStatus("Create an agent wallet before purchasing an API.");
       return;
     }
     setStatus(`Authorizing x402 payment for ${service.name}...`);
@@ -31,32 +37,30 @@ export default function MarketplacePage() {
       const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number}}>("/api/x402/authorize", {
         serviceId: service.id,
         payer: address,
+        agentId: selectedAgent.id,
         requestHash,
         units: 1
       });
-      let txHash: string | null = null;
-      if (service.chainServiceId) {
-        setStatus(`Submitting USDC approval and x402 settlement for ${service.name}...`);
-        const tx = await settleX402Request({
-          chainServiceId: service.chainServiceId,
-          requestHash,
-          payer: address,
-          units: 1,
-          amountUsdc: String(result.settlement.amountUsdc)
-        });
-        txHash = tx.settleHash;
+      const settlement = await apiPost<{status: string; txHash?: string | null}>("/api/x402/settle", {
+        authorizationId: result.authorizationId,
+        agentId: selectedAgent.id
+      });
+      if (settlement.status === "pending_settlement") {
+        await snapshot.refetch();
+        setStatus(`Agent wallet submitted settlement for ${service.name}. Circle is still confirming the transaction.`);
+        return;
       }
-      await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash});
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
         payer: address,
+        authorizationId: result.authorizationId,
         args: executionArgs(service, serviceInputs[service.id] ?? "")
       });
       await snapshot.refetch();
       setServiceResults((current) => ({...current, [service.id]: execution.result}));
       setStatus(
-        txHash
-          ? `Purchased ${service.name} for ${shortAddress(address)}. Settlement: ${txHash}`
-          : `Recorded test purchase for ${service.name}.`
+        settlement.txHash
+          ? `Purchased ${service.name} for ${shortAddress(address)}. Settlement: ${settlement.txHash}`
+          : `Purchased ${service.name} with agent policy enforced.`
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Service purchase failed");
@@ -73,6 +77,20 @@ export default function MarketplacePage() {
       />
       {status ? <p className="break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
       {snapshot.error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace API unavailable"}</p> : null}
+      <div className="panel flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-white">
+          <ShieldCheck size={17} className="text-mint" />
+          Agent used for purchases
+        </div>
+        <select className="field min-w-[260px]" value={selectedAgent?.id ?? selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)}>
+          {agents.length === 0 ? <option value="">No agent wallet yet</option> : null}
+          {agents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.arcName ?? shortAddress(agent.operatorAddress)} - {agent.address ? shortAddress(agent.address) : "pending"}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {(snapshot.data?.services ?? []).map((service) => (
           <article key={service.id} className="panel relative overflow-hidden">
@@ -87,7 +105,15 @@ export default function MarketplacePage() {
             <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
               <span className="surface px-3 py-2">Price <b className="text-white">${service.pricePerUnitUsdc}</b></span>
               <span className="surface px-3 py-2">Ledger <b className="text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
-              <span className="surface px-3 py-2">Featured <b className="text-white">{service.featured ? "Yes" : "No"}</b></span>
+              <span className="surface px-3 py-2">Fee <b className="text-white">{(service.manifest.platformFeeBps / 100).toFixed(2)}%</b></span>
+            </div>
+            <div className="mt-4 rounded-md border border-white/[0.08] bg-white/[0.035] p-4">
+              <p className="text-sm font-medium text-white">{service.manifest.description}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="status-pill">{formatKind(service.manifest.kind)}</span>
+                <span className="status-pill">v{service.manifest.version}</span>
+                {service.manifest.outputSchema.slice(0, 4).map((item) => <span key={item} className="status-pill">{item}</span>)}
+              </div>
             </div>
             {serviceInputLabel(service) ? (
               <label className="mt-5 grid gap-2 text-sm text-slate-300">
@@ -100,7 +126,7 @@ export default function MarketplacePage() {
                 />
               </label>
             ) : null}
-            <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected}>
+            <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected || !selectedAgent}>
               {service.chainServiceId ? "Purchase per execution" : "Test purchase"}
             </button>
             <ServiceResult result={serviceResults[service.id]} />
@@ -243,40 +269,25 @@ function ResultMetric({label, value, icon}: {label: string; value?: string | num
   );
 }
 
-function isXAnalyzer(service: {name: string; endpointHash: string}) {
-  const marker = `${service.name} ${service.endpointHash}`.toLowerCase();
-  return marker.includes("x account") || marker.includes("x-account") || marker.includes("twitter");
+function serviceInputLabel(service: {manifest: {inputSchema: Array<{label: string}>}}) {
+  return service.manifest.inputSchema[0]?.label ?? "";
 }
 
-function isWebsiteAnalyzer(service: {name: string; endpointHash: string}) {
-  const marker = `${service.name} ${service.endpointHash}`.toLowerCase();
-  return marker.includes("website") || marker.includes("url analyzer") || marker.includes("site analyzer");
+function serviceInputPlaceholder(service: {manifest: {inputSchema: Array<{placeholder?: string}>}}) {
+  return service.manifest.inputSchema[0]?.placeholder ?? "";
 }
 
-function isGitHubAnalyzer(service: {name: string; endpointHash: string}) {
-  const marker = `${service.name} ${service.endpointHash}`.toLowerCase();
-  return marker.includes("github") || marker.includes("repo analyzer") || marker.includes("repository");
-}
-
-function serviceInputLabel(service: {name: string; endpointHash: string}) {
-  if (isXAnalyzer(service)) return "X account";
-  if (isWebsiteAnalyzer(service)) return "Website URL";
-  if (isGitHubAnalyzer(service)) return "GitHub repository";
-  return "";
-}
-
-function serviceInputPlaceholder(service: {name: string; endpointHash: string}) {
-  if (isXAnalyzer(service)) return "@username";
-  if (isWebsiteAnalyzer(service)) return "https://example.com";
-  if (isGitHubAnalyzer(service)) return "owner/repo or GitHub URL";
-  return "";
-}
-
-function executionArgs(service: {name: string; endpointHash: string}, value: string) {
-  if (isXAnalyzer(service)) return {handle: value};
-  if (isWebsiteAnalyzer(service)) return {url: value};
-  if (isGitHubAnalyzer(service)) return {repo: value};
+function executionArgs(service: {manifest: {kind: string; inputSchema: Array<{name: string}>}}, value: string) {
+  const field = service.manifest.inputSchema[0]?.name;
+  if (field) return {[field]: value};
+  if (service.manifest.kind === "x_account_analyzer") return {handle: value};
+  if (service.manifest.kind === "website_analyzer") return {url: value};
+  if (service.manifest.kind === "github_repo_analyzer") return {repo: value};
   return {};
+}
+
+function formatKind(value: string) {
+  return value.replaceAll("_", " ");
 }
 
 function stringValue(value: unknown) {

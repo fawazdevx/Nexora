@@ -37,6 +37,16 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
         uint256 grossAmount,
         uint256 platformFee
     );
+    event AgentRequestSettled(
+        uint256 indexed serviceId,
+        bytes32 indexed requestHash,
+        address indexed agentWallet,
+        address operator,
+        address publisher,
+        uint256 units,
+        uint256 grossAmount,
+        uint256 platformFee
+    );
 
     error NotPublisher();
     error InactiveService();
@@ -128,5 +138,42 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
         reputation.record(service.publisher, 2, units);
 
         emit RequestSettled(serviceId, requestHash, payer, service.publisher, units, grossAmount, platformFee);
+    }
+
+    function settleAgentRequest(uint256 serviceId, bytes32 requestHash, uint256 units)
+        external
+        returns (uint256 grossAmount)
+    {
+        Service memory service = services[serviceId];
+        if (!service.active) revert InactiveService();
+        if (settledRequests[requestHash]) revert DuplicateRequest();
+        if (units == 0) revert ZeroUnits();
+
+        address agentWallet = msg.sender;
+        grossAmount = service.pricePerUnit * units;
+        if (!policyRegistry.canSpend(agentWallet, address(this), service.publisher, grossAmount)) revert PolicyRejected();
+        policyRegistry.recordSpend(agentWallet, address(this), service.publisher, grossAmount);
+
+        settledRequests[requestHash] = true;
+        uint256 platformFee = (grossAmount * feeBps) / 10_000;
+        uint256 publisherAmount = grossAmount - platformFee;
+
+        if (!usdc.transferFrom(agentWallet, service.publisher, publisherAmount)) revert TransferFailed();
+        if (platformFee > 0 && !usdc.transferFrom(agentWallet, treasury, platformFee)) revert TransferFailed();
+
+        reputation.record(service.publisher, 0, 1);
+        reputation.record(service.publisher, 2, units);
+        (address operator,,) = policyRegistry.agentProfiles(agentWallet);
+
+        emit AgentRequestSettled(
+            serviceId,
+            requestHash,
+            agentWallet,
+            operator,
+            service.publisher,
+            units,
+            grossAmount,
+            platformFee
+        );
     }
 }

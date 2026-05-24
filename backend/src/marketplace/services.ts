@@ -1,4 +1,4 @@
-import {readStore, updateStore} from "../store.js";
+import {readStore, updateStore, type ServiceManifest, type ServiceRecord} from "../store.js";
 import {config} from "../config.js";
 
 type ServiceInput = {
@@ -9,6 +9,10 @@ type ServiceInput = {
   chainServiceId?: number | null;
   txHash?: string | null;
   featured?: boolean;
+  manifestKind?: ServiceManifest["kind"];
+  description?: string | null;
+  webhookUrl?: string | null;
+  platformFeeBps?: number | null;
 };
 
 export async function listServices() {
@@ -23,6 +27,7 @@ export async function getService(serviceId: string) {
 
 export async function publishService(input: ServiceInput) {
   return updateStore((store) => {
+    const manifest = buildServiceManifest(input);
     const service = {
       id: input.chainServiceId ? String(input.chainServiceId) : crypto.randomUUID(),
       chainServiceId: input.chainServiceId ?? null,
@@ -30,6 +35,7 @@ export async function publishService(input: ServiceInput) {
       name: input.name,
       endpointHash: input.endpointHash,
       pricePerUnitUsdc: input.pricePerUnitUsdc,
+      manifest,
       active: true,
       featured: Boolean(input.featured),
       txHash: input.txHash ?? null,
@@ -105,13 +111,15 @@ export async function subscribePlan(input: {operatorAddress: string; plan: strin
 export async function executeMarketplaceService(input: {
   serviceId: string;
   payer: string;
+  authorizationId?: string | null;
   args?: Record<string, unknown>;
 }) {
   const service = await getService(input.serviceId);
   if (!service) throw new Error("service not found");
+  if (input.authorizationId) await assertSettledAuthorization(input.authorizationId, service.id, input.payer);
 
   const args = input.args ?? {};
-  const kind = normalizeServiceKind(service);
+  const kind = service.manifest.kind;
 
   if (kind === "x_account_analyzer") {
     const handle = requiredString(args.handle ?? args.username, "handle");
@@ -154,12 +162,90 @@ export async function executeMarketplaceService(input: {
   };
 }
 
-function normalizeServiceKind(service: Awaited<ReturnType<typeof getService>>) {
+export function buildServiceManifest(input: {
+  name: string;
+  endpointHash: string;
+  manifestKind?: ServiceManifest["kind"];
+  description?: string | null;
+  webhookUrl?: string | null;
+  platformFeeBps?: number | null;
+}): ServiceManifest {
+  const kind = input.manifestKind ?? inferServiceKind(input);
+  const platformFeeBps = clampFeeBps(input.platformFeeBps ?? 200);
+  const base = manifestTemplate(kind);
+  return {
+    ...base,
+    description: input.description?.trim() || base.description,
+    platformFeeBps,
+    webhookUrl: input.webhookUrl?.trim() || null
+  };
+}
+
+export function inferServiceKind(service: Pick<ServiceRecord, "name" | "endpointHash"> | {name: string; endpointHash: string}) {
   const marker = `${service?.name ?? ""} ${service?.endpointHash ?? ""}`.toLowerCase();
   if (marker.includes("x account") || marker.includes("x-account") || marker.includes("twitter")) return "x_account_analyzer";
   if (marker.includes("website") || marker.includes("url analyzer") || marker.includes("site analyzer")) return "website_analyzer";
   if (marker.includes("github") || marker.includes("repo analyzer") || marker.includes("repository")) return "github_repo_analyzer";
   return "generic";
+}
+
+function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
+  if (kind === "website_analyzer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a website URL and returns page title, metadata, links, headings, and a short readable summary.",
+      inputSchema: [{name: "url", label: "Website URL", type: "url", required: true, placeholder: "https://example.com"}],
+      outputSchema: ["title", "description", "summary", "headings", "links", "wordCount"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "github_repo_analyzer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a public GitHub repository and returns activity, language, license, popularity, and README signal.",
+      inputSchema: [{name: "repo", label: "GitHub repository", type: "text", required: true, placeholder: "owner/repo or GitHub URL"}],
+      outputSchema: ["repo", "description", "stars", "forks", "openIssues", "license", "signal"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "x_account_analyzer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a public X account when API credits are available and returns metrics, account signal, and score.",
+      inputSchema: [{name: "handle", label: "X account", type: "text", required: true, placeholder: "@username"}],
+      outputSchema: ["account", "metrics", "score", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  return {
+    kind,
+    version: "1.0.0",
+    description: "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
+    inputSchema: [],
+    outputSchema: ["summary", "note"],
+    revenueMode: "per_execution",
+    platformFeeBps: 200
+  };
+}
+
+async function assertSettledAuthorization(authorizationId: string, serviceId: string, payer: string) {
+  const store = await readStore();
+  const payment = store.payments.find((item) => item.authorizationId === authorizationId || item.id === authorizationId);
+  if (!payment) throw new Error("payment authorization not found");
+  if (payment.serviceId !== serviceId) throw new Error("payment authorization does not match service");
+  if (payment.payer.toLowerCase() !== payer.toLowerCase()) throw new Error("payment authorization does not match payer");
+  if (payment.status !== "settled") throw new Error("payment must be settled before execution");
+}
+
+function clampFeeBps(value: number) {
+  if (!Number.isFinite(value)) return 200;
+  return Math.max(0, Math.min(1000, Math.round(value)));
 }
 
 async function analyzeWebsite(inputUrl: string) {

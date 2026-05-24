@@ -6,6 +6,7 @@ import {OperatorReputation} from "../src/OperatorReputation.sol";
 import {X402FacilitatorLedger} from "../src/X402FacilitatorLedger.sol";
 import {NexoraYieldRouter} from "../src/NexoraYieldRouter.sol";
 import {NexoraSaveEarnVault} from "../src/NexoraSaveEarnVault.sol";
+import {NexoraEscrow} from "../src/NexoraEscrow.sol";
 
 interface Vm {
     function startBroadcast() external;
@@ -74,6 +75,19 @@ contract UpgradeSaveEarnVault {
         vm.startBroadcast();
         implementation = address(new NexoraSaveEarnVault());
         NexoraSaveEarnVault(proxy).upgradeTo(implementation);
+        vm.stopBroadcast();
+    }
+}
+
+contract UpgradeNexoraEscrow {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external returns (address implementation) {
+        address proxy = vm.envAddress("NEXORA_ESCROW_PROXY_ADDRESS");
+
+        vm.startBroadcast();
+        implementation = address(new NexoraEscrow());
+        NexoraEscrow(proxy).upgradeTo(implementation);
         vm.stopBroadcast();
     }
 }

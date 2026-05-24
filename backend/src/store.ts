@@ -29,10 +29,22 @@ export type ServiceRecord = {
   name: string;
   endpointHash: string;
   pricePerUnitUsdc: number;
+  manifest: ServiceManifest;
   active: boolean;
   featured: boolean;
   txHash?: string | null;
   createdAt: string;
+};
+
+export type ServiceManifest = {
+  kind: "website_analyzer" | "github_repo_analyzer" | "x_account_analyzer" | "generic";
+  version: string;
+  description: string;
+  inputSchema: Array<{name: string; label: string; type: "text" | "url"; required: boolean; placeholder?: string}>;
+  outputSchema: string[];
+  revenueMode: "per_execution";
+  platformFeeBps: number;
+  webhookUrl?: string | null;
 };
 
 export type PaymentRecord = {
@@ -41,11 +53,18 @@ export type PaymentRecord = {
   serviceId: string;
   serviceName: string;
   payer: string;
+  agentId?: string | null;
+  agentWallet?: string | null;
   publisherAddress: string;
   amountUsdc: number;
+  grossAmountUsdc?: number;
+  platformFeeUsdc?: number;
+  publisherNetUsdc?: number;
+  facilitatorFeeBps?: number;
   units: number;
   requestHash: string;
   status: "authorized" | "settled" | "failed" | "policy_blocked";
+  policyReason?: string | null;
   txHash?: string | null;
   createdAt: string;
   settledAt?: string | null;
@@ -68,12 +87,36 @@ export type SubscriptionRecord = {
   createdAt: string;
 };
 
+export type EscrowRecord = {
+  id: string;
+  chainEscrowId?: number | null;
+  creatorAddress: string;
+  counterpartyAddress: string;
+  title: string;
+  description: string;
+  amountUsdc: number;
+  performanceBondUsdc: number;
+  platformFeeBps: number;
+  platformFeeUsdc: number;
+  counterpartyNetUsdc: number;
+  status: "draft" | "funded" | "submitted" | "verified" | "released" | "disputed" | "cancelled";
+  deliverableUrl?: string | null;
+  verifierNotes?: string | null;
+  txHash?: string | null;
+  createdAt: string;
+  fundedAt?: string | null;
+  submittedAt?: string | null;
+  verifiedAt?: string | null;
+  releasedAt?: string | null;
+};
+
 type StoreShape = {
   agents: AgentWalletRecord[];
   services: ServiceRecord[];
   payments: PaymentRecord[];
   earnActivations: EarnActivationRecord[];
   subscriptions: SubscriptionRecord[];
+  escrows: EscrowRecord[];
 };
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
@@ -138,6 +181,9 @@ export async function appSnapshot(operatorAddress?: string) {
   const subscriptions = operator
     ? store.subscriptions.filter((subscription) => subscription.operatorAddress.toLowerCase() === operator)
     : store.subscriptions;
+  const escrows = operator
+    ? store.escrows.filter((escrow) => escrow.creatorAddress.toLowerCase() === operator || escrow.counterpartyAddress.toLowerCase() === operator)
+    : store.escrows;
 
   const settledPayments = payments.filter((payment) => payment.status === "settled");
   const marketplaceSales = settledPayments.length;
@@ -150,6 +196,7 @@ export async function appSnapshot(operatorAddress?: string) {
     services: store.services,
     payments,
     subscriptions,
+    escrows,
     reputation: {
       successfulPayments,
       completedTasks,
@@ -201,12 +248,79 @@ function emptyStore(): StoreShape {
     services: [],
     payments: [],
     earnActivations: [],
-    subscriptions: []
+    subscriptions: [],
+    escrows: []
   };
 }
 
 function normalizeStore(value: unknown): StoreShape {
-  return {...emptyStore(), ...(value && typeof value === "object" ? value : {})} as StoreShape;
+  const store = {...emptyStore(), ...(value && typeof value === "object" ? value : {})} as StoreShape;
+  store.services = store.services.map((service) => ({
+    ...service,
+    manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash)
+  }));
+  store.payments = store.payments.map((payment) => {
+    const grossAmountUsdc = payment.grossAmountUsdc ?? payment.amountUsdc;
+    const facilitatorFeeBps = payment.facilitatorFeeBps ?? 0;
+    const platformFeeUsdc = payment.platformFeeUsdc ?? roundUsdc(grossAmountUsdc * facilitatorFeeBps / 10_000);
+    return {
+      ...payment,
+      grossAmountUsdc,
+      platformFeeUsdc,
+      publisherNetUsdc: payment.publisherNetUsdc ?? roundUsdc(grossAmountUsdc - platformFeeUsdc)
+    };
+  });
+  return store;
+}
+
+function defaultManifestForService(name: string, endpointHash: string): ServiceManifest {
+  const marker = `${name} ${endpointHash}`.toLowerCase();
+  if (marker.includes("website") || marker.includes("url analyzer") || marker.includes("site analyzer")) {
+    return {
+      kind: "website_analyzer",
+      version: "1.0.0",
+      description: "Reviews a website URL and returns page title, metadata, links, headings, and a short readable summary.",
+      inputSchema: [{name: "url", label: "Website URL", type: "url", required: true, placeholder: "https://example.com"}],
+      outputSchema: ["title", "description", "summary", "headings", "links", "wordCount"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (marker.includes("github") || marker.includes("repo analyzer") || marker.includes("repository")) {
+    return {
+      kind: "github_repo_analyzer",
+      version: "1.0.0",
+      description: "Reviews a public GitHub repository and returns activity, language, license, popularity, and README signal.",
+      inputSchema: [{name: "repo", label: "GitHub repository", type: "text", required: true, placeholder: "owner/repo or GitHub URL"}],
+      outputSchema: ["repo", "description", "stars", "forks", "openIssues", "license", "signal"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (marker.includes("x account") || marker.includes("x-account") || marker.includes("twitter")) {
+    return {
+      kind: "x_account_analyzer",
+      version: "1.0.0",
+      description: "Reviews a public X account when API credits are available and returns metrics, account signal, and score.",
+      inputSchema: [{name: "handle", label: "X account", type: "text", required: true, placeholder: "@username"}],
+      outputSchema: ["account", "metrics", "score", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  return {
+    kind: "generic",
+    version: "1.0.0",
+    description: "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
+    inputSchema: [],
+    outputSchema: ["summary", "note"],
+    revenueMode: "per_execution",
+    platformFeeBps: 200
+  };
+}
+
+function roundUsdc(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 async function readDatabaseStore() {

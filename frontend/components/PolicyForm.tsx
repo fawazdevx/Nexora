@@ -68,6 +68,8 @@ export function PolicyForm() {
       const txHash = selectedAgent.address
         ? await writeAgentPolicy({
             agentWallet: selectedAgent.address,
+            operatorAddress: selectedAgent.operatorAddress,
+            arcName: selectedAgent.arcName,
             dailyLimitUsdc: dailyLimit,
             transactionCapUsdc: transactionCap,
             contractAllowlist: contractAllowlistItems,

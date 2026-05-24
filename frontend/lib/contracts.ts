@@ -1,4 +1,4 @@
-import {createPublicClient, createWalletClient, custom, formatUnits, http, parseUnits, type Address, type Hash} from "viem";
+import {createPublicClient, createWalletClient, custom, formatUnits, http, keccak256, parseUnits, stringToHex, type Address, type Hash} from "viem";
 import {arcTestnet} from "@/lib/arc";
 
 const arcChain = {
@@ -25,6 +25,17 @@ export const policyRegistryAbi = [
       {name: "contractAllowlistEnabled", type: "bool"},
       {name: "recipientAllowlistEnabled", type: "bool"},
       {name: "active", type: "bool"}
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "registerAgent",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "agentWallet", type: "address"},
+      {name: "operator", type: "address"},
+      {name: "arcNameHash", type: "bytes32"}
     ],
     outputs: []
   },
@@ -94,6 +105,64 @@ export const erc20Abi = [
       {name: "amount", type: "uint256"}
     ],
     outputs: [{type: "bool"}]
+  }
+] as const;
+
+export const nexoraEscrowAbi = [
+  {
+    type: "function",
+    name: "createEscrow",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "counterparty", type: "address"},
+      {name: "amount", type: "uint256"},
+      {name: "performanceBond", type: "uint256"},
+      {name: "platformFeeBps", type: "uint16"},
+      {name: "title", type: "string"},
+      {name: "description", type: "string"}
+    ],
+    outputs: [{name: "escrowId", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "fundEscrow",
+    stateMutability: "nonpayable",
+    inputs: [{name: "escrowId", type: "uint256"}],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "submitDeliverable",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "escrowId", type: "uint256"},
+      {name: "deliverableUrl", type: "string"}
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "verifyDeliverable",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "escrowId", type: "uint256"},
+      {name: "verifierNotes", type: "string"}
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "releaseEscrow",
+    stateMutability: "nonpayable",
+    inputs: [{name: "escrowId", type: "uint256"}],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "nextEscrowId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{name: "", type: "uint256"}]
   }
 ] as const;
 
@@ -221,6 +290,8 @@ function publicClient() {
 
 export async function writeAgentPolicy(input: {
   agentWallet: string;
+  operatorAddress: string;
+  arcName?: string | null;
   dailyLimitUsdc: string;
   transactionCapUsdc: string;
   contractAllowlist?: string[];
@@ -229,6 +300,14 @@ export async function writeAgentPolicy(input: {
 }): Promise<Hash> {
   const client = await walletClient();
   const address = requireAddress(import.meta.env.VITE_POLICY_REGISTRY_ADDRESS, "Policy registry address");
+  const arcNameHash = keccak256(stringToHex(input.arcName?.trim() || input.operatorAddress));
+
+  await client.writeContract({
+    address,
+    abi: policyRegistryAbi,
+    functionName: "registerAgent",
+    args: [input.agentWallet as Address, input.operatorAddress as Address, arcNameHash]
+  });
 
   const policyHash = await client.writeContract({
     address,
@@ -305,6 +384,90 @@ export async function settleX402Request(input: {chainServiceId: number; requestH
   });
 
   return {approveHash, settleHash};
+}
+
+export async function createOnchainEscrow(input: {
+  counterparty: string;
+  amountUsdc: string;
+  performanceBondUsdc: string;
+  platformFeeBps: number;
+  title: string;
+  description: string;
+}) {
+  const client = await walletClient();
+  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  const nextEscrowId = await publicClient().readContract({
+    address: escrow,
+    abi: nexoraEscrowAbi,
+    functionName: "nextEscrowId"
+  });
+  const txHash = await client.writeContract({
+    address: escrow,
+    abi: nexoraEscrowAbi,
+    functionName: "createEscrow",
+    args: [
+      input.counterparty as Address,
+      parseUnits(input.amountUsdc || "0", 6),
+      parseUnits(input.performanceBondUsdc || "0", 6),
+      input.platformFeeBps,
+      input.title,
+      input.description
+    ]
+  });
+  return {txHash, chainEscrowId: Number(nextEscrowId)};
+}
+
+export async function fundOnchainEscrow(escrowId: string, amountUsdc: number, performanceBondUsdc: number) {
+  const client = await walletClient();
+  const usdc = requireAddress(import.meta.env.VITE_USDC_ADDRESS, "USDC address");
+  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  const amount = parseUnits(String(amountUsdc + performanceBondUsdc), 6);
+  const approveHash = await client.writeContract({
+    address: usdc,
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [escrow, amount]
+  });
+  const fundHash = await client.writeContract({
+    address: escrow,
+    abi: nexoraEscrowAbi,
+    functionName: "fundEscrow",
+    args: [BigInt(escrowId)]
+  });
+  return {approveHash, fundHash};
+}
+
+export async function submitOnchainEscrow(escrowId: string, deliverableUrl: string) {
+  const client = await walletClient();
+  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  return client.writeContract({
+    address: escrow,
+    abi: nexoraEscrowAbi,
+    functionName: "submitDeliverable",
+    args: [BigInt(escrowId), deliverableUrl]
+  });
+}
+
+export async function verifyOnchainEscrow(escrowId: string, verifierNotes: string) {
+  const client = await walletClient();
+  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  return client.writeContract({
+    address: escrow,
+    abi: nexoraEscrowAbi,
+    functionName: "verifyDeliverable",
+    args: [BigInt(escrowId), verifierNotes]
+  });
+}
+
+export async function releaseOnchainEscrow(escrowId: string) {
+  const client = await walletClient();
+  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  return client.writeContract({
+    address: escrow,
+    abi: nexoraEscrowAbi,
+    functionName: "releaseEscrow",
+    args: [BigInt(escrowId)]
+  });
 }
 
 export async function depositSaveEarn(amountUsdc: string): Promise<{approveHash: Hash; depositHash: Hash}> {
