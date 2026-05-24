@@ -44,6 +44,21 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return parseResponse<T>(response);
 }
 
+export async function apiDelete<T>(path: string, body?: unknown): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(buildApiUrl(path), {
+      method: "DELETE",
+      headers: body === undefined ? undefined : {"content-type": "application/json"},
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+  } catch {
+    throw new Error(apiConnectionHint(path));
+  }
+
+  return parseResponse<T>(response);
+}
+
 export type AppSnapshot = {
   agents: Array<{
     id: string;

@@ -1,7 +1,7 @@
 import {useState} from "react";
 import {useAccount} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
-import {apiPost} from "@/lib/api";
+import {apiDelete, apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {createOnchainEscrow, fundOnchainEscrow, readOnchainEscrow, releaseOnchainEscrow, submitOnchainEscrow, verifyOnchainEscrow} from "@/lib/contracts";
@@ -103,6 +103,25 @@ export default function EscrowPage() {
     }
   }
 
+  async function removeEscrow(id: string) {
+    if (!address) {
+      setStatus("Connect your wallet before removing an escrow.");
+      return;
+    }
+    setBusyAction(`${id}:remove`);
+    try {
+      const escrow = snapshot.data?.escrows.find((item) => item.id === id);
+      await apiDelete(`/api/escrows/${id}`, {operatorAddress: address});
+      await snapshot.refetch();
+      notify({title: "Escrow removed", detail: escrow?.title ?? id});
+      setStatus("Escrow removed from your workspace.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Escrow removal failed");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -141,6 +160,7 @@ export default function EscrowPage() {
           const canSubmit = role === "counterparty" && escrow.status === "funded";
           const canVerify = role === "creator" && escrow.status === "submitted";
           const canRelease = role === "creator" && escrow.status === "verified";
+          const canRemove = (role === "creator" || role === "counterparty") && ["draft", "released", "cancelled"].includes(escrow.status);
           return (
           <article key={escrow.id} className="panel">
             <div className="flex items-start justify-between gap-3">
@@ -163,6 +183,7 @@ export default function EscrowPage() {
               <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "submit")} disabled={!canSubmit || busyAction === `${escrow.id}:submit`}>{busyAction === `${escrow.id}:submit` ? "Running..." : "Run agent & submit"}</button>
               <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "verify")} disabled={!canVerify || busyAction === `${escrow.id}:verify`}>{busyAction === `${escrow.id}:verify` ? "Verifying..." : "Verify"}</button>
               <button className="action-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "release")} disabled={!canRelease || busyAction === `${escrow.id}:release`}>{busyAction === `${escrow.id}:release` ? "Releasing..." : "Release"}</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void removeEscrow(escrow.id)} disabled={!canRemove || busyAction === `${escrow.id}:remove`}>{busyAction === `${escrow.id}:remove` ? "Removing..." : "Remove"}</button>
             </div>
             <p className="mt-3 text-xs leading-5 text-slate-500">{escrowHint(role, escrow.status)}</p>
           </article>

@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react";
-import {Activity, Menu, RadioTower, Search, ShieldCheck, Sparkles} from "lucide-react";
+import {Activity, RadioTower, ShieldCheck, Sparkles} from "lucide-react";
 import {useAccount} from "wagmi";
 import {ArcNameLabel} from "@/components/ArcNameLabel";
 import {navItems} from "@/lib/data";
@@ -60,24 +60,7 @@ export function Shell({children}: {children: React.ReactNode}) {
             </div>
           </a>
 
-          <nav className="hidden min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.035] p-1 min-[1840px]:flex">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(pathname, item.href);
-              return (
-                <a key={item.href} href={item.href} onClick={(event) => navigate(event, item.href)} className={active ? "nav-item nav-item-active" : "nav-item"}>
-                  <Icon size={16} />
-                  <span>{item.label}</span>
-                </a>
-              );
-            })}
-          </nav>
-
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3 min-[1840px]:flex-none">
-            <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-[15px] text-slate-400 min-[1700px]:flex">
-              <Search size={16} />
-              <span className="w-52 truncate">Search agents, markets, policies</span>
-            </div>
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3">
             <ChainSwitcher />
             <div className="hidden sm:block">
               <NotificationsButton items={snapshot.data?.notifications ?? []} />
@@ -86,7 +69,7 @@ export function Shell({children}: {children: React.ReactNode}) {
           </div>
         </div>
 
-        <nav className="mx-auto mt-3 flex max-w-[1440px] gap-2 overflow-x-auto min-[1840px]:hidden">
+        <nav className="mx-auto mt-3 flex max-w-[1440px] gap-2 overflow-x-auto pb-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(pathname, item.href);
@@ -97,7 +80,6 @@ export function Shell({children}: {children: React.ReactNode}) {
               </a>
             );
           })}
-          <span className="nav-chip"><Menu size={15} /> More</span>
         </nav>
       </header>
 

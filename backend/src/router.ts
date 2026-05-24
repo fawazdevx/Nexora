@@ -190,6 +190,11 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       }));
     }
 
+    if (req.method === "DELETE" && path.startsWith("/api/escrows/")) {
+      const escrowId = path.split("/")[3] ?? "";
+      return ok(await removeEscrow(escrowId, requiredString(body.operatorAddress, "operatorAddress")));
+    }
+
     if (req.method === "POST" && path.startsWith("/api/escrows/") && path.endsWith("/fund")) {
       const escrowId = path.split("/")[3] ?? "";
       return ok(await updateEscrow(escrowId, "funded", {
@@ -377,6 +382,30 @@ async function createEscrow(input: {
       txHash: input.txHash ?? null
     });
     return escrow;
+  });
+}
+
+async function removeEscrow(escrowId: string, operatorAddress: string) {
+  return updateStore((store) => {
+    const escrowIndex = store.escrows.findIndex((item) => item.id === escrowId);
+    if (escrowIndex === -1) throw new Error("escrow not found");
+
+    const escrow = store.escrows[escrowIndex];
+    const operator = operatorAddress.toLowerCase();
+    const canRemove = escrow.creatorAddress.toLowerCase() === operator || escrow.counterpartyAddress.toLowerCase() === operator;
+    if (!canRemove) throw new Error("Only the creator or counterparty can remove this escrow from their workspace.");
+    if (!["draft", "released", "cancelled"].includes(escrow.status)) {
+      throw new Error("Only draft, released, or cancelled escrows can be removed from the workspace.");
+    }
+
+    store.escrows.splice(escrowIndex, 1);
+    pushNotification(store, {
+      operatorAddress,
+      title: "Escrow removed",
+      detail: escrow.title,
+      kind: "escrow"
+    });
+    return {removed: true, escrowId};
   });
 }
 
