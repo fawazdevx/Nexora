@@ -4,7 +4,7 @@ import {PageHeader} from "@/components/PageHeader";
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
-import {createOnchainEscrow, fundOnchainEscrow, releaseOnchainEscrow, submitOnchainEscrow, verifyOnchainEscrow} from "@/lib/contracts";
+import {createOnchainEscrow, fundOnchainEscrow, readOnchainEscrow, releaseOnchainEscrow, submitOnchainEscrow, verifyOnchainEscrow} from "@/lib/contracts";
 import {useNotifications} from "@/components/Notifications";
 
 export default function EscrowPage() {
@@ -61,7 +61,10 @@ export default function EscrowPage() {
       let txHash: string | null = null;
       if (escrowConfigured && escrow && chainEscrowId) {
         if (action === "fund") txHash = (await fundOnchainEscrow(chainEscrowId, escrow.amountUsdc, escrow.performanceBondUsdc)).fundHash;
-        if (action === "submit") txHash = await submitOnchainEscrow(chainEscrowId, escrowDeliverableReference(escrow.id, escrow.description));
+        if (action === "submit") {
+          await assertCanSubmitOnchain(chainEscrowId, address);
+          txHash = await submitOnchainEscrow(chainEscrowId, escrowDeliverableReference(escrow.id, escrow.description));
+        }
         if (action === "verify") txHash = await verifyOnchainEscrow(chainEscrowId, "Verified by Nexora operator");
         if (action === "release") txHash = await releaseOnchainEscrow(chainEscrowId);
       }
@@ -149,8 +152,23 @@ export default function EscrowPage() {
 }
 
 function escrowDeliverableReference(escrowId: string, description: string) {
-  const url = description.match(/https?:\/\/[^\s)]+/i)?.[0];
+  const url = description.match(/https?:\/\/[^\s)]+/i)?.[0]?.replace(/[.,;:!?]+$/g, "");
   return url ?? `nexora://escrows/${escrowId}/deliverable`;
+}
+
+async function assertCanSubmitOnchain(chainEscrowId: string, address: string | undefined) {
+  if (!address) throw new Error("Connect the counterparty wallet before submitting.");
+  const escrow = await readOnchainEscrow(chainEscrowId);
+  if (escrow.counterparty.toLowerCase() !== address.toLowerCase()) {
+    throw new Error(`Only the counterparty wallet can submit this escrow. Connected: ${shortAddress(address)}, counterparty: ${shortAddress(escrow.counterparty)}`);
+  }
+  if (Number(escrow.status) !== 1) {
+    throw new Error(`This escrow is not funded on-chain yet. Current on-chain status: ${escrowStatusLabel(Number(escrow.status))}.`);
+  }
+}
+
+function escrowStatusLabel(status: number) {
+  return ["draft", "funded", "submitted", "verified", "released", "disputed", "cancelled"][status] ?? `unknown ${status}`;
 }
 
 function EscrowAgentResult({result}: {result: unknown}) {

@@ -163,6 +163,26 @@ export const nexoraEscrowAbi = [
     stateMutability: "view",
     inputs: [],
     outputs: [{name: "", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "escrows",
+    stateMutability: "view",
+    inputs: [{name: "", type: "uint256"}],
+    outputs: [
+      {name: "creator", type: "address"},
+      {name: "counterparty", type: "address"},
+      {name: "amount", type: "uint256"},
+      {name: "performanceBond", type: "uint256"},
+      {name: "platformFeeBps", type: "uint16"},
+      {name: "platformFee", type: "uint256"},
+      {name: "counterpartyNet", type: "uint256"},
+      {name: "status", type: "uint8"},
+      {name: "title", type: "string"},
+      {name: "description", type: "string"},
+      {name: "deliverableUrl", type: "string"},
+      {name: "verifierNotes", type: "string"}
+    ]
   }
 ] as const;
 
@@ -446,6 +466,44 @@ export async function submitOnchainEscrow(escrowId: string, deliverableUrl: stri
     functionName: "submitDeliverable",
     args: [BigInt(escrowId), deliverableUrl]
   });
+}
+
+export async function readOnchainEscrow(escrowId: string) {
+  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  const data = await publicClient().readContract({
+    address: escrow,
+    abi: nexoraEscrowAbi,
+    functionName: "escrows",
+    args: [BigInt(escrowId)]
+  });
+  const [
+    creator,
+    counterparty,
+    amount,
+    performanceBond,
+    platformFeeBps,
+    platformFee,
+    counterpartyNet,
+    status,
+    title,
+    description,
+    deliverableUrl,
+    verifierNotes
+  ] = data;
+  return {
+    creator,
+    counterparty,
+    amount,
+    performanceBond,
+    platformFeeBps,
+    platformFee,
+    counterpartyNet,
+    status,
+    title,
+    description,
+    deliverableUrl,
+    verifierNotes
+  };
 }
 
 export async function verifyOnchainEscrow(escrowId: string, verifierNotes: string) {
