@@ -40,7 +40,7 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
       wallets = await client.createWallets({
         walletSetId,
         idempotencyKey: crypto.randomUUID(),
-        blockchains: [Blockchain.ArcTestnet],
+        blockchains: [circleBlockchain()],
         count: 1,
         accountType: "SCA",
         metadata: [
@@ -172,6 +172,7 @@ export async function submitAgentX402Settlement(input: {
   });
   const approveTransactionId = approve.data?.id;
   if (!approveTransactionId) throw new Error(circleErrorMessage("Circle approval transaction failed", approve));
+  await pollCircleTransaction(approveTransactionId);
 
   const settle = await client.createContractExecutionTransaction({
     walletId: agent.circleWalletId,
@@ -272,6 +273,13 @@ function circleClient() {
     apiKey: config.circle.apiKey,
     entitySecret: config.circle.entitySecret
   });
+}
+
+function circleBlockchain() {
+  if (config.arc.chainId === 5042002) return Blockchain.ArcTestnet;
+  if (config.arc.chainId === 421614) return Blockchain.ArbSepolia;
+  if (config.arc.chainId === 42161) return Blockchain.Arb;
+  throw new Error(`Circle agent wallets are not configured for chain ${config.arc.chainId}. Add a Circle blockchain mapping before creating agent wallets on this network.`);
 }
 
 async function pollCircleTransaction(transactionId: string) {
