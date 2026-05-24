@@ -1,9 +1,17 @@
 interface ImportMetaEnv {
   readonly MODE?: string;
   readonly VITE_ARC_CHAIN_ID?: string;
+  readonly VITE_CHAIN_NAME?: string;
   readonly VITE_ARC_RPC_URL?: string;
   readonly VITE_ARC_EXPLORER_URL?: string;
   readonly VITE_ARC_NAMES_REGISTRY_ADDRESS?: string;
+  readonly VITE_NATIVE_CURRENCY_NAME?: string;
+  readonly VITE_NATIVE_CURRENCY_SYMBOL?: string;
+  readonly VITE_NATIVE_CURRENCY_DECIMALS?: string;
+  readonly VITE_ENABLE_ARBITRUM_SEPOLIA?: string;
+  readonly VITE_ENABLE_ARBITRUM_ONE?: string;
+  readonly VITE_ARBITRUM_SEPOLIA_RPC_URL?: string;
+  readonly VITE_ARBITRUM_ONE_RPC_URL?: string;
   readonly VITE_NEXORA_API_URL?: string;
   readonly VITE_MAINTENANCE_MODE?: string;
   readonly VITE_POLICY_REGISTRY_ADDRESS?: string;

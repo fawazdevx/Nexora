@@ -8,6 +8,7 @@ import {WalletConnect} from "@/components/WalletConnect";
 import {Footer} from "@/components/Footer";
 import {NotificationsButton} from "@/components/Notifications";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
+import {ChainSwitcher} from "@/components/ChainSwitcher";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -47,14 +48,14 @@ export function Shell({children}: {children: React.ReactNode}) {
     <div className="min-h-screen overflow-hidden bg-void text-slate-100">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(155,92,246,0.18),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.035),transparent_24%)]" />
 
-      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-void/88 px-4 py-4 backdrop-blur-xl md:px-6">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">
-          <a href="/app" onClick={(event) => navigate(event, "/app")} className="flex shrink-0 items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-xl border border-plasma/25 bg-plasma/10 text-orchid">
+      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-void/88 px-3 py-3 backdrop-blur-xl sm:px-4 md:px-6 md:py-4">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-2 sm:gap-4">
+          <a href="/app" onClick={(event) => navigate(event, "/app")} className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <div className="hidden h-10 w-10 shrink-0 place-items-center rounded-xl border border-plasma/25 bg-plasma/10 text-orchid min-[380px]:grid sm:h-11 sm:w-11">
               <Activity size={20} />
             </div>
             <div className="min-w-0">
-              <div className="truncate text-2xl font-semibold tracking-normal text-white">Nexora</div>
+              <div className="truncate text-xl font-semibold tracking-normal text-white sm:text-2xl">Nexora</div>
               <div className="mt-1 hidden text-sm text-slate-400 sm:block">
                 {isConnected ? <ArcNameLabel address={address} fallback="Agent Finance Network" /> : "Agent Finance Network"}
               </div>
@@ -74,12 +75,15 @@ export function Shell({children}: {children: React.ReactNode}) {
             })}
           </nav>
 
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 sm:gap-3">
             <div className="hidden items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-3 text-[15px] text-slate-400 min-[1700px]:flex">
               <Search size={16} />
               <span className="w-52 truncate">Search agents, markets, policies</span>
             </div>
-            <NotificationsButton items={snapshot.data?.notifications ?? []} />
+            <ChainSwitcher />
+            <div className="hidden sm:block">
+              <NotificationsButton items={snapshot.data?.notifications ?? []} />
+            </div>
             <WalletConnect />
           </div>
         </div>

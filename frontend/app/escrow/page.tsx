@@ -16,6 +16,7 @@ export default function EscrowPage() {
   const [amount, setAmount] = useState("10");
   const [bond, setBond] = useState("1");
   const [status, setStatus] = useState("");
+  const [busyAction, setBusyAction] = useState("");
   const {notify} = useNotifications();
   const escrowConfigured = Boolean(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS);
 
@@ -55,19 +56,36 @@ export default function EscrowPage() {
   }
 
   async function advance(id: string, action: "fund" | "submit" | "verify" | "release") {
+    setBusyAction(`${id}:${action}`);
     try {
       const escrow = snapshot.data?.escrows.find((item) => item.id === id);
+      if (!escrow) {
+        setStatus("Escrow record was not found. Refresh and try again.");
+        return;
+      }
       const chainEscrowId = escrow?.chainEscrowId ? String(escrow.chainEscrowId) : "";
       let txHash: string | null = null;
       if (escrowConfigured && escrow && chainEscrowId) {
-        if (action === "fund") txHash = (await fundOnchainEscrow(chainEscrowId, escrow.amountUsdc, escrow.performanceBondUsdc)).fundHash;
+        if (action === "fund") {
+          setStatus("Funding escrow on-chain...");
+          txHash = (await fundOnchainEscrow(chainEscrowId, escrow.amountUsdc, escrow.performanceBondUsdc)).fundHash;
+        }
         if (action === "submit") {
+          setStatus("Checking escrow status before running agent...");
           await assertCanSubmitOnchain(chainEscrowId, address);
+          setStatus("Submitting deliverable on-chain...");
           txHash = await submitOnchainEscrow(chainEscrowId, escrowDeliverableReference(escrow.id, escrow.description));
           notify({title: "Escrow submitted on-chain", detail: escrow.title});
+          setStatus("Running Nexora agent and saving deliverable...");
         }
-        if (action === "verify") txHash = await verifyOnchainEscrow(chainEscrowId, "Verified by Nexora operator");
-        if (action === "release") txHash = await releaseOnchainEscrow(chainEscrowId);
+        if (action === "verify") {
+          setStatus("Verifying escrow on-chain...");
+          txHash = await verifyOnchainEscrow(chainEscrowId, "Verified by Nexora operator");
+        }
+        if (action === "release") {
+          setStatus("Releasing escrow payment on-chain...");
+          txHash = await releaseOnchainEscrow(chainEscrowId);
+        }
       }
       await apiPost(
         `/api/escrows/${id}/${action}`,
@@ -80,6 +98,8 @@ export default function EscrowPage() {
       setStatus(txHash ? `Escrow ${action} submitted: ${txHash}` : `Escrow ${action} recorded.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Escrow update failed");
+    } finally {
+      setBusyAction("");
     }
   }
 
@@ -139,10 +159,10 @@ export default function EscrowPage() {
               <span className="surface px-3 py-2">Net <b className="text-white">${escrow.counterpartyNetUsdc}</b></span>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "fund")} disabled={!canFund}>Fund</button>
-              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "submit")} disabled={!canSubmit}>Run agent & submit</button>
-              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "verify")} disabled={!canVerify}>Verify</button>
-              <button className="action-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "release")} disabled={!canRelease}>Release</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "fund")} disabled={!canFund || busyAction === `${escrow.id}:fund`}>{busyAction === `${escrow.id}:fund` ? "Funding..." : "Fund"}</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "submit")} disabled={!canSubmit || busyAction === `${escrow.id}:submit`}>{busyAction === `${escrow.id}:submit` ? "Running..." : "Run agent & submit"}</button>
+              <button className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "verify")} disabled={!canVerify || busyAction === `${escrow.id}:verify`}>{busyAction === `${escrow.id}:verify` ? "Verifying..." : "Verify"}</button>
+              <button className="action-button min-h-10 px-3 py-2 text-sm" onClick={() => void advance(escrow.id, "release")} disabled={!canRelease || busyAction === `${escrow.id}:release`}>{busyAction === `${escrow.id}:release` ? "Releasing..." : "Release"}</button>
             </div>
             <p className="mt-3 text-xs leading-5 text-slate-500">{escrowHint(role, escrow.status)}</p>
           </article>

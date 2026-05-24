@@ -4,7 +4,7 @@ import {darkTheme, getDefaultConfig, RainbowKitProvider} from "@rainbow-me/rainb
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {useMemo, useState} from "react";
 import {WagmiProvider} from "wagmi";
-import {arcTestnetWagmiChain} from "@/lib/arc";
+import {supportedChains} from "@/lib/arc";
 import {NotificationsProvider} from "@/components/Notifications";
 
 export function Providers({children}: {children: React.ReactNode}) {
@@ -14,7 +14,7 @@ export function Providers({children}: {children: React.ReactNode}) {
       getDefaultConfig({
         appName: "Nexora",
         projectId: import.meta.env.VITE_WC_PROJECT_ID || "NEXORA_DEV_PROJECT_ID",
-        chains: [arcTestnetWagmiChain],
+        chains: supportedChains,
         ssr: false
       }),
     []
