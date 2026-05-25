@@ -5,6 +5,7 @@ import {listEarnOpportunities} from "./earn/opportunities.js";
 import {executeBuiltInService, executeMarketplaceService, featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
+import {circleSwapReadiness, estimateCircleSwap, executeCircleSwap} from "./swap/circle-swap.js";
 import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
 
 export type AppRequest = {
@@ -77,6 +78,28 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path === "/api/marketplace/services") {
       return ok({services: await listServices()});
+    }
+
+    if (req.method === "GET" && path === "/api/swap/readiness") {
+      return ok(circleSwapReadiness());
+    }
+
+    if (req.method === "POST" && path === "/api/swap/estimate") {
+      return ok(await estimateCircleSwap({
+        tokenIn: requiredString(body.tokenIn, "tokenIn"),
+        tokenOut: requiredString(body.tokenOut, "tokenOut"),
+        amountIn: requiredString(body.amountIn, "amountIn"),
+        slippageBps: optionalNumber(body.slippageBps)
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/swap/execute") {
+      return ok(await executeCircleSwap({
+        tokenIn: requiredString(body.tokenIn, "tokenIn"),
+        tokenOut: requiredString(body.tokenOut, "tokenOut"),
+        amountIn: requiredString(body.amountIn, "amountIn"),
+        slippageBps: optionalNumber(body.slippageBps)
+      }));
     }
 
     if (req.method === "POST" && path === "/api/marketplace/services") {

@@ -28,7 +28,8 @@ export const config = {
   },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
-    entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? ""
+    entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? "",
+    kitKey: process.env.CIRCLE_KIT_KEY ?? process.env.KIT_KEY ?? process.env.VITE_CIRCLE_KIT_KEY ?? ""
   },
   contracts: {
     usdc: process.env.USDC_ADDRESS ?? "",

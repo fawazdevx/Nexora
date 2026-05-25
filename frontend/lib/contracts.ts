@@ -96,6 +96,36 @@ export const erc20Abi = [
   }
 ] as const;
 
+export const xylonetRouterAbi = [
+  {
+    type: "function",
+    name: "getAmountOut",
+    stateMutability: "view",
+    inputs: [
+      {name: "pool", type: "address"},
+      {name: "tokenIn", type: "address"},
+      {name: "tokenOut", type: "address"},
+      {name: "amountIn", type: "uint256"}
+    ],
+    outputs: [{name: "amountOut", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "swap",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "pool", type: "address"},
+      {name: "tokenIn", type: "address"},
+      {name: "tokenOut", type: "address"},
+      {name: "amountIn", type: "uint256"},
+      {name: "minAmountOut", type: "uint256"},
+      {name: "to", type: "address"},
+      {name: "deadline", type: "uint256"}
+    ],
+    outputs: [{name: "amountOut", type: "uint256"}]
+  }
+] as const;
+
 export const nexoraEscrowAbi = [
   {
     type: "function",
@@ -270,6 +300,26 @@ export const xylonet = {
   usyc: "0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C"
 } as const;
 
+export const xylonetSwapTokens = {
+  USDC: {symbol: "USDC", address: "0x3600000000000000000000000000000000000000", decimals: 6},
+  EURC: {symbol: "EURC", address: xylonet.eurc, decimals: 6},
+  USYC: {symbol: "USYC", address: xylonet.usyc, decimals: 6}
+} as const;
+
+export type XyloNetSwapToken = keyof typeof xylonetSwapTokens;
+
+export type XyloNetSwapQuote = {
+  venue: "XyloNet";
+  tokenIn: XyloNetSwapToken;
+  tokenOut: XyloNetSwapToken;
+  amountInRaw: bigint;
+  amountOutRaw: bigint;
+  amountIn: string;
+  amountOut: string;
+  pool: Address;
+  router: Address;
+};
+
 const arbSepoliaContracts = {
   usdc: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
   policyRegistry: "0x30c8cc3C07F822f8cCb8ab2df2a8485DDb210328",
@@ -358,6 +408,7 @@ async function walletClient() {
   const chain = chainById(chainId);
 
   return {
+    account: account as Address,
     chainId,
     contracts: contractAddressesForChain(chainId),
     client: createWalletClient({
@@ -375,6 +426,90 @@ async function publicClient(chainId?: number) {
     chain,
     transport: http(chain.rpcUrls.default.http[0])
   });
+}
+
+function xylonetRoute(tokenIn: XyloNetSwapToken, tokenOut: XyloNetSwapToken): Address | null {
+  if (tokenIn === "USDC" && tokenOut === "EURC") return xylonet.usdcEurcPool as Address;
+  if (tokenIn === "USDC" && tokenOut === "USYC") return xylonet.usdcUsycPool as Address;
+  return null;
+}
+
+export function isXyloNetRouteSupported(tokenIn: XyloNetSwapToken, tokenOut: XyloNetSwapToken) {
+  return Boolean(xylonetRoute(tokenIn, tokenOut));
+}
+
+export async function quoteXyloNetSwap(input: {tokenIn: XyloNetSwapToken; tokenOut: XyloNetSwapToken; amountIn: string}): Promise<XyloNetSwapQuote> {
+  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  if (chainId !== arcTestnet.id) {
+    throw new Error("XyloNet swaps are available on Arc Testnet.");
+  }
+  const pool = xylonetRoute(input.tokenIn, input.tokenOut);
+  if (!pool) {
+    throw new Error(`${input.tokenIn} to ${input.tokenOut} is not available on XyloNet yet.`);
+  }
+  const tokenIn = xylonetSwapTokens[input.tokenIn];
+  const tokenOut = xylonetSwapTokens[input.tokenOut];
+  const amountInRaw = parseUnits(input.amountIn || "0", tokenIn.decimals);
+  if (amountInRaw <= 0n) {
+    throw new Error("Enter an amount greater than zero.");
+  }
+
+  const amountOutRaw = await (await publicClient(chainId)).readContract({
+    address: xylonet.router,
+    abi: xylonetRouterAbi,
+    functionName: "getAmountOut",
+    args: [pool, tokenIn.address, tokenOut.address, amountInRaw]
+  });
+
+  return {
+    venue: "XyloNet",
+    tokenIn: input.tokenIn,
+    tokenOut: input.tokenOut,
+    amountInRaw,
+    amountOutRaw,
+    amountIn: formatUnits(amountInRaw, tokenIn.decimals),
+    amountOut: formatUnits(amountOutRaw, tokenOut.decimals),
+    pool,
+    router: xylonet.router
+  };
+}
+
+export async function executeXyloNetSwap(input: {
+  quote: XyloNetSwapQuote;
+  slippageBps: number;
+}): Promise<{approveHash: Hash; swapHash: Hash}> {
+  const {client, account, chainId} = await walletClient();
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Switch to Arc Testnet to swap through XyloNet.");
+  }
+
+  const tokenIn = xylonetSwapTokens[input.quote.tokenIn];
+  const minAmountOut = input.quote.amountOutRaw * BigInt(10_000 - input.slippageBps) / 10_000n;
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+
+  const approveHash = await client.writeContract({
+    address: tokenIn.address,
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [input.quote.router, input.quote.amountInRaw]
+  });
+
+  const swapHash = await client.writeContract({
+    address: input.quote.router,
+    abi: xylonetRouterAbi,
+    functionName: "swap",
+    args: [
+      input.quote.pool,
+      tokenIn.address,
+      xylonetSwapTokens[input.quote.tokenOut].address,
+      input.quote.amountInRaw,
+      minAmountOut,
+      account,
+      deadline
+    ]
+  });
+
+  return {approveHash, swapHash};
 }
 
 export async function writeAgentPolicy(input: {
