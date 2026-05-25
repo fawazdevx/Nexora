@@ -158,6 +158,7 @@ export async function submitAgentX402Settlement(input: {
   if (!agent) throw new Error("agent wallet not found");
   if (!agent.circleWalletId) throw new Error("agent Circle wallet id is missing");
   if (!agent.address) throw new Error("agent wallet address is not ready");
+  if (!config.contracts.x402Ledger) throw new Error("x402 ledger address is not configured");
 
   const client = circleClient();
   const amountBaseUnits = String(Math.round(input.amountUsdc * 1_000_000));
@@ -289,7 +290,12 @@ async function pollCircleTransaction(transactionId: string) {
     const transaction = response.data?.transaction;
     const state = transaction?.state ?? "UNKNOWN";
     if (["COMPLETE", "FAILED", "DENIED", "CANCELLED"].includes(state)) {
-      if (state !== "COMPLETE") throw new Error(`Circle transaction ${transactionId} ended with ${state}`);
+      if (state !== "COMPLETE") {
+        const reason = transaction?.errorReason ? `: ${transaction.errorReason}` : "";
+        const details = transaction?.errorDetails ? ` (${transaction.errorDetails})` : "";
+        const chain = transaction?.blockchain ? ` on ${transaction.blockchain}` : "";
+        throw new Error(`Circle transaction ${transactionId} ended with ${state}${chain}${reason}${details}`);
+      }
       return {state, txHash: transaction?.txHash ?? null};
     }
     await new Promise((resolve) => setTimeout(resolve, 1_500));

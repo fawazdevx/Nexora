@@ -6,6 +6,7 @@ import {apiPost} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
+import {settleX402Request} from "@/lib/contracts";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -41,15 +42,21 @@ export default function MarketplacePage() {
         requestHash,
         units: 1
       });
+      if (!service.chainServiceId) {
+        throw new Error("This service is not published on-chain yet.");
+      }
+      setStatus(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement for ${service.name}...`);
+      const walletSettlement = await settleX402Request({
+        chainServiceId: service.chainServiceId,
+        requestHash,
+        payer: address,
+        units: 1,
+        amountUsdc: String(result.settlement.amountUsdc)
+      });
       const settlement = await apiPost<{status: string; txHash?: string | null}>("/api/x402/settle", {
         authorizationId: result.authorizationId,
-        agentId: selectedAgent.id
+        txHash: walletSettlement.settleHash
       });
-      if (settlement.status === "pending_settlement") {
-        await snapshot.refetch();
-        setStatus(`Agent wallet submitted settlement for ${service.name}. Circle is still confirming the transaction.`);
-        return;
-      }
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
         payer: address,
         authorizationId: result.authorizationId,

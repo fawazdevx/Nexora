@@ -12,6 +12,20 @@ export const config = {
     chainId: Number(process.env.ARC_CHAIN_ID ?? 5042002),
     explorerUrl: process.env.ARC_EXPLORER_URL ?? "https://testnet.arcscan.app"
   },
+  arbitrum: {
+    sepoliaRpcUrl: process.env.ARB_SEPOLIA_RPC_URL ?? process.env.ARBITRUM_SEPOLIA_RPC_URL ?? "https://sepolia-rollup.arbitrum.io/rpc",
+    sepoliaChainId: Number(process.env.ARB_SEPOLIA_CHAIN_ID ?? 421614),
+    sepoliaExplorerUrl: process.env.ARB_SEPOLIA_EXPLORER_URL ?? "https://sepolia.arbiscan.io",
+    sepoliaUsdc: process.env.ARB_SEPOLIA_USDC_ADDRESS ?? "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+    sepoliaPolicyRegistry: process.env.ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS ?? "",
+    sepoliaX402Ledger: process.env.ARB_SEPOLIA_X402_LEDGER_ADDRESS ?? "",
+    sepoliaReputation: process.env.ARB_SEPOLIA_REPUTATION_ADDRESS ?? "",
+    sepoliaEscrow: process.env.ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS ?? "",
+    oneRpcUrl: process.env.ARB_ONE_RPC_URL ?? process.env.ARBITRUM_ONE_RPC_URL ?? "https://arb1.arbitrum.io/rpc",
+    oneChainId: Number(process.env.ARB_ONE_CHAIN_ID ?? 42161),
+    oneExplorerUrl: process.env.ARB_ONE_EXPLORER_URL ?? "https://arbiscan.io",
+    oneUsdc: process.env.ARB_ONE_USDC_ADDRESS ?? "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+  },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
     entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? ""
