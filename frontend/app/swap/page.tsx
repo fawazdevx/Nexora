@@ -7,7 +7,9 @@ import {arcTestnet, shortAddress, switchToArc} from "@/lib/arc";
 import {
   executeXyloNetSwap,
   isXyloNetRouteSupported,
+  quoteSynthraSwap,
   quoteXyloNetSwap,
+  type SynthraSwapQuote,
   type XyloNetSwapQuote,
   type XyloNetSwapToken,
   xylonet,
@@ -24,13 +26,15 @@ type RoutePreview = {
   message: string;
 };
 
+type AggregatorQuote = XyloNetSwapQuote | SynthraSwapQuote;
+
 export default function SwapPage() {
   const {chain, isConnected} = useAccount();
   const [amount, setAmount] = useState("1");
   const [tokenIn, setTokenIn] = useState<XyloNetSwapToken>("USDC");
   const [tokenOut, setTokenOut] = useState<XyloNetSwapToken>("EURC");
   const [slippageBps, setSlippageBps] = useState("100");
-  const [quote, setQuote] = useState<XyloNetSwapQuote | null>(null);
+  const [quote, setQuote] = useState<AggregatorQuote | null>(null);
   const [routes, setRoutes] = useState<RoutePreview[]>(defaultRoutes());
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
@@ -97,11 +101,22 @@ export default function SwapPage() {
 
     setLoading(true);
     try {
-      const data = await quoteXyloNetSwap({tokenIn, tokenOut, amountIn: amount});
-      setQuote(data);
+      const settled: [PromiseSettledResult<XyloNetSwapQuote>, PromiseSettledResult<SynthraSwapQuote>] = await Promise.allSettled([
+        quoteXyloNetSwap({tokenIn, tokenOut, amountIn: amount}),
+        quoteSynthraSwap({tokenIn, tokenOut, amountIn: amount})
+      ]);
+      const liveQuotes = settled
+        .flatMap((item) => item.status === "fulfilled" ? [item.value as AggregatorQuote] : [])
+        .sort((a, b) => a.amountOutRaw > b.amountOutRaw ? -1 : a.amountOutRaw < b.amountOutRaw ? 1 : 0);
+      const best = liveQuotes[0];
+      if (!best) {
+        throw new Error("No integrated route returned a live quote for this pair.");
+      }
+
+      setQuote(best);
       setRoutes([
-        {venue: "XyloNet", status: "best", output: data.amountOut, message: `Best live route through ${shortAddress(data.pool)}`},
-        {venue: "Synthra", status: "unavailable", message: "Pending verified quote integration."},
+        routePreviewFor("XyloNet", liveQuotes, settled[0]),
+        routePreviewFor("Synthra", liveQuotes, settled[1]),
         {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
       ]);
     } catch (error) {
@@ -124,6 +139,10 @@ export default function SwapPage() {
     setStatus("Approve the router, then confirm the swap in your wallet.");
     setTxHash(null);
     try {
+      if (quote.venue !== "XyloNet") {
+        setStatus("Synthra is quoting live, but execution is not enabled until its UniversalRouter approval path is verified.");
+        return;
+      }
       const result = await executeXyloNetSwap({quote, slippageBps: Number(slippageBps)});
       setTxHash(result.swapHash);
       setStatus("Swap submitted through XyloNet.");
@@ -206,7 +225,7 @@ export default function SwapPage() {
             <div className="rounded-lg border border-mint/20 bg-mint/10 p-4 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-slate-300">Best route</span>
-                <span className="font-medium text-white">XyloNet</span>
+                <span className="font-medium text-white">{quote.venue}</span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-slate-300">Minimum received</span>
@@ -214,8 +233,14 @@ export default function SwapPage() {
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-slate-300">Router</span>
-                <span className="font-medium text-white">{shortAddress(xylonet.router)}</span>
+                <span className="font-medium text-white">{shortAddress(quote.router)}</span>
               </div>
+              {quote.venue === "Synthra" ? (
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <span className="text-slate-300">Fee tier</span>
+                  <span className="font-medium text-white">{quote.feeTier / 10_000}%</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -320,4 +345,26 @@ function unavailableRoutes(message: string): RoutePreview[] {
     {venue: "Synthra", status: "unavailable", message: "Pending verified quote integration."},
     {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
   ];
+}
+
+function routePreviewFor(
+  venue: "XyloNet" | "Synthra",
+  liveQuotes: AggregatorQuote[],
+  result: PromiseSettledResult<AggregatorQuote>
+): RoutePreview {
+  if (result.status === "fulfilled") {
+    const isBest = liveQuotes[0]?.venue === venue;
+    const quote = result.value;
+    const detail = quote.venue === "XyloNet"
+      ? `Live route through ${shortAddress(quote.pool)}`
+      : `Live route through ${quote.feeTier / 10_000}% fee tier`;
+    return {
+      venue,
+      status: isBest ? "best" : "available",
+      output: quote.amountOut,
+      message: isBest ? `Best ${detail.toLowerCase()}` : detail
+    };
+  }
+  const message = result.reason instanceof Error ? result.reason.message : "Route unavailable.";
+  return {venue, status: "unavailable", message};
 }

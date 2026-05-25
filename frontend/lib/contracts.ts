@@ -300,6 +300,13 @@ export const xylonet = {
   usyc: "0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C"
 } as const;
 
+export const synthra = {
+  universalRouter: "0xbf4479C07Dc6fdc6dAa764A0ccA06969e894275F",
+  quoter: "0x3Ce954107b1A675826B33bF23060Dd655e3758fE",
+  factory: "0x0fB6EEDA6e90E90797083861A75D15752a27f59c",
+  usdcEurcFeeTiers: [500, 3000, 10000]
+} as const;
+
 export const xylonetSwapTokens = {
   USDC: {symbol: "USDC", address: "0x3600000000000000000000000000000000000000", decimals: 6},
   EURC: {symbol: "EURC", address: xylonet.eurc, decimals: 6},
@@ -318,6 +325,47 @@ export type XyloNetSwapQuote = {
   amountOut: string;
   pool: Address;
   router: Address;
+};
+
+export const synthraQuoterAbi = [
+  {
+    type: "function",
+    name: "quoteExactInputSingle",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          {name: "tokenIn", type: "address"},
+          {name: "tokenOut", type: "address"},
+          {name: "amountIn", type: "uint256"},
+          {name: "fee", type: "uint24"},
+          {name: "sqrtPriceLimitX96", type: "uint160"}
+        ]
+      }
+    ],
+    outputs: [
+      {name: "amountOut", type: "uint256"},
+      {name: "sqrtPriceX96After", type: "uint160"},
+      {name: "initializedTicksCrossed", type: "uint32"},
+      {name: "gasEstimate", type: "uint256"}
+    ]
+  }
+] as const;
+
+export type SynthraSwapQuote = {
+  venue: "Synthra";
+  tokenIn: XyloNetSwapToken;
+  tokenOut: XyloNetSwapToken;
+  amountInRaw: bigint;
+  amountOutRaw: bigint;
+  amountIn: string;
+  amountOut: string;
+  feeTier: number;
+  quoter: Address;
+  router: Address;
+  gasEstimate: bigint;
 };
 
 const arbSepoliaContracts = {
@@ -471,6 +519,68 @@ export async function quoteXyloNetSwap(input: {tokenIn: XyloNetSwapToken; tokenO
     amountOut: formatUnits(amountOutRaw, tokenOut.decimals),
     pool,
     router: xylonet.router
+  };
+}
+
+export async function quoteSynthraSwap(input: {tokenIn: XyloNetSwapToken; tokenOut: XyloNetSwapToken; amountIn: string}): Promise<SynthraSwapQuote> {
+  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Synthra swaps are available on Arc Testnet.");
+  }
+  if (input.tokenIn !== "USDC" || input.tokenOut !== "EURC") {
+    throw new Error(`${input.tokenIn} to ${input.tokenOut} is not available on Synthra yet.`);
+  }
+
+  const tokenIn = xylonetSwapTokens[input.tokenIn];
+  const tokenOut = xylonetSwapTokens[input.tokenOut];
+  const amountInRaw = parseUnits(input.amountIn || "0", tokenIn.decimals);
+  if (amountInRaw <= 0n) {
+    throw new Error("Enter an amount greater than zero.");
+  }
+
+  const client = await publicClient(chainId);
+  type SynthraCandidateQuote = {feeTier: number; amountOutRaw: bigint; gasEstimate: bigint};
+  const quotes = await Promise.all(
+    synthra.usdcEurcFeeTiers.map(async (feeTier): Promise<SynthraCandidateQuote | null> => {
+      try {
+        const result = await client.readContract({
+          address: synthra.quoter,
+          abi: synthraQuoterAbi,
+          functionName: "quoteExactInputSingle",
+          args: [{
+            tokenIn: tokenIn.address,
+            tokenOut: tokenOut.address,
+            amountIn: amountInRaw,
+            fee: feeTier,
+            sqrtPriceLimitX96: 0n
+          }]
+        }) as readonly [bigint, bigint, number, bigint];
+        const [amountOutRaw, , , gasEstimate] = result;
+        return {feeTier, amountOutRaw, gasEstimate};
+      } catch {
+        return null;
+      }
+    })
+  );
+  const best = quotes
+    .filter((quote): quote is SynthraCandidateQuote => quote !== null)
+    .sort((a, b) => a.amountOutRaw > b.amountOutRaw ? -1 : a.amountOutRaw < b.amountOutRaw ? 1 : 0)[0];
+  if (!best) {
+    throw new Error("No live Synthra quote is available for this pair.");
+  }
+
+  return {
+    venue: "Synthra",
+    tokenIn: input.tokenIn,
+    tokenOut: input.tokenOut,
+    amountInRaw,
+    amountOutRaw: best.amountOutRaw,
+    amountIn: formatUnits(amountInRaw, tokenIn.decimals),
+    amountOut: formatUnits(best.amountOutRaw, tokenOut.decimals),
+    feeTier: best.feeTier,
+    quoter: synthra.quoter,
+    router: synthra.universalRouter,
+    gasEstimate: best.gasEstimate
   };
 }
 
