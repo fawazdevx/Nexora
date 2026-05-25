@@ -3,6 +3,7 @@ import LandingPage from "@/app/landing/page";
 import HomePage from "@/app/page";
 import AgentsPage from "@/app/agents/page";
 import EarnPage from "@/app/earn/page";
+import SwapPage from "@/app/swap/page";
 import MarketplacePage from "@/app/marketplace/page";
 import NewMarketplaceServicePage from "@/app/marketplace/new/page";
 import DeveloperDashboardPage from "@/app/developer/page";
@@ -19,6 +20,7 @@ const routes: Record<string, React.ComponentType> = {
   "/app": HomePage,
   "/agents": AgentsPage,
   "/earn": EarnPage,
+  "/swap": SwapPage,
   "/marketplace": MarketplacePage,
   "/marketplace/new": NewMarketplaceServicePage,
   "/developer": DeveloperDashboardPage,

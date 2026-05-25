@@ -8,7 +8,6 @@ import {WalletConnect} from "@/components/WalletConnect";
 import {Footer} from "@/components/Footer";
 import {NotificationsButton} from "@/components/Notifications";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
-import {ChainSwitcher} from "@/components/ChainSwitcher";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -61,7 +60,6 @@ export function Shell({children}: {children: React.ReactNode}) {
           </a>
 
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3">
-            <ChainSwitcher />
             <div className="hidden sm:block">
               <NotificationsButton items={snapshot.data?.notifications ?? []} />
             </div>

@@ -270,6 +270,24 @@ export const xylonet = {
   usyc: "0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C"
 } as const;
 
+const arbSepoliaContracts = {
+  usdc: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+  policyRegistry: "0x30c8cc3C07F822f8cCb8ab2df2a8485DDb210328",
+  x402Ledger: "0x195f70790d977983586d90f2000725B6e26684eE",
+  reputation: "0x27711DC66D308EA89bF720633f4F7Bf4c339350B",
+  saveEarnVault: "0x12B6fF427abA4f0438EA6B5af7E1e49e55DeaB2D",
+  nexoraEscrow: "0xBEA95761fb313Dc0Ee90cc8EB2e2ad7b405EaC68"
+} as const;
+
+const arbOneContracts = {
+  usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+  policyRegistry: "",
+  x402Ledger: "",
+  reputation: "",
+  saveEarnVault: "",
+  nexoraEscrow: ""
+} as const;
+
 function requireAddress(value: string | undefined, label: string): Address {
   if (!value || !value.startsWith("0x")) {
     throw new Error(`${label} is not configured`);
@@ -285,23 +303,23 @@ export function contractAddressesForChain(chainId?: number) {
   const id = chainId ?? arcTestnet.id;
   if (id === arbitrumSepoliaWagmiChain.id) {
     return {
-      usdc: import.meta.env.VITE_ARB_SEPOLIA_USDC_ADDRESS,
-      policyRegistry: import.meta.env.VITE_ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS,
-      x402Ledger: import.meta.env.VITE_ARB_SEPOLIA_X402_LEDGER_ADDRESS,
-      reputation: import.meta.env.VITE_ARB_SEPOLIA_REPUTATION_ADDRESS,
-      saveEarnVault: import.meta.env.VITE_ARB_SEPOLIA_SAVE_EARN_VAULT_ADDRESS,
-      nexoraEscrow: import.meta.env.VITE_ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS,
+      usdc: envAddress(import.meta.env.VITE_ARB_SEPOLIA_USDC_ADDRESS, arbSepoliaContracts.usdc),
+      policyRegistry: envAddress(import.meta.env.VITE_ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS, arbSepoliaContracts.policyRegistry),
+      x402Ledger: envAddress(import.meta.env.VITE_ARB_SEPOLIA_X402_LEDGER_ADDRESS, arbSepoliaContracts.x402Ledger),
+      reputation: envAddress(import.meta.env.VITE_ARB_SEPOLIA_REPUTATION_ADDRESS, arbSepoliaContracts.reputation),
+      saveEarnVault: envAddress(import.meta.env.VITE_ARB_SEPOLIA_SAVE_EARN_VAULT_ADDRESS, arbSepoliaContracts.saveEarnVault),
+      nexoraEscrow: envAddress(import.meta.env.VITE_ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS, arbSepoliaContracts.nexoraEscrow),
       saveEarnDeployBlock: import.meta.env.VITE_ARB_SEPOLIA_SAVE_EARN_DEPLOY_BLOCK
     };
   }
   if (id === arbitrumOneWagmiChain.id) {
     return {
-      usdc: import.meta.env.VITE_ARB_ONE_USDC_ADDRESS,
-      policyRegistry: import.meta.env.VITE_ARB_ONE_POLICY_REGISTRY_ADDRESS,
-      x402Ledger: import.meta.env.VITE_ARB_ONE_X402_LEDGER_ADDRESS,
-      reputation: import.meta.env.VITE_ARB_ONE_REPUTATION_ADDRESS,
-      saveEarnVault: import.meta.env.VITE_ARB_ONE_SAVE_EARN_VAULT_ADDRESS,
-      nexoraEscrow: import.meta.env.VITE_ARB_ONE_NEXORA_ESCROW_ADDRESS,
+      usdc: envAddress(import.meta.env.VITE_ARB_ONE_USDC_ADDRESS, arbOneContracts.usdc),
+      policyRegistry: envAddress(import.meta.env.VITE_ARB_ONE_POLICY_REGISTRY_ADDRESS, arbOneContracts.policyRegistry),
+      x402Ledger: envAddress(import.meta.env.VITE_ARB_ONE_X402_LEDGER_ADDRESS, arbOneContracts.x402Ledger),
+      reputation: envAddress(import.meta.env.VITE_ARB_ONE_REPUTATION_ADDRESS, arbOneContracts.reputation),
+      saveEarnVault: envAddress(import.meta.env.VITE_ARB_ONE_SAVE_EARN_VAULT_ADDRESS, arbOneContracts.saveEarnVault),
+      nexoraEscrow: envAddress(import.meta.env.VITE_ARB_ONE_NEXORA_ESCROW_ADDRESS, arbOneContracts.nexoraEscrow),
       saveEarnDeployBlock: import.meta.env.VITE_ARB_ONE_SAVE_EARN_DEPLOY_BLOCK
     };
   }
@@ -314,6 +332,10 @@ export function contractAddressesForChain(chainId?: number) {
     nexoraEscrow: import.meta.env.VITE_NEXORA_ESCROW_ADDRESS,
     saveEarnDeployBlock: import.meta.env.VITE_SAVE_EARN_DEPLOY_BLOCK
   };
+}
+
+function envAddress(value: string | undefined, fallback: string) {
+  return value?.startsWith("0x") ? value : fallback;
 }
 
 function chainById(chainId?: number) {
