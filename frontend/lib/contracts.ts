@@ -1,17 +1,5 @@
 import {createPublicClient, createWalletClient, custom, formatUnits, http, keccak256, parseUnits, stringToHex, type Address, type Hash} from "viem";
-import {arcTestnet} from "@/lib/arc";
-
-const arcChain = {
-  id: arcTestnet.id,
-  name: arcTestnet.name,
-  nativeCurrency: arcTestnet.nativeCurrency,
-  rpcUrls: {
-    default: {http: [arcTestnet.rpcUrl]}
-  },
-  blockExplorers: {
-    default: {name: "Arc Explorer", url: arcTestnet.explorerUrl}
-  }
-} as const;
+import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, supportedChains} from "@/lib/arc";
 
 export const policyRegistryAbi = [
   {
@@ -289,22 +277,81 @@ function requireAddress(value: string | undefined, label: string): Address {
   return value as Address;
 }
 
+export function chainLabel(chainId?: number) {
+  return chainById(chainId)?.name ?? "configured network";
+}
+
+export function contractAddressesForChain(chainId?: number) {
+  const id = chainId ?? arcTestnet.id;
+  if (id === arbitrumSepoliaWagmiChain.id) {
+    return {
+      usdc: import.meta.env.VITE_ARB_SEPOLIA_USDC_ADDRESS,
+      policyRegistry: import.meta.env.VITE_ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS,
+      x402Ledger: import.meta.env.VITE_ARB_SEPOLIA_X402_LEDGER_ADDRESS,
+      reputation: import.meta.env.VITE_ARB_SEPOLIA_REPUTATION_ADDRESS,
+      saveEarnVault: import.meta.env.VITE_ARB_SEPOLIA_SAVE_EARN_VAULT_ADDRESS,
+      nexoraEscrow: import.meta.env.VITE_ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS,
+      saveEarnDeployBlock: import.meta.env.VITE_ARB_SEPOLIA_SAVE_EARN_DEPLOY_BLOCK
+    };
+  }
+  if (id === arbitrumOneWagmiChain.id) {
+    return {
+      usdc: import.meta.env.VITE_ARB_ONE_USDC_ADDRESS,
+      policyRegistry: import.meta.env.VITE_ARB_ONE_POLICY_REGISTRY_ADDRESS,
+      x402Ledger: import.meta.env.VITE_ARB_ONE_X402_LEDGER_ADDRESS,
+      reputation: import.meta.env.VITE_ARB_ONE_REPUTATION_ADDRESS,
+      saveEarnVault: import.meta.env.VITE_ARB_ONE_SAVE_EARN_VAULT_ADDRESS,
+      nexoraEscrow: import.meta.env.VITE_ARB_ONE_NEXORA_ESCROW_ADDRESS,
+      saveEarnDeployBlock: import.meta.env.VITE_ARB_ONE_SAVE_EARN_DEPLOY_BLOCK
+    };
+  }
+  return {
+    usdc: import.meta.env.VITE_USDC_ADDRESS,
+    policyRegistry: import.meta.env.VITE_POLICY_REGISTRY_ADDRESS,
+    x402Ledger: import.meta.env.VITE_X402_LEDGER_ADDRESS,
+    reputation: import.meta.env.VITE_REPUTATION_ADDRESS,
+    saveEarnVault: import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS,
+    nexoraEscrow: import.meta.env.VITE_NEXORA_ESCROW_ADDRESS,
+    saveEarnDeployBlock: import.meta.env.VITE_SAVE_EARN_DEPLOY_BLOCK
+  };
+}
+
+function chainById(chainId?: number) {
+  if (chainId === arbitrumSepoliaWagmiChain.id) return arbitrumSepoliaWagmiChain;
+  if (chainId === arbitrumOneWagmiChain.id) return arbitrumOneWagmiChain;
+  return supportedChains.find((chain) => chain.id === chainId) ?? supportedChains[0];
+}
+
+async function connectedChainId() {
+  if (!window.ethereum) return arcTestnet.id;
+  const value = await window.ethereum.request<string>({method: "eth_chainId"});
+  return Number.parseInt(value, 16);
+}
+
 async function walletClient() {
   if (!window.ethereum) throw new Error("No injected wallet found");
   const [account] = await window.ethereum.request<string[]>({method: "eth_requestAccounts"});
   if (!account) throw new Error("Wallet connection rejected");
+  const chainId = await connectedChainId();
+  const chain = chainById(chainId);
 
-  return createWalletClient({
-    account: account as Address,
-    chain: arcChain,
-    transport: custom(window.ethereum)
-  });
+  return {
+    chainId,
+    contracts: contractAddressesForChain(chainId),
+    client: createWalletClient({
+      account: account as Address,
+      chain,
+      transport: custom(window.ethereum)
+    })
+  };
 }
 
-function publicClient() {
+async function publicClient(chainId?: number) {
+  const id = chainId ?? await connectedChainId().catch(() => arcTestnet.id);
+  const chain = chainById(id);
   return createPublicClient({
-    chain: arcChain,
-    transport: http(arcTestnet.rpcUrl)
+    chain,
+    transport: http(chain.rpcUrls.default.http[0])
   });
 }
 
@@ -318,8 +365,8 @@ export async function writeAgentPolicy(input: {
   recipientAllowlist?: string[];
   active: boolean;
 }): Promise<Hash> {
-  const client = await walletClient();
-  const address = requireAddress(import.meta.env.VITE_POLICY_REGISTRY_ADDRESS, "Policy registry address");
+  const {client, contracts} = await walletClient();
+  const address = requireAddress(contracts.policyRegistry, "Policy registry address");
   const arcNameHash = keccak256(stringToHex(input.arcName?.trim() || input.operatorAddress));
 
   await client.writeContract({
@@ -365,9 +412,9 @@ export async function writeAgentPolicy(input: {
 }
 
 export async function publishX402Service(input: {endpointHash: string; pricePerUnitUsdc: string}): Promise<{txHash: Hash; chainServiceId: number}> {
-  const client = await walletClient();
-  const address = requireAddress(import.meta.env.VITE_X402_LEDGER_ADDRESS, "x402 ledger address");
-  const chainServiceId = await publicClient().readContract({
+  const {client, chainId, contracts} = await walletClient();
+  const address = requireAddress(contracts.x402Ledger, "x402 ledger address");
+  const chainServiceId = await (await publicClient(chainId)).readContract({
     address,
     abi: x402LedgerAbi,
     functionName: "nextServiceId"
@@ -384,9 +431,9 @@ export async function publishX402Service(input: {endpointHash: string; pricePerU
 }
 
 export async function settleX402Request(input: {chainServiceId: number; requestHash: `0x${string}`; payer: string; units: number; amountUsdc: string}) {
-  const client = await walletClient();
-  const usdc = requireAddress(import.meta.env.VITE_USDC_ADDRESS, "USDC address");
-  const ledger = requireAddress(import.meta.env.VITE_X402_LEDGER_ADDRESS, "x402 ledger address");
+  const {client, contracts} = await walletClient();
+  const usdc = requireAddress(contracts.usdc, "USDC address");
+  const ledger = requireAddress(contracts.x402Ledger, "x402 ledger address");
   const amount = parseUnits(input.amountUsdc || "0", 6);
 
   const approveHash = await client.writeContract({
@@ -414,9 +461,9 @@ export async function createOnchainEscrow(input: {
   title: string;
   description: string;
 }) {
-  const client = await walletClient();
-  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
-  const nextEscrowId = await publicClient().readContract({
+  const {client, chainId, contracts} = await walletClient();
+  const escrow = requireAddress(contracts.nexoraEscrow, "Nexora escrow address");
+  const nextEscrowId = await (await publicClient(chainId)).readContract({
     address: escrow,
     abi: nexoraEscrowAbi,
     functionName: "nextEscrowId"
@@ -438,9 +485,9 @@ export async function createOnchainEscrow(input: {
 }
 
 export async function fundOnchainEscrow(escrowId: string, amountUsdc: number, performanceBondUsdc: number) {
-  const client = await walletClient();
-  const usdc = requireAddress(import.meta.env.VITE_USDC_ADDRESS, "USDC address");
-  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  const {client, contracts} = await walletClient();
+  const usdc = requireAddress(contracts.usdc, "USDC address");
+  const escrow = requireAddress(contracts.nexoraEscrow, "Nexora escrow address");
   const amount = parseUnits(String(amountUsdc + performanceBondUsdc), 6);
   const approveHash = await client.writeContract({
     address: usdc,
@@ -458,8 +505,8 @@ export async function fundOnchainEscrow(escrowId: string, amountUsdc: number, pe
 }
 
 export async function submitOnchainEscrow(escrowId: string, deliverableUrl: string) {
-  const client = await walletClient();
-  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  const {client, contracts} = await walletClient();
+  const escrow = requireAddress(contracts.nexoraEscrow, "Nexora escrow address");
   return client.writeContract({
     address: escrow,
     abi: nexoraEscrowAbi,
@@ -469,8 +516,10 @@ export async function submitOnchainEscrow(escrowId: string, deliverableUrl: stri
 }
 
 export async function readOnchainEscrow(escrowId: string) {
-  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
-  const data = await publicClient().readContract({
+  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  const contracts = contractAddressesForChain(chainId);
+  const escrow = requireAddress(contracts.nexoraEscrow, "Nexora escrow address");
+  const data = await (await publicClient(chainId)).readContract({
     address: escrow,
     abi: nexoraEscrowAbi,
     functionName: "escrows",
@@ -507,8 +556,8 @@ export async function readOnchainEscrow(escrowId: string) {
 }
 
 export async function verifyOnchainEscrow(escrowId: string, verifierNotes: string) {
-  const client = await walletClient();
-  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  const {client, contracts} = await walletClient();
+  const escrow = requireAddress(contracts.nexoraEscrow, "Nexora escrow address");
   return client.writeContract({
     address: escrow,
     abi: nexoraEscrowAbi,
@@ -518,8 +567,8 @@ export async function verifyOnchainEscrow(escrowId: string, verifierNotes: strin
 }
 
 export async function releaseOnchainEscrow(escrowId: string) {
-  const client = await walletClient();
-  const escrow = requireAddress(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS, "Nexora escrow address");
+  const {client, contracts} = await walletClient();
+  const escrow = requireAddress(contracts.nexoraEscrow, "Nexora escrow address");
   return client.writeContract({
     address: escrow,
     abi: nexoraEscrowAbi,
@@ -529,9 +578,9 @@ export async function releaseOnchainEscrow(escrowId: string) {
 }
 
 export async function depositSaveEarn(amountUsdc: string): Promise<{approveHash: Hash; depositHash: Hash}> {
-  const client = await walletClient();
-  const usdc = requireAddress(import.meta.env.VITE_USDC_ADDRESS, "USDC address");
-  const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
+  const {client, contracts} = await walletClient();
+  const usdc = requireAddress(contracts.usdc, "USDC address");
+  const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
   const amount = parseUnits(amountUsdc || "0", 6);
 
   const approveHash = await client.writeContract({
@@ -552,8 +601,8 @@ export async function depositSaveEarn(amountUsdc: string): Promise<{approveHash:
 }
 
 export async function withdrawSaveEarn(amountUsdc: string): Promise<Hash> {
-  const client = await walletClient();
-  const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
+  const {client, contracts} = await walletClient();
+  const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
 
   return client.writeContract({
     address: vault,
@@ -564,9 +613,11 @@ export async function withdrawSaveEarn(amountUsdc: string): Promise<Hash> {
 }
 
 export async function readSaveEarnPosition(account: string) {
-  const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
-  const client = publicClient();
-  const fromBlock = BigInt(Number(import.meta.env.VITE_SAVE_EARN_DEPLOY_BLOCK ?? 42_490_737));
+  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  const contracts = contractAddressesForChain(chainId);
+  const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
+  const client = await publicClient(chainId);
+  const fromBlock = BigInt(Number(contracts.saveEarnDeployBlock ?? 42_490_737));
   const [shares, totalShares, totalAssets] = await Promise.all([
     client.readContract({
       address: vault,
@@ -616,7 +667,7 @@ export async function readSaveEarnPosition(account: string) {
 }
 
 async function readSaveEarnEventTotals(account: string, vault: Address, fromBlock: bigint) {
-  const client = publicClient();
+  const client = await publicClient();
   const [depositLogs, withdrawLogs] = await Promise.all([
     client.getContractEvents({
       address: vault,
@@ -641,8 +692,10 @@ async function readSaveEarnEventTotals(account: string, vault: Address, fromBloc
 }
 
 async function sharesForWithdrawalAmount(amountUsdc: string) {
-  const vault = requireAddress(import.meta.env.VITE_SAVE_EARN_VAULT_ADDRESS, "Save/Earn vault address");
-  const client = publicClient();
+  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  const contracts = contractAddressesForChain(chainId);
+  const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
+  const client = await publicClient(chainId);
   const assets = parseUnits(amountUsdc || "0", 6);
   const [totalShares, totalAssets] = await Promise.all([
     client.readContract({

@@ -1,31 +1,31 @@
 import {useEffect, useMemo, useState} from "react";
 import {useAccount} from "wagmi";
-import {writeAgentPolicy} from "@/lib/contracts";
+import {chainLabel, contractAddressesForChain, writeAgentPolicy} from "@/lib/contracts";
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
-const contractOptions = [
-  {
-    label: "x402 payments",
-    address: import.meta.env.VITE_X402_LEDGER_ADDRESS,
-    description: "Marketplace API payments and settlement"
-  },
-  {
-    label: "Reputation",
-    address: import.meta.env.VITE_REPUTATION_ADDRESS,
-    description: "Operator reputation updates"
-  },
-  {
-    label: "Policy registry",
-    address: import.meta.env.VITE_POLICY_REGISTRY_ADDRESS,
-    description: "Agent spending rule management"
-  }
-].filter((item): item is {label: string; address: string; description: string} => Boolean(item.address?.startsWith("0x")));
-
 export function PolicyForm() {
-  const {address, isConnected} = useAccount();
+  const {address, chain, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
+  const chainContracts = useMemo(() => contractAddressesForChain(chain?.id), [chain?.id]);
+  const contractOptions = useMemo(() => [
+    {
+      label: "x402 payments",
+      address: chainContracts.x402Ledger,
+      description: "Marketplace API payments and settlement"
+    },
+    {
+      label: "Reputation",
+      address: chainContracts.reputation,
+      description: "Operator reputation updates"
+    },
+    {
+      label: "Policy registry",
+      address: chainContracts.policyRegistry,
+      description: "Agent spending rule management"
+    }
+  ].filter((item): item is {label: string; address: string; description: string} => Boolean(item.address?.startsWith("0x"))), [chainContracts]);
   const agents = useMemo(() => snapshot.data?.agents ?? [], [snapshot.data?.agents]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [dailyLimit, setDailyLimit] = useState("400");
@@ -63,7 +63,7 @@ export function PolicyForm() {
       return;
     }
 
-    setStatus(selectedAgent.address ? "Submitting policy on Arc..." : "Saving policy while Circle wallet is pending...");
+    setStatus(selectedAgent.address ? `Submitting policy on ${chainLabel(chain?.id)}...` : "Saving policy while Circle wallet is pending...");
     try {
       const txHash = selectedAgent.address
         ? await writeAgentPolicy({
@@ -90,7 +90,7 @@ export function PolicyForm() {
       await snapshot.refetch();
       setStatus(
         txHash
-          ? `Policy submitted from ${shortAddress(address)}: ${txHash}`
+          ? `Policy submitted on ${chainLabel(chain?.id)} from ${shortAddress(address)}: ${txHash}`
           : "Policy saved. It will be ready for on-chain submission when Circle returns the agent wallet address."
       );
     } catch (error) {
@@ -160,7 +160,7 @@ export function PolicyForm() {
       </div>
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent}>
-          {selectedAgent?.address ? "Save policy on Arc" : "Save pending policy"}
+          {selectedAgent?.address ? `Save policy on ${chainLabel(chain?.id)}` : "Save pending policy"}
         </button>
         {status ? <span className="max-w-full break-all rounded-md border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{status}</span> : null}
       </div>

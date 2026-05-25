@@ -1,12 +1,12 @@
 import {useState} from "react";
 import {useAccount} from "wagmi";
-import {publishX402Service} from "@/lib/contracts";
+import {chainLabel, contractAddressesForChain, publishX402Service} from "@/lib/contracts";
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 
 export function PublishServiceForm() {
-  const {address, isConnected} = useAccount();
-  const x402LedgerConfigured = Boolean(import.meta.env.VITE_X402_LEDGER_ADDRESS);
+  const {address, chain, isConnected} = useAccount();
+  const x402LedgerConfigured = Boolean(contractAddressesForChain(chain?.id).x402Ledger);
   const [name, setName] = useState("");
   const [endpointHash, setEndpointHash] = useState("");
   const [price, setPrice] = useState("0.025");
@@ -25,7 +25,7 @@ export function PublishServiceForm() {
       setStatus("Add a service name and endpoint hash before publishing.");
       return;
     }
-    setStatus(x402LedgerConfigured ? "Publishing service on Arc..." : "Publishing service to Nexora registry...");
+    setStatus(x402LedgerConfigured ? `Publishing service on ${chainLabel(chain?.id)}...` : "Publishing service to Nexora registry...");
     try {
       const chainResult = x402LedgerConfigured ? await publishX402Service({endpointHash, pricePerUnitUsdc: price}) : null;
       await apiPost("/api/marketplace/services", {
@@ -95,7 +95,7 @@ export function PublishServiceForm() {
         <input className="field" value={price} onChange={(event) => setPrice(event.target.value)} />
       </label>
       <button type="button" onClick={publish} className="action-button" disabled={!isConnected}>
-        {x402LedgerConfigured ? "Publish x402 service on Arc" : "Publish service"}
+        {x402LedgerConfigured ? `Publish x402 service on ${chainLabel(chain?.id)}` : "Publish service"}
       </button>
       {status ? <p className="break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
     </form>
