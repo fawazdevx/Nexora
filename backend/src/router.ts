@@ -5,7 +5,6 @@ import {listEarnOpportunities} from "./earn/opportunities.js";
 import {executeBuiltInService, executeMarketplaceService, featureService, listServices, platformPlans, publishService, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
-import {circleSwapReadiness, estimateCircleSwap, executeCircleSwap} from "./swap/circle-swap.js";
 import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
 import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
 
@@ -82,10 +81,12 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
     }
 
     if (req.method === "GET" && path === "/api/swap/readiness") {
+      const {circleSwapReadiness} = await import("./swap/circle-swap.js");
       return ok(circleSwapReadiness());
     }
 
     if (req.method === "POST" && path === "/api/swap/estimate") {
+      const {estimateCircleSwap} = await import("./swap/circle-swap.js");
       return ok(await estimateCircleSwap({
         tokenIn: requiredString(body.tokenIn, "tokenIn"),
         tokenOut: requiredString(body.tokenOut, "tokenOut"),
@@ -95,6 +96,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
     }
 
     if (req.method === "POST" && path === "/api/swap/execute") {
+      const {executeCircleSwap} = await import("./swap/circle-swap.js");
       return ok(await executeCircleSwap({
         tokenIn: requiredString(body.tokenIn, "tokenIn"),
         tokenOut: requiredString(body.tokenOut, "tokenOut"),
