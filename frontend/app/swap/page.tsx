@@ -40,6 +40,7 @@ export default function SwapPage() {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [swapStep, setSwapStep] = useState<"idle" | "approve" | "swap" | "confirmed">("idle");
   const [txHash, setTxHash] = useState<string | null>(null);
   const quoteRequestId = useRef(0);
 
@@ -156,15 +157,19 @@ export default function SwapPage() {
   async function swap() {
     if (!quote) return;
     setExecuting(true);
+    setSwapStep("approve");
     setStatus("Approve if needed, then confirm the swap in your wallet.");
     setTxHash(null);
     try {
+      window.setTimeout(() => setSwapStep((step) => step === "approve" ? "swap" : step), 900);
       const result = quote.venue === "XyloNet"
         ? await executeXyloNetSwap({quote, slippageBps: Number(slippageBps)})
         : await executeSynthraSwap({quote, slippageBps: Number(slippageBps)});
       setTxHash(result.swapHash);
+      setSwapStep("confirmed");
       setStatus(`Swap submitted through ${quote.venue}.`);
     } catch (error) {
+      setSwapStep("idle");
       setStatus(error instanceof Error ? error.message : "Swap failed");
     } finally {
       setExecuting(false);
@@ -233,7 +238,7 @@ export default function SwapPage() {
                 <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
               </button>
               <button type="button" className="action-button min-h-12" onClick={() => void swap()} disabled={swapDisabled}>
-                {executing ? "Swapping..." : "Swap"}
+                {executing ? swapButtonLabel(swapStep) : quote ? `Swap through ${quote.venue}` : "Swap"}
               </button>
             </div>
           )}
@@ -258,6 +263,25 @@ export default function SwapPage() {
                   <span className="font-medium text-white">{quote.feeTier / 10_000}%</span>
                 </div>
               ) : null}
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-slate-300">Price impact</span>
+                <span className="font-medium text-white">Protected by slippage</span>
+              </div>
+            </div>
+          ) : null}
+
+          {executing || swapStep === "confirmed" ? (
+            <div className="grid gap-2 rounded-lg border border-white/[0.08] bg-white/[0.035] p-4 text-sm">
+              {[
+                ["Approval", swapStep === "approve" ? "Pending" : "Ready"],
+                ["Swap", swapStep === "swap" ? "Pending" : swapStep === "confirmed" ? "Submitted" : "Waiting"],
+                ["Receipt", txHash ? "Available" : "Pending"]
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between gap-3">
+                  <span className="text-slate-400">{label}</span>
+                  <span className={value === "Pending" ? "text-orchid" : value === "Available" || value === "Submitted" || value === "Ready" ? "text-mint" : "text-slate-500"}>{value}</span>
+                </div>
+              ))}
             </div>
           ) : null}
 
@@ -280,7 +304,7 @@ export default function SwapPage() {
           </div>
 
           <div className="grid gap-3">
-            {routes.map((route) => (
+            {routes.filter((route) => route.status !== "unavailable" || route.venue === "UnitFlow").map((route) => (
               <div key={route.venue} className="surface p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -351,7 +375,7 @@ function RouteStatus({status}: {status: RoutePreview["status"]}) {
 function defaultRoutes(): RoutePreview[] {
   return [
     {venue: "XyloNet", status: "available", message: "Live quotes for verified USDC to EURC/USYC pools."},
-    {venue: "Synthra", status: "unavailable", message: "Pending verified quote integration."},
+    {venue: "Synthra", status: "available", message: "Live quotes for verified USDC to EURC pools."},
     {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
   ];
 }
@@ -383,4 +407,11 @@ function routePreviewFor(
     };
   }
   return {venue, status: "unavailable", message: "No live route for this pair."};
+}
+
+function swapButtonLabel(step: "idle" | "approve" | "swap" | "confirmed") {
+  if (step === "approve") return "Waiting for approval...";
+  if (step === "swap") return "Waiting for swap...";
+  if (step === "confirmed") return "Submitted";
+  return "Swapping...";
 }

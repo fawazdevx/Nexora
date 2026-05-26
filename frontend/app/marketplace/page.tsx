@@ -136,6 +136,9 @@ export default function MarketplacePage() {
             <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected || !selectedAgent}>
               {service.chainServiceId ? "Purchase per execution" : "Test purchase"}
             </button>
+            <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button mt-3 w-full justify-center">
+              Public service page
+            </button>
             <ServiceResult result={serviceResults[service.id]} />
           </article>
         ))}

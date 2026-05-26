@@ -1,11 +1,12 @@
 import {useState} from "react";
-import {Plus, ShieldCheck} from "lucide-react";
+import {RefreshCw, Plus, ShieldCheck, Settings} from "lucide-react";
 import {useAccount} from "wagmi";
 import {apiPost} from "@/lib/api";
 import {useArcName} from "@/hooks/useArcName";
 import {PageHeader} from "@/components/PageHeader";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
+import {navigateTo} from "@/lib/router";
 
 export default function AgentsPage() {
   const {address, isConnected} = useAccount();
@@ -13,6 +14,7 @@ export default function AgentsPage() {
   const {arcName} = useArcName(address);
   const [status, setStatus] = useState("");
   const snapshot = useAppSnapshot();
+  const existingReadyWallet = (snapshot.data?.agents ?? []).find((agent) => agent.operatorAddress.toLowerCase() === address?.toLowerCase() && agent.address);
 
   async function createAgentWallet() {
     if (!walletReady || !address) {
@@ -41,7 +43,15 @@ export default function AgentsPage() {
         kicker="Circle Agent Wallets"
         title="Agent wallet infrastructure"
         description="Provision agent wallets, enforce spend rules, and monitor autonomous payment readiness."
-        action={<button onClick={createAgentWallet} className="action-button" disabled={!walletReady}><Plus size={16} /> {walletReady ? "Create agent wallet" : "Connect wallet first"}</button>}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => void snapshot.refetch()} className="secondary-button"><RefreshCw size={16} /> Refresh</button>
+            <button onClick={createAgentWallet} className="action-button" disabled={!walletReady || Boolean(existingReadyWallet)}>
+              <Plus size={16} />
+              {existingReadyWallet ? "Wallet already active" : walletReady ? "Create agent wallet" : "Connect wallet first"}
+            </button>
+          </div>
+        }
       />
       <p className="rounded-md border border-white/[0.08] bg-white/[0.035] p-3 text-sm leading-6 text-slate-300">
         Agent wallets may take a short moment to become ready. Nexora will keep checking for the wallet address automatically.
@@ -67,6 +77,7 @@ export default function AgentsPage() {
             </div>
             <div className="grid gap-2 text-sm text-slate-300">
               <div className="surface flex items-center justify-between px-3 py-2"><span>Wallet</span><b className="text-white">{agent.address ? shortAddress(agent.address) : "Circle pending"}</b></div>
+              <div className="surface flex items-center justify-between px-3 py-2"><span>Circle ID</span><b className="text-white">{agent.circleWalletId ? shortAddress(agent.circleWalletId) : "pending"}</b></div>
               <div className="surface flex items-center justify-between px-3 py-2"><span>Daily limit</span><b className="text-white">${agent.policy.dailyLimitUsdc}</b></div>
               <div className="surface flex items-center justify-between px-3 py-2"><span>Tx cap</span><b className="text-white">${agent.policy.transactionCapUsdc}</b></div>
             </div>
@@ -74,6 +85,10 @@ export default function AgentsPage() {
               {[...agent.policy.contractAllowlist, ...agent.policy.recipientAllowlist].map((item) => <span className="status-pill" key={item}>{shortAddress(item)}</span>)}
               {agent.policy.contractAllowlist.length + agent.policy.recipientAllowlist.length === 0 ? <span className="status-pill">No allowlists saved yet</span> : null}
             </div>
+            <button type="button" onClick={() => navigateTo("/settings/policies")} className="secondary-button mt-4 w-full justify-center">
+              <Settings size={15} />
+              Manage policy
+            </button>
           </article>
         ))}
         {!snapshot.isLoading && (snapshot.data?.agents.length ?? 0) === 0 ? (

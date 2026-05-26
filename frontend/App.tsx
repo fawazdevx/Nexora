@@ -6,7 +6,9 @@ import EarnPage from "@/app/earn/page";
 import SwapPage from "@/app/swap/page";
 import MarketplacePage from "@/app/marketplace/page";
 import NewMarketplaceServicePage from "@/app/marketplace/new/page";
+import MarketplaceServicePage from "@/app/marketplace/service/page";
 import DeveloperDashboardPage from "@/app/developer/page";
+import RevenuePage from "@/app/revenue/page";
 import EscrowPage from "@/app/escrow/page";
 import PaymentsPage from "@/app/payments/page";
 import IdentityPage from "@/app/identity/page";
@@ -24,6 +26,7 @@ const routes: Record<string, React.ComponentType> = {
   "/marketplace": MarketplacePage,
   "/marketplace/new": NewMarketplaceServicePage,
   "/developer": DeveloperDashboardPage,
+  "/revenue": RevenuePage,
   "/escrow": EscrowPage,
   "/payments": PaymentsPage,
   "/identity": IdentityPage,
@@ -46,11 +49,16 @@ export default function App() {
     };
   }, []);
 
-  const Page = useMemo(() => routes[pathname] ?? LandingPage, [pathname]);
+  const Page = useMemo(() => routes[pathname] ?? null, [pathname]);
 
   if (maintenanceMode && pathname !== "/maintenance") {
     return <MaintenancePage />;
   }
 
-  return <Page />;
+  if (Page) return <Page />;
+
+  const serviceMatch = pathname.match(/^\/marketplace\/services\/([^/]+)$/);
+  if (serviceMatch) return <MarketplaceServicePage serviceId={decodeURIComponent(serviceMatch[1])} />;
+
+  return <LandingPage />;
 }

@@ -80,6 +80,13 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({services: await listServices()});
     }
 
+    if (req.method === "GET" && path.startsWith("/api/marketplace/services/")) {
+      const serviceId = path.split("/")[4] ?? "";
+      const service = (await readStore()).services.find((item) => item.id === serviceId || String(item.chainServiceId) === serviceId);
+      if (!service) return response(404, {error: "service_not_found"});
+      return ok({service});
+    }
+
     if (req.method === "GET" && path === "/api/swap/readiness") {
       const {circleSwapReadiness} = await import("./swap/circle-swap.js");
       return ok(circleSwapReadiness());
@@ -231,6 +238,10 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path.startsWith("/api/developers/") && path.endsWith("/dashboard")) {
       return ok(await developerDashboard(decodeURIComponent(path.split("/")[3] ?? "")));
+    }
+
+    if (req.method === "GET" && path === "/api/revenue") {
+      return ok(await platformRevenueDashboard());
     }
 
     if (req.method === "GET" && path === "/api/escrows") {
@@ -395,6 +406,68 @@ async function developerDashboard(address: string) {
       netRevenueUsdc: grossRevenue - platformRevenue,
       activeEscrows: escrows.filter((escrow) => escrow.status !== "released" && escrow.status !== "cancelled").length
     }
+  };
+}
+
+async function platformRevenueDashboard() {
+  const store = await readStore();
+  const settledPayments = store.payments.filter((payment) => payment.status === "settled");
+  const escrowRevenue = store.escrows
+    .filter((escrow) => escrow.status === "released")
+    .reduce((sum, escrow) => sum + escrow.platformFeeUsdc, 0);
+  const marketplaceGross = settledPayments.reduce((sum, payment) => sum + (payment.grossAmountUsdc ?? payment.amountUsdc), 0);
+  const marketplaceFees = settledPayments.reduce((sum, payment) => sum + (payment.platformFeeUsdc ?? 0), 0);
+  const subscriptions = store.subscriptions.reduce((sum, subscription) => sum + subscription.amountUsdc, 0);
+  const policySaves = store.agents.filter((agent) => agent.policy.txHash).length;
+  const treasury = config.contracts.treasury;
+  const feeReceipts = [
+    ...settledPayments
+      .filter((payment) => payment.platformFeeUsdc && payment.platformFeeUsdc > 0)
+      .map((payment) => ({
+        id: payment.id,
+        source: "x402 marketplace",
+        label: payment.serviceName,
+        grossUsdc: payment.grossAmountUsdc ?? payment.amountUsdc,
+        feeUsdc: payment.platformFeeUsdc ?? 0,
+        netUsdc: payment.publisherNetUsdc ?? 0,
+        txHash: payment.txHash ?? null,
+        createdAt: payment.settledAt ?? payment.createdAt
+      })),
+    ...store.escrows
+      .filter((escrow) => escrow.status === "released" && escrow.platformFeeUsdc > 0)
+      .map((escrow) => ({
+        id: escrow.id,
+        source: "escrow",
+        label: escrow.title,
+        grossUsdc: escrow.amountUsdc,
+        feeUsdc: escrow.platformFeeUsdc,
+        netUsdc: escrow.counterpartyNetUsdc,
+        txHash: escrow.txHash ?? null,
+        createdAt: escrow.releasedAt ?? escrow.createdAt
+      }))
+  ].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+  return {
+    treasury,
+    feeReceipts: feeReceipts.slice(0, 40),
+    summary: {
+      totalPlatformRevenueUsdc: roundUsdc(marketplaceFees + escrowRevenue + subscriptions),
+      marketplaceGrossUsdc: roundUsdc(marketplaceGross),
+      marketplaceFeesUsdc: roundUsdc(marketplaceFees),
+      escrowFeesUsdc: roundUsdc(escrowRevenue),
+      subscriptionRevenueUsdc: roundUsdc(subscriptions),
+      settledPayments: settledPayments.length,
+      publishedServices: store.services.length,
+      activeAgents: store.agents.filter((agent) => agent.address).length,
+      policySaves
+    },
+    bySource: [
+      {source: "x402 marketplace", revenueUsdc: roundUsdc(marketplaceFees), count: settledPayments.length},
+      {source: "escrow", revenueUsdc: roundUsdc(escrowRevenue), count: store.escrows.filter((escrow) => escrow.status === "released").length},
+      {source: "plans", revenueUsdc: roundUsdc(subscriptions), count: store.subscriptions.length},
+      {source: "Save/Earn", revenueUsdc: 0, count: store.earnActivations.length},
+      {source: "Swap", revenueUsdc: 0, count: 0}
+    ]
   };
 }
 
