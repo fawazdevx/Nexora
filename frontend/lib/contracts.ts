@@ -1,5 +1,6 @@
 import {createPublicClient, createWalletClient, custom, formatUnits, http, keccak256, parseUnits, stringToHex, type Address, type Hash} from "viem";
 import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, supportedChains} from "@/lib/arc";
+import {apiPost} from "@/lib/api";
 
 export const policyRegistryAbi = [
   {
@@ -368,6 +369,22 @@ export type SynthraSwapQuote = {
   gasEstimate: bigint;
 };
 
+type SynthraApiTransaction = {
+  to?: string;
+  target?: string;
+  data?: string;
+  calldata?: string;
+  value?: string | number | bigint;
+  gas?: string | number | bigint;
+  gasLimit?: string | number | bigint;
+};
+
+type SynthraApiResponse = Record<string, unknown>;
+
+type SynthraTransactionClient = {
+  sendTransaction(args: {to: Address; data?: `0x${string}`; value?: bigint; gas?: bigint}): Promise<Hash>;
+};
+
 const arbSepoliaContracts = {
   usdc: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
   policyRegistry: "0x30c8cc3C07F822f8cCb8ab2df2a8485DDb210328",
@@ -620,6 +637,112 @@ export async function executeXyloNetSwap(input: {
   });
 
   return {approveHash, swapHash};
+}
+
+export async function executeSynthraSwap(input: {
+  quote: SynthraSwapQuote;
+  slippageBps: number;
+}): Promise<{approveHash?: Hash; swapHash: Hash}> {
+  const {client, account, chainId} = await walletClient();
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Switch to Arc Testnet to swap through Synthra.");
+  }
+
+  const tokenIn = xylonetSwapTokens[input.quote.tokenIn];
+  const tokenOut = xylonetSwapTokens[input.quote.tokenOut];
+  const baseBody = {
+    chainId,
+    tokenIn: tokenIn.address,
+    tokenOut: tokenOut.address,
+    amount: input.quote.amountInRaw.toString()
+  };
+
+  const approval = await apiPost<SynthraApiResponse>("/api/synthra/approval", {
+    ...baseBody,
+    owner: account
+  });
+  const approvalTx = extractTransaction(approval);
+  const approveHash = approvalTx ? await sendSynthraTransaction(client, approvalTx) : undefined;
+
+  const swap = await apiPost<SynthraApiResponse>("/api/synthra/swap", {
+    ...baseBody,
+    recipient: account,
+    sender: account,
+    slippageBps: input.slippageBps
+  });
+  const swapTx = extractTransaction(swap);
+  if (!swapTx) {
+    throw new Error("Synthra did not return an executable swap transaction.");
+  }
+  const swapHash = await sendSynthraTransaction(client, swapTx);
+
+  return {approveHash, swapHash};
+}
+
+function extractTransaction(value: unknown): SynthraApiTransaction | null {
+  const seen = new Set<unknown>();
+
+  function visit(node: unknown): SynthraApiTransaction | null {
+    if (!node || typeof node !== "object" || seen.has(node)) return null;
+    seen.add(node);
+
+    const record = node as Record<string, unknown>;
+    const to = stringValue(record.to) ?? stringValue(record.target);
+    const data = stringValue(record.data) ?? stringValue(record.calldata);
+    if (isHexString(to) && (data === undefined || isHexString(data))) {
+      return record as SynthraApiTransaction;
+    }
+
+    for (const key of ["transaction", "tx", "approval", "approvalTransaction", "approvalTx", "swap", "swapTransaction", "swapTx", "data", "result"]) {
+      const found = visit(record[key]);
+      if (found) return found;
+    }
+
+    for (const item of Object.values(record)) {
+      const found = visit(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  return visit(value);
+}
+
+async function sendSynthraTransaction(client: SynthraTransactionClient, tx: SynthraApiTransaction): Promise<Hash> {
+  const to = tx.to ?? tx.target;
+  if (!isHexString(to)) {
+    throw new Error("Synthra transaction target is missing.");
+  }
+
+  const data = tx.data ?? tx.calldata ?? "0x";
+  if (!isHexString(data)) {
+    throw new Error("Synthra transaction calldata is invalid.");
+  }
+
+  const value = optionalBigInt(tx.value);
+  const gas = optionalBigInt(tx.gas ?? tx.gasLimit);
+
+  return client.sendTransaction({
+    to: to as Address,
+    data: data as `0x${string}`,
+    ...(value === undefined ? {} : {value}),
+    ...(gas === undefined ? {} : {gas})
+  });
+}
+
+function optionalBigInt(value: unknown): bigint | undefined {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return BigInt(Math.trunc(value));
+  if (typeof value === "string" && value.trim()) return BigInt(value);
+  return undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function isHexString(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && value.startsWith("0x");
 }
 
 export async function writeAgentPolicy(input: {

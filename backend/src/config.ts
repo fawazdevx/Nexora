@@ -43,7 +43,9 @@ export const config = {
     privateKey: process.env.FACILITATOR_PRIVATE_KEY ?? ""
   },
   integrations: {
-    xBearerToken: process.env.X_BEARER_TOKEN ?? ""
+    xBearerToken: process.env.X_BEARER_TOKEN ?? "",
+    synthraApiKey: process.env.SYNTHRA_API_KEY ?? "",
+    synthraApiUrl: process.env.SYNTHRA_API_URL ?? "https://trading-api.synthra.org"
   }
 };
 

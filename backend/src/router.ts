@@ -6,6 +6,7 @@ import {executeBuiltInService, executeMarketplaceService, featureService, listSe
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
 import {circleSwapReadiness, estimateCircleSwap, executeCircleSwap} from "./swap/circle-swap.js";
+import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
 import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
 
 export type AppRequest = {
@@ -98,6 +99,41 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
         tokenIn: requiredString(body.tokenIn, "tokenIn"),
         tokenOut: requiredString(body.tokenOut, "tokenOut"),
         amountIn: requiredString(body.amountIn, "amountIn"),
+        slippageBps: optionalNumber(body.slippageBps)
+      }));
+    }
+
+    if (req.method === "GET" && path === "/api/synthra/readiness") {
+      return ok(synthraReadiness());
+    }
+
+    if (req.method === "POST" && path === "/api/synthra/quote") {
+      return ok(await synthraQuote({
+        chainId: optionalNumber(body.chainId) ?? config.arc.chainId,
+        tokenIn: requiredString(body.tokenIn, "tokenIn"),
+        tokenOut: requiredString(body.tokenOut, "tokenOut"),
+        amount: requiredString(body.amount, "amount")
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/synthra/approval") {
+      return ok(await synthraApproval({
+        chainId: optionalNumber(body.chainId) ?? config.arc.chainId,
+        tokenIn: requiredString(body.tokenIn, "tokenIn"),
+        tokenOut: requiredString(body.tokenOut, "tokenOut"),
+        amount: requiredString(body.amount, "amount"),
+        owner: requiredString(body.owner, "owner")
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/synthra/swap") {
+      return ok(await synthraSwap({
+        chainId: optionalNumber(body.chainId) ?? config.arc.chainId,
+        tokenIn: requiredString(body.tokenIn, "tokenIn"),
+        tokenOut: requiredString(body.tokenOut, "tokenOut"),
+        amount: requiredString(body.amount, "amount"),
+        recipient: requiredString(body.recipient, "recipient"),
+        sender: requiredString(body.sender, "sender"),
         slippageBps: optionalNumber(body.slippageBps)
       }));
     }

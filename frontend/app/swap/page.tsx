@@ -1,10 +1,11 @@
-import {useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {ArrowDownUp, CheckCircle2, ExternalLink, RefreshCw} from "lucide-react";
 import {formatUnits} from "viem";
 import {useAccount} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
 import {arcTestnet, shortAddress, switchToArc} from "@/lib/arc";
 import {
+  executeSynthraSwap,
   executeXyloNetSwap,
   isXyloNetRouteSupported,
   quoteSynthraSwap,
@@ -40,10 +41,13 @@ export default function SwapPage() {
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const quoteRequestId = useRef(0);
 
   const onArc = chain?.id === arcTestnet.id;
   const amountNumber = Number(amount);
   const routeSupported = isXyloNetRouteSupported(tokenIn, tokenOut);
+  const executableQuote = quote?.venue === "XyloNet" || quote?.venue === "Synthra";
+  const swapDisabled = !quote || !executableQuote || executing || loading;
   const minReceived = useMemo(() => {
     if (!quote) return "0.00";
     const minRaw = quote.amountOutRaw * BigInt(10_000 - Number(slippageBps)) / 10_000n;
@@ -55,6 +59,41 @@ export default function SwapPage() {
     setTxHash(null);
     setRoutes(defaultRoutes());
   }
+
+  useEffect(() => {
+    const requestId = ++quoteRequestId.current;
+    setTxHash(null);
+
+    if (!isConnected) {
+      setQuote(null);
+      setRoutes(defaultRoutes());
+      setStatus("");
+      setLoading(false);
+      return;
+    }
+    if (!onArc) {
+      setQuote(null);
+      setRoutes(defaultRoutes());
+      setStatus("Switch to Arc Testnet to see live swap routes.");
+      setLoading(false);
+      return;
+    }
+    if (!Number.isFinite(amountNumber) || amountNumber <= 0 || tokenIn === tokenOut) {
+      setQuote(null);
+      setRoutes(defaultRoutes());
+      setStatus("");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setStatus("");
+    const timeout = window.setTimeout(() => {
+      void refreshQuote(requestId);
+    }, 450);
+
+    return () => window.clearTimeout(timeout);
+  }, [amount, amountNumber, isConnected, onArc, tokenIn, tokenOut]);
 
   function updateTokenIn(value: XyloNetSwapToken) {
     if (value === tokenOut) setTokenOut(tokenIn);
@@ -74,37 +113,17 @@ export default function SwapPage() {
     resetQuote();
   }
 
-  async function getQuote() {
+  async function refreshQuote(requestId = ++quoteRequestId.current) {
     setStatus("");
-    setTxHash(null);
-    if (!isConnected) {
-      setStatus("Connect your wallet to preview routes.");
-      return;
-    }
-    if (!onArc) {
-      setStatus("Switch to Arc Testnet to use XyloNet routes.");
-      return;
-    }
-    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
-      setStatus("Enter an amount greater than zero.");
-      return;
-    }
-    if (tokenIn === tokenOut) {
-      setStatus("Choose two different assets.");
-      return;
-    }
-    if (!routeSupported) {
-      setRoutes(unavailableRoutes(`${tokenIn} to ${tokenOut} is not available on XyloNet yet.`));
-      setStatus("This pair is not available through the verified XyloNet pools yet.");
-      return;
-    }
-
-    setLoading(true);
     try {
       const settled: [PromiseSettledResult<XyloNetSwapQuote>, PromiseSettledResult<SynthraSwapQuote>] = await Promise.allSettled([
-        quoteXyloNetSwap({tokenIn, tokenOut, amountIn: amount}),
+        routeSupported
+          ? quoteXyloNetSwap({tokenIn, tokenOut, amountIn: amount})
+          : Promise.reject(new Error("No route available.")),
         quoteSynthraSwap({tokenIn, tokenOut, amountIn: amount})
       ]);
+      if (requestId !== quoteRequestId.current) return;
+
       const liveQuotes = settled
         .flatMap((item) => item.status === "fulfilled" ? [item.value as AggregatorQuote] : [])
         .sort((a, b) => a.amountOutRaw > b.amountOutRaw ? -1 : a.amountOutRaw < b.amountOutRaw ? 1 : 0);
@@ -120,32 +139,31 @@ export default function SwapPage() {
         {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
       ]);
     } catch (error) {
+      if (requestId !== quoteRequestId.current) return;
       const message = error instanceof Error ? error.message : "Quote failed";
       setQuote(null);
       setRoutes([
-        {venue: "XyloNet", status: "error", message},
-        {venue: "Synthra", status: "unavailable", message: "Pending verified quote integration."},
+        {venue: "XyloNet", status: "unavailable", message: "No live route for this pair."},
+        {venue: "Synthra", status: "unavailable", message: "No live route for this pair."},
         {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
       ]);
       setStatus(message);
     } finally {
-      setLoading(false);
+      if (requestId === quoteRequestId.current) setLoading(false);
     }
   }
 
   async function swap() {
     if (!quote) return;
     setExecuting(true);
-    setStatus("Approve the router, then confirm the swap in your wallet.");
+    setStatus("Approve if needed, then confirm the swap in your wallet.");
     setTxHash(null);
     try {
-      if (quote.venue !== "XyloNet") {
-        setStatus("Synthra is quoting live, but execution is not enabled until its UniversalRouter approval path is verified.");
-        return;
-      }
-      const result = await executeXyloNetSwap({quote, slippageBps: Number(slippageBps)});
+      const result = quote.venue === "XyloNet"
+        ? await executeXyloNetSwap({quote, slippageBps: Number(slippageBps)})
+        : await executeSynthraSwap({quote, slippageBps: Number(slippageBps)});
       setTxHash(result.swapHash);
-      setStatus("Swap submitted through XyloNet.");
+      setStatus(`Swap submitted through ${quote.venue}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Swap failed");
     } finally {
@@ -210,12 +228,11 @@ export default function SwapPage() {
               Switch to Arc
             </button>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <button type="button" className="secondary-button min-h-12" onClick={() => void getQuote()} disabled={loading || !isConnected}>
+            <div className="grid gap-3 sm:grid-cols-[52px_1fr]">
+              <button type="button" className="secondary-button min-h-12 px-0" onClick={() => void refreshQuote()} disabled={loading || !isConnected} aria-label="Refresh quote">
                 <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-                Quote
               </button>
-              <button type="button" className="action-button min-h-12" onClick={() => void swap()} disabled={!quote || executing}>
+              <button type="button" className="action-button min-h-12" onClick={() => void swap()} disabled={swapDisabled}>
                 {executing ? "Swapping..." : "Swap"}
               </button>
             </div>
@@ -365,6 +382,5 @@ function routePreviewFor(
       message: isBest ? `Best ${detail.toLowerCase()}` : detail
     };
   }
-  const message = result.reason instanceof Error ? result.reason.message : "Route unavailable.";
-  return {venue, status: "unavailable", message};
+  return {venue, status: "unavailable", message: "No live route for this pair."};
 }
