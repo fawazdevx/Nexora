@@ -75,18 +75,18 @@ export default function MarketplacePage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6 animate-fade-in">
       <PageHeader
         kicker="x402 marketplace"
         title="APIs and agent services priced in USDC"
         description="Discover monetized tools that agents can purchase per request under operator-defined policy limits."
-        action={<a href="/marketplace/new" onClick={(event) => navigate(event, "/marketplace/new")} className="action-button"><Plus size={16} /> Publish API</a>}
+        action={<a href="/marketplace/new" onClick={(event) => navigate(event, "/marketplace/new")} className="action-button"><Plus size={17} /> Publish API</a>}
       />
-      {status ? <p className="break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
-      {snapshot.error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace API unavailable"}</p> : null}
-      <div className="panel flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-medium text-white">
-          <ShieldCheck size={17} className="text-mint" />
+      {status ? <p className="break-all rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.08] to-white/[0.04] p-4 text-sm font-medium text-slate-300 shadow-inner backdrop-blur-sm">{status}</p> : null}
+      {snapshot.error ? <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta shadow-[0_0_20px_rgba(236,72,153,0.15)]">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace API unavailable"}</p> : null}
+      <div className="panel flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2.5 text-sm font-bold text-white">
+          <ShieldCheck size={18} className="text-mint drop-shadow-[0_0_12px_rgba(110,231,183,0.5)]" />
           Agent used for purchases
         </div>
         <select className="field min-w-[260px]" value={selectedAgent?.id ?? selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)}>
@@ -98,32 +98,33 @@ export default function MarketplacePage() {
           ))}
         </select>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2">
         {(snapshot.data?.services ?? []).map((service) => (
-          <article key={service.id} className="panel relative overflow-hidden">
-            <div className="absolute inset-x-0 top-0 h-px bg-white/[0.08]" />
-            <div className="flex items-start justify-between gap-4">
+          <article key={service.id} className="group panel relative overflow-hidden transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.15] to-transparent" />
+            <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-plasma/[0.06] blur-3xl transition-all duration-500 group-hover:bg-plasma/[0.12]" />
+            <div className="relative flex items-start justify-between gap-4">
               <div>
-                <h3 className="font-semibold text-white">{service.name}</h3>
-                <p className="text-sm text-slate-400">Published by {shortAddress(service.publisherAddress)}</p>
+                <h3 className="text-lg font-bold text-white">{service.name}</h3>
+                <p className="mt-1 text-sm font-medium text-slate-400">Published by {shortAddress(service.publisherAddress)}</p>
               </div>
-              <span className="status-pill border-plasma/20 bg-plasma/10 text-orchid">x402</span>
+              <span className="status-pill border-plasma/25 bg-gradient-to-br from-plasma/15 to-plasma/10 font-semibold text-orchid shadow-[0_0_16px_rgba(155,92,246,0.2)]">x402</span>
             </div>
-            <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
-              <span className="surface px-3 py-2">Price <b className="text-white">${service.pricePerUnitUsdc}</b></span>
-              <span className="surface px-3 py-2">Ledger <b className="text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
-              <span className="surface px-3 py-2">Fee <b className="text-white">{(service.manifest.platformFeeBps / 100).toFixed(2)}%</b></span>
+            <div className="relative mt-5 grid gap-2.5 text-sm sm:grid-cols-3">
+              <span className="surface px-3 py-2.5 font-medium">Price <b className="font-bold text-white">${service.pricePerUnitUsdc}</b></span>
+              <span className="surface px-3 py-2.5 font-medium">Ledger <b className="font-bold text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
+              <span className="surface px-3 py-2.5 font-medium">Fee <b className="font-bold text-white">{(service.manifest.platformFeeBps / 100).toFixed(2)}%</b></span>
             </div>
-            <div className="mt-4 rounded-md border border-white/[0.08] bg-white/[0.035] p-4">
-              <p className="text-sm font-medium text-white">{service.manifest.description}</p>
-              <div className="mt-3 flex flex-wrap gap-2">
+            <div className="relative mt-5 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
+              <p className="text-sm font-semibold leading-6 text-white">{service.manifest.description}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
                 <span className="status-pill">{formatKind(service.manifest.kind)}</span>
                 <span className="status-pill">v{service.manifest.version}</span>
                 {service.manifest.outputSchema.slice(0, 4).map((item) => <span key={item} className="status-pill">{item}</span>)}
               </div>
             </div>
             {serviceInputLabel(service) ? (
-              <label className="mt-5 grid gap-2 text-sm text-slate-300">
+              <label className="relative mt-5 grid gap-2.5 text-sm font-semibold text-slate-300">
                 {serviceInputLabel(service)}
                 <input
                   className="field"
@@ -133,10 +134,10 @@ export default function MarketplacePage() {
                 />
               </label>
             ) : null}
-            <button onClick={() => void purchase(service)} className="action-button mt-5 w-full" disabled={!isConnected || !selectedAgent}>
+            <button onClick={() => void purchase(service)} className="action-button relative mt-5 w-full" disabled={!isConnected || !selectedAgent}>
               {service.chainServiceId ? "Purchase per execution" : "Test purchase"}
             </button>
-            <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button mt-3 w-full justify-center">
+            <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button relative mt-3 w-full justify-center">
               Public service page
             </button>
             <ServiceResult result={serviceResults[service.id]} />
@@ -144,7 +145,7 @@ export default function MarketplacePage() {
         ))}
         {!snapshot.isLoading && (snapshot.data?.services.length ?? 0) === 0 ? (
           <div className="panel lg:col-span-2">
-            <p className="text-sm text-slate-300">No APIs have been published yet. Publish the first x402 service from the developer console.</p>
+            <p className="text-sm font-medium text-slate-300">No APIs have been published yet. Publish the first x402 service from the developer console.</p>
           </div>
         ) : null}
       </div>
@@ -160,9 +161,9 @@ function ServiceResult({result}: {result: unknown}) {
 
   if (status !== "ok") {
     return (
-      <div className="mt-4 rounded-md border border-magenta/25 bg-magenta/10 p-4">
-        <p className="text-sm font-medium text-magenta">{stringValue(data.message) ?? "Service returned an error"}</p>
-        {stringValue(data.detail) ? <p className="mt-2 text-xs leading-5 text-slate-300">{stringValue(data.detail)}</p> : null}
+      <div className="relative mt-5 rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-5 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
+        <p className="text-sm font-bold text-magenta">{stringValue(data.message) ?? "Service returned an error"}</p>
+        {stringValue(data.detail) ? <p className="mt-3 text-xs leading-5 text-slate-300">{stringValue(data.detail)}</p> : null}
       </div>
     );
   }
@@ -170,11 +171,37 @@ function ServiceResult({result}: {result: unknown}) {
   if ("headings" in data || "wordCount" in data || "canonical" in data) return <WebsiteResult data={data} />;
   if ("stars" in data || "forks" in data || "readmeSummary" in data) return <GitHubResult data={data} />;
   if ("account" in data || "score" in data) return <XResult data={data} />;
+  if ("checks" in data || "recommendations" in data || "recommendedPolicy" in data || "gaps" in data) return <StructuredServiceResult data={data} />;
 
   return (
+    <div className="relative mt-5 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
+      <p className="text-sm font-bold text-white">{stringValue(data.summary) ?? "Service result"}</p>
+      {stringValue(data.note) ? <p className="mt-3 text-sm leading-6 text-slate-400">{stringValue(data.note)}</p> : null}
+    </div>
+  );
+}
+
+function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
+  const checks = arrayValue(data.checks);
+  const issues = arrayValue(data.issues);
+  const recommendations = arrayValue(data.recommendations);
+  const gaps = arrayValue(data.gaps);
+  const strengths = arrayValue(data.strengths);
+  return (
     <div className="mt-4 rounded-md border border-white/[0.08] bg-white/[0.035] p-4">
-      <p className="text-sm font-medium text-white">{stringValue(data.summary) ?? "Service result"}</p>
-      {stringValue(data.note) ? <p className="mt-2 text-sm leading-6 text-slate-400">{stringValue(data.note)}</p> : null}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.16em] text-orchid">Service result</p>
+          <h4 className="mt-2 text-base font-semibold text-white">{stringValue(data.riskLevel) ? `Risk: ${stringValue(data.riskLevel)}` : stringValue(data.summary) ?? "Analysis complete"}</h4>
+        </div>
+        {numberValue(data.score) !== null ? <span className="status-pill">Score {numberValue(data.score)}</span> : null}
+      </div>
+      {stringValue(data.summary) ? <p className="mt-3 text-sm leading-6 text-slate-300">{stringValue(data.summary)}</p> : null}
+      <ResultList title="Checks" items={checks} />
+      <ResultList title="Issues" items={issues} />
+      <ResultList title="Strengths" items={strengths} />
+      <ResultList title="Gaps" items={gaps} />
+      <ResultList title="Recommendations" items={recommendations} />
     </div>
   );
 }
@@ -275,6 +302,20 @@ function ResultMetric({label, value, icon}: {label: string; value?: string | num
     <div className="surface flex items-center justify-between gap-3 px-3 py-2">
       <span className="flex items-center gap-2 text-slate-400">{icon}{label}</span>
       <b className="text-white">{value ?? "N/A"}</b>
+    </div>
+  );
+}
+
+function ResultList({title, items}: {title: string; items: unknown[]}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-4">
+      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{title}</p>
+      <div className="mt-2 grid gap-2">
+        {items.slice(0, 5).map((item, index) => (
+          <div key={`${title}-${index}`} className="surface px-3 py-2 text-sm text-slate-300">{String(item)}</div>
+        ))}
+      </div>
     </div>
   );
 }

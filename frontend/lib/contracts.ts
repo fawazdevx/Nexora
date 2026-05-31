@@ -1,5 +1,5 @@
 import {createPublicClient, createWalletClient, custom, formatUnits, http, keccak256, parseUnits, stringToHex, type Address, type Hash} from "viem";
-import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, supportedChains} from "@/lib/arc";
+import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, baseSepoliaWagmiChain, supportedChains} from "@/lib/arc";
 import {apiPost} from "@/lib/api";
 
 export const policyRegistryAbi = [
@@ -85,6 +85,13 @@ export const x402LedgerAbi = [
 ] as const;
 
 export const erc20Abi = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{name: "account", type: "address"}],
+    outputs: [{type: "uint256"}]
+  },
   {
     type: "function",
     name: "approve",
@@ -394,6 +401,15 @@ const arbSepoliaContracts = {
   nexoraEscrow: "0xBEA95761fb313Dc0Ee90cc8EB2e2ad7b405EaC68"
 } as const;
 
+const baseSepoliaContracts = {
+  usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  policyRegistry: "0x195f70790d977983586d90f2000725B6e26684eE",
+  x402Ledger: "0x12B6fF427abA4f0438EA6B5af7E1e49e55DeaB2D",
+  reputation: "0xB5e859af0C6d3198Ed33200E9145e31D62F0b032",
+  saveEarnVault: "0xdf080a50fe94C15EDD0Ce4A9409e046abada96eD",
+  nexoraEscrow: "0x870757eEA236Fe0cD45c7013d97E09AEbFc800A4"
+} as const;
+
 const arbOneContracts = {
   usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
   policyRegistry: "",
@@ -427,6 +443,17 @@ export function contractAddressesForChain(chainId?: number) {
       saveEarnDeployBlock: import.meta.env.VITE_ARB_SEPOLIA_SAVE_EARN_DEPLOY_BLOCK
     };
   }
+  if (id === baseSepoliaWagmiChain.id) {
+    return {
+      usdc: envAddress(import.meta.env.VITE_BASE_SEPOLIA_USDC_ADDRESS, baseSepoliaContracts.usdc),
+      policyRegistry: envAddress(import.meta.env.VITE_BASE_SEPOLIA_POLICY_REGISTRY_ADDRESS, baseSepoliaContracts.policyRegistry),
+      x402Ledger: envAddress(import.meta.env.VITE_BASE_SEPOLIA_X402_LEDGER_ADDRESS, baseSepoliaContracts.x402Ledger),
+      reputation: envAddress(import.meta.env.VITE_BASE_SEPOLIA_REPUTATION_ADDRESS, baseSepoliaContracts.reputation),
+      saveEarnVault: envAddress(import.meta.env.VITE_BASE_SEPOLIA_SAVE_EARN_VAULT_ADDRESS, baseSepoliaContracts.saveEarnVault),
+      nexoraEscrow: envAddress(import.meta.env.VITE_BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS, baseSepoliaContracts.nexoraEscrow),
+      saveEarnDeployBlock: import.meta.env.VITE_BASE_SEPOLIA_SAVE_EARN_DEPLOY_BLOCK
+    };
+  }
   if (id === arbitrumOneWagmiChain.id) {
     return {
       usdc: envAddress(import.meta.env.VITE_ARB_ONE_USDC_ADDRESS, arbOneContracts.usdc),
@@ -455,6 +482,7 @@ function envAddress(value: string | undefined, fallback: string) {
 
 function chainById(chainId?: number) {
   if (chainId === arbitrumSepoliaWagmiChain.id) return arbitrumSepoliaWagmiChain;
+  if (chainId === baseSepoliaWagmiChain.id) return baseSepoliaWagmiChain;
   if (chainId === arbitrumOneWagmiChain.id) return arbitrumOneWagmiChain;
   return supportedChains.find((chain) => chain.id === chainId) ?? supportedChains[0];
 }
@@ -598,6 +626,22 @@ export async function quoteSynthraSwap(input: {tokenIn: XyloNetSwapToken; tokenO
     quoter: synthra.quoter,
     router: synthra.universalRouter,
     gasEstimate: best.gasEstimate
+  };
+}
+
+export async function readSwapTokenBalance(input: {owner: string; token: XyloNetSwapToken}) {
+  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  const token = xylonetSwapTokens[input.token];
+  const balance = await (await publicClient(chainId)).readContract({
+    address: token.address,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [input.owner as Address]
+  });
+  return {
+    token: input.token,
+    raw: balance,
+    formatted: formatUnits(balance, token.decimals)
   };
 }
 

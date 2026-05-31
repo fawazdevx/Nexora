@@ -1,4 +1,4 @@
-import {ArrowRightLeft, Bot, BriefcaseBusiness, Coins, Gauge, Home, KeyRound, Landmark, ShieldCheck, Store, UserCog, Zap} from "lucide-react";
+import {ArrowRightLeft, Bot, BriefcaseBusiness, Coins, Gauge, Home, KeyRound, Landmark, Network, ShieldCheck, Store, UserCog, Zap} from "lucide-react";
 
 export const navItems = [
   {href: "/app", label: "Home", icon: Home},
@@ -8,6 +8,7 @@ export const navItems = [
   {href: "/marketplace", label: "Market", icon: Store},
   {href: "/developer", label: "Developer", icon: UserCog},
   {href: "/revenue", label: "Revenue", icon: Landmark},
+  {href: "/admin/deployments", label: "Deployments", icon: Network},
   {href: "/escrow", label: "Escrow", icon: BriefcaseBusiness},
   {href: "/payments", label: "Payments", icon: Coins},
   {href: "/identity", label: "Identity", icon: KeyRound},

@@ -4,6 +4,51 @@ import {chainLabel, contractAddressesForChain, publishX402Service} from "@/lib/c
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 
+const serviceTemplates = [
+  {
+    kind: "website_analyzer",
+    name: "Website Growth Analyzer",
+    endpointHash: "website-analyzer-v1",
+    price: "0.025",
+    description: "Analyze a website and return conversion, metadata, headings, and growth recommendations."
+  },
+  {
+    kind: "github_repo_analyzer",
+    name: "GitHub Repo Analyzer",
+    endpointHash: "github-repo-analyzer-v1",
+    price: "0.025",
+    description: "Review a public GitHub repo for traction, maintenance signal, license, README quality, and activity."
+  },
+  {
+    kind: "contract_safety_check",
+    name: "Contract Safety Check",
+    endpointHash: "contract-safety-check-v1",
+    price: "0.015",
+    description: "Check a contract address and return a policy-focused safety checklist before agents interact with it."
+  },
+  {
+    kind: "wallet_activity_summary",
+    name: "Wallet Activity Summary",
+    endpointHash: "wallet-activity-summary-v1",
+    price: "0.015",
+    description: "Summarize wallet recipient risk notes and recommended spend policy for agent payments."
+  },
+  {
+    kind: "landing_page_copy_reviewer",
+    name: "Landing Page Copy Reviewer",
+    endpointHash: "landing-page-copy-reviewer-v1",
+    price: "0.02",
+    description: "Review page copy or a URL for clarity, conversion issues, and better CTA structure."
+  },
+  {
+    kind: "grant_application_reviewer",
+    name: "Grant Application Reviewer",
+    endpointHash: "grant-application-reviewer-v1",
+    price: "0.03",
+    description: "Review a grant summary for infrastructure clarity, revenue proof, and ecosystem fit."
+  }
+] as const;
+
 export function PublishServiceForm() {
   const {address, chain, isConnected} = useAccount();
   const x402LedgerConfigured = Boolean(contractAddressesForChain(chain?.id).x402Ledger);
@@ -15,6 +60,16 @@ export function PublishServiceForm() {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [status, setStatus] = useState("");
   const platformFeeBps = 200;
+
+  function applyTemplate(index: string) {
+    const template = serviceTemplates[Number(index)];
+    if (!template) return;
+    setName(template.name);
+    setEndpointHash(template.endpointHash);
+    setPrice(template.price);
+    setManifestKind(template.kind);
+    setDescription(template.description);
+  }
 
   async function publish() {
     if (!isConnected || !address) {
@@ -57,6 +112,13 @@ export function PublishServiceForm() {
         <input className="field" value={address ? shortAddress(address) : "Connect wallet"} readOnly />
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
+        Quick template
+        <select className="field bg-slate-950 text-white" defaultValue="" onChange={(event) => applyTemplate(event.target.value)}>
+          <option value="">Choose a starter API</option>
+          {serviceTemplates.map((template, index) => <option key={template.endpointHash} value={index}>{template.name}</option>)}
+        </select>
+      </label>
+      <label className="grid gap-2 text-sm text-slate-300">
         Service name
         <input className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Website Analyzer" />
         <span className="text-xs leading-5 text-slate-500">Examples: Website Analyzer, GitHub Repo Analyzer, X Account Analyzer, Contract Safety Check.</span>
@@ -73,6 +135,10 @@ export function PublishServiceForm() {
           <option value="website_analyzer">Website Analyzer</option>
           <option value="github_repo_analyzer">GitHub Repo Analyzer</option>
           <option value="x_account_analyzer">X Account Analyzer</option>
+          <option value="contract_safety_check">Contract Safety Check</option>
+          <option value="wallet_activity_summary">Wallet Activity Summary</option>
+          <option value="landing_page_copy_reviewer">Landing Page Copy Reviewer</option>
+          <option value="grant_application_reviewer">Grant Application Reviewer</option>
         </select>
         <span className="text-xs leading-5 text-slate-500">Choose the kind of API you are publishing. Nexora uses this to show the right input and result layout.</span>
       </label>

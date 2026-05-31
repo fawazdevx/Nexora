@@ -9,8 +9,12 @@ interface ImportMetaEnv {
   readonly VITE_NATIVE_CURRENCY_SYMBOL?: string;
   readonly VITE_NATIVE_CURRENCY_DECIMALS?: string;
   readonly VITE_ENABLE_ARBITRUM_SEPOLIA?: string;
+  readonly VITE_ENABLE_BASE_SEPOLIA?: string;
   readonly VITE_ENABLE_ARBITRUM_ONE?: string;
+  readonly VITE_ARB_SEPOLIA_RPC_URL?: string;
   readonly VITE_ARBITRUM_SEPOLIA_RPC_URL?: string;
+  readonly VITE_BASE_SEPOLIA_RPC_URL?: string;
+  readonly VITE_ARB_ONE_RPC_URL?: string;
   readonly VITE_ARBITRUM_ONE_RPC_URL?: string;
   readonly VITE_NEXORA_API_URL?: string;
   readonly VITE_MAINTENANCE_MODE?: string;
@@ -28,6 +32,13 @@ interface ImportMetaEnv {
   readonly VITE_ARB_SEPOLIA_SAVE_EARN_VAULT_ADDRESS?: string;
   readonly VITE_ARB_SEPOLIA_SAVE_EARN_DEPLOY_BLOCK?: string;
   readonly VITE_ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS?: string;
+  readonly VITE_BASE_SEPOLIA_USDC_ADDRESS?: string;
+  readonly VITE_BASE_SEPOLIA_POLICY_REGISTRY_ADDRESS?: string;
+  readonly VITE_BASE_SEPOLIA_X402_LEDGER_ADDRESS?: string;
+  readonly VITE_BASE_SEPOLIA_REPUTATION_ADDRESS?: string;
+  readonly VITE_BASE_SEPOLIA_SAVE_EARN_VAULT_ADDRESS?: string;
+  readonly VITE_BASE_SEPOLIA_SAVE_EARN_DEPLOY_BLOCK?: string;
+  readonly VITE_BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS?: string;
   readonly VITE_ARB_ONE_USDC_ADDRESS?: string;
   readonly VITE_ARB_ONE_POLICY_REGISTRY_ADDRESS?: string;
   readonly VITE_ARB_ONE_X402_LEDGER_ADDRESS?: string;

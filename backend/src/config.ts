@@ -20,11 +20,25 @@ export const config = {
     sepoliaPolicyRegistry: process.env.ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS ?? "",
     sepoliaX402Ledger: process.env.ARB_SEPOLIA_X402_LEDGER_ADDRESS ?? "",
     sepoliaReputation: process.env.ARB_SEPOLIA_REPUTATION_ADDRESS ?? "",
+    sepoliaYieldRouter: process.env.ARB_SEPOLIA_YIELD_ROUTER_ADDRESS ?? "",
+    sepoliaSaveEarnVault: process.env.ARB_SEPOLIA_SAVE_EARN_VAULT_ADDRESS ?? "",
     sepoliaEscrow: process.env.ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS ?? "",
     oneRpcUrl: process.env.ARB_ONE_RPC_URL ?? process.env.ARBITRUM_ONE_RPC_URL ?? "https://arb1.arbitrum.io/rpc",
     oneChainId: Number(process.env.ARB_ONE_CHAIN_ID ?? 42161),
     oneExplorerUrl: process.env.ARB_ONE_EXPLORER_URL ?? "https://arbiscan.io",
     oneUsdc: process.env.ARB_ONE_USDC_ADDRESS ?? "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+  },
+  base: {
+    sepoliaRpcUrl: process.env.BASE_SEPOLIA_RPC_URL ?? "https://base-sepolia-rpc.publicnode.com",
+    sepoliaChainId: Number(process.env.BASE_SEPOLIA_CHAIN_ID ?? 84532),
+    sepoliaExplorerUrl: process.env.BASE_SEPOLIA_EXPLORER_URL ?? "https://sepolia.basescan.org",
+    sepoliaUsdc: process.env.BASE_SEPOLIA_USDC_ADDRESS ?? "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    sepoliaPolicyRegistry: process.env.BASE_SEPOLIA_POLICY_REGISTRY_ADDRESS ?? "",
+    sepoliaX402Ledger: process.env.BASE_SEPOLIA_X402_LEDGER_ADDRESS ?? "",
+    sepoliaReputation: process.env.BASE_SEPOLIA_REPUTATION_ADDRESS ?? "",
+    sepoliaYieldRouter: process.env.BASE_SEPOLIA_YIELD_ROUTER_ADDRESS ?? "",
+    sepoliaSaveEarnVault: process.env.BASE_SEPOLIA_SAVE_EARN_VAULT_ADDRESS ?? "",
+    sepoliaEscrow: process.env.BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS ?? ""
   },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
@@ -36,6 +50,9 @@ export const config = {
     policyRegistry: process.env.POLICY_REGISTRY_ADDRESS ?? "",
     x402Ledger: process.env.X402_LEDGER_ADDRESS ?? "",
     reputation: process.env.REPUTATION_ADDRESS ?? "",
+    yieldRouter: process.env.YIELD_ROUTER_ADDRESS ?? "",
+    saveEarnVault: process.env.SAVE_EARN_VAULT_ADDRESS ?? "",
+    nexoraEscrow: process.env.NEXORA_ESCROW_ADDRESS ?? "",
     treasury: process.env.TREASURY_ADDRESS ?? ""
   },
   facilitator: {

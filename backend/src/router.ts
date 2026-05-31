@@ -38,6 +38,10 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok(integrationReadiness());
     }
 
+    if (req.method === "GET" && path === "/api/admin/deployments") {
+      return ok(await deploymentDashboard());
+    }
+
     if (req.method === "GET" && path === "/api/app") {
       const operator = optionalString(url.searchParams.get("operator"));
       await refreshPendingCircleWallets(operator);
@@ -467,6 +471,89 @@ async function platformRevenueDashboard() {
       {source: "plans", revenueUsdc: roundUsdc(subscriptions), count: store.subscriptions.length},
       {source: "Save/Earn", revenueUsdc: 0, count: store.earnActivations.length},
       {source: "Swap", revenueUsdc: 0, count: 0}
+    ]
+  };
+}
+
+async function deploymentDashboard() {
+  const store = await readStore();
+  const settledPayments = store.payments.filter((payment) => payment.status === "settled");
+  const escrowFees = store.escrows
+    .filter((escrow) => escrow.status === "released")
+    .reduce((sum, escrow) => sum + escrow.platformFeeUsdc, 0);
+  const marketplaceFees = settledPayments.reduce((sum, payment) => sum + (payment.platformFeeUsdc ?? 0), 0);
+  const planRevenue = store.subscriptions.reduce((sum, subscription) => sum + subscription.amountUsdc, 0);
+
+  return {
+    treasury: {
+      address: config.contracts.treasury,
+      totalPlatformRevenueUsdc: roundUsdc(marketplaceFees + escrowFees + planRevenue),
+      marketplaceFeesUsdc: roundUsdc(marketplaceFees),
+      escrowFeesUsdc: roundUsdc(escrowFees),
+      planRevenueUsdc: roundUsdc(planRevenue)
+    },
+    fees: {
+      x402DefaultBps: 200,
+      escrowDefaultBps: 100,
+      saveEarnWithdrawalBps: Number(process.env.NEXORA_WITHDRAWAL_FEE_BPS ?? 100),
+      deploymentFeeBps: Number(process.env.NEXORA_FEE_BPS ?? 250),
+      editable: false
+    },
+    chains: [
+      {
+        key: "arc-testnet",
+        primary: true,
+        name: "Arc Testnet",
+        chainId: config.arc.chainId,
+        rpcUrl: config.arc.rpcUrl,
+        explorerUrl: config.arc.explorerUrl,
+        usdc: config.contracts.usdc,
+        contracts: {
+          policyRegistry: config.contracts.policyRegistry,
+          reputation: config.contracts.reputation,
+          x402Ledger: config.contracts.x402Ledger,
+          yieldRouter: config.contracts.yieldRouter,
+          saveEarnVault: config.contracts.saveEarnVault,
+          nexoraEscrow: config.contracts.nexoraEscrow
+        },
+        features: ["Agent policies", "x402 marketplace", "Save/Earn", "Escrow", "Swap aggregator"]
+      },
+      {
+        key: "arbitrum-sepolia",
+        primary: false,
+        name: "Arbitrum Sepolia",
+        chainId: config.arbitrum.sepoliaChainId,
+        rpcUrl: config.arbitrum.sepoliaRpcUrl,
+        explorerUrl: config.arbitrum.sepoliaExplorerUrl,
+        usdc: config.arbitrum.sepoliaUsdc,
+        contracts: {
+          policyRegistry: config.arbitrum.sepoliaPolicyRegistry,
+          reputation: config.arbitrum.sepoliaReputation,
+          x402Ledger: config.arbitrum.sepoliaX402Ledger,
+          yieldRouter: config.arbitrum.sepoliaYieldRouter,
+          saveEarnVault: config.arbitrum.sepoliaSaveEarnVault,
+          nexoraEscrow: config.arbitrum.sepoliaEscrow
+        },
+        features: ["Agent policies", "x402 marketplace", "Save/Earn", "Escrow"]
+      },
+      {
+        key: "base-sepolia",
+        primary: false,
+        name: "Base Sepolia",
+        chainId: config.base.sepoliaChainId,
+        rpcUrl: config.base.sepoliaRpcUrl,
+        explorerUrl: config.base.sepoliaExplorerUrl,
+        usdc: config.base.sepoliaUsdc,
+        contracts: {
+          policyRegistry: config.base.sepoliaPolicyRegistry,
+          reputation: config.base.sepoliaReputation,
+          x402Ledger: config.base.sepoliaX402Ledger,
+          yieldRouter: config.base.sepoliaYieldRouter,
+          saveEarnVault: config.base.sepoliaSaveEarnVault,
+          nexoraEscrow: config.base.sepoliaEscrow
+        },
+        features: ["Agent policies", "x402 marketplace", "Save/Earn", "Escrow"]
+      }
     ]
   };
 }

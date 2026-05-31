@@ -37,7 +37,7 @@ export type ServiceRecord = {
 };
 
 export type ServiceManifest = {
-  kind: "website_analyzer" | "github_repo_analyzer" | "x_account_analyzer" | "generic";
+  kind: "website_analyzer" | "github_repo_analyzer" | "x_account_analyzer" | "contract_safety_check" | "wallet_activity_summary" | "landing_page_copy_reviewer" | "grant_application_reviewer" | "generic";
   version: string;
   description: string;
   inputSchema: Array<{name: string; label: string; type: "text" | "url"; required: boolean; placeholder?: string}>;
@@ -321,6 +321,50 @@ function defaultManifestForService(name: string, endpointHash: string): ServiceM
       description: "Reviews a public X account when API credits are available and returns metrics, account signal, and score.",
       inputSchema: [{name: "handle", label: "X account", type: "text", required: true, placeholder: "@username"}],
       outputSchema: ["account", "metrics", "score", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (marker.includes("contract safety") || marker.includes("contract check") || marker.includes("contract audit")) {
+    return {
+      kind: "contract_safety_check",
+      version: "1.0.0",
+      description: "Checks a contract address and returns a safety checklist before it is used in agent policy.",
+      inputSchema: [{name: "contract", label: "Contract address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["contract", "riskLevel", "checks", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (marker.includes("wallet activity") || marker.includes("wallet summary") || marker.includes("wallet risk")) {
+    return {
+      kind: "wallet_activity_summary",
+      version: "1.0.0",
+      description: "Summarizes wallet risk notes and recommended agent recipient policy.",
+      inputSchema: [{name: "wallet", label: "Wallet address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["wallet", "riskLevel", "summary", "recommendedPolicy"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (marker.includes("landing page") || marker.includes("copy reviewer")) {
+    return {
+      kind: "landing_page_copy_reviewer",
+      version: "1.0.0",
+      description: "Reviews landing page copy or a URL for clarity, conversion, and CTA quality.",
+      inputSchema: [{name: "url", label: "URL or page copy", type: "text", required: true, placeholder: "https://example.com or paste copy"}],
+      outputSchema: ["score", "issues", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (marker.includes("grant") || marker.includes("application reviewer")) {
+    return {
+      kind: "grant_application_reviewer",
+      version: "1.0.0",
+      description: "Reviews a grant application summary for infrastructure clarity, revenue proof, and ecosystem fit.",
+      inputSchema: [{name: "application", label: "Application summary", type: "text", required: true, placeholder: "Paste your grant summary"}],
+      outputSchema: ["score", "strengths", "gaps", "recommendations"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };

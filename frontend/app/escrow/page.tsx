@@ -7,6 +7,33 @@ import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {createOnchainEscrow, fundOnchainEscrow, readOnchainEscrow, releaseOnchainEscrow, submitOnchainEscrow, verifyOnchainEscrow} from "@/lib/contracts";
 import {useNotifications} from "@/components/Notifications";
 
+const escrowTemplates = [
+  {
+    title: "Analyze my website and send a growth report",
+    description: "Review https://nexora.finance, list the top conversion issues, summarize SEO problems, and deliver a short action plan in a shared document.",
+    amount: "10",
+    bond: "1"
+  },
+  {
+    title: "Review my GitHub repo for grant readiness",
+    description: "Review https://github.com/fawazdev/nexora, summarize architecture clarity, missing docs, deployment risk, and what to improve before a grant demo.",
+    amount: "12",
+    bond: "1"
+  },
+  {
+    title: "Check a contract before agent allowlisting",
+    description: "Review contract 0x0000000000000000000000000000000000000000, list owner/admin risks, proxy concerns, and whether an agent should interact with it.",
+    amount: "8",
+    bond: "1"
+  },
+  {
+    title: "Write an API integration checklist",
+    description: "Create a deliverable checklist for integrating a paid x402 API, including input schema, payment settlement, result format, and policy requirements.",
+    amount: "7",
+    bond: "1"
+  }
+];
+
 export default function EscrowPage() {
   const {address, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
@@ -19,6 +46,15 @@ export default function EscrowPage() {
   const [busyAction, setBusyAction] = useState("");
   const {notify} = useNotifications();
   const escrowConfigured = Boolean(import.meta.env.VITE_NEXORA_ESCROW_ADDRESS);
+
+  function applyTemplate(index: string) {
+    const template = escrowTemplates[Number(index)];
+    if (!template) return;
+    setTitle(template.title);
+    setDescription(template.description);
+    setAmount(template.amount);
+    setBond(template.bond);
+  }
 
   async function createEscrow() {
     if (!isConnected || !address) {
@@ -130,6 +166,13 @@ export default function EscrowPage() {
         description="Hold USDC for a task, let the worker submit proof, then release payment after review."
       />
       <section className="panel grid gap-4 md:grid-cols-2">
+        <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
+          Task template
+          <select className="field bg-slate-950 text-white" defaultValue="" onChange={(event) => applyTemplate(event.target.value)}>
+            <option value="">Choose a starter escrow</option>
+            {escrowTemplates.map((template, index) => <option key={template.title} value={index}>{template.title}</option>)}
+          </select>
+        </label>
         <label className="grid gap-2 text-sm text-slate-300">
           Counterparty wallet
           <input className="field" value={counterparty} onChange={(event) => setCounterparty(event.target.value)} placeholder="0x..." />
@@ -172,6 +215,7 @@ export default function EscrowPage() {
             </div>
             {escrow.chainEscrowId ? <p className="mt-3 text-xs text-slate-500">Escrow #{escrow.chainEscrowId} on Arc</p> : null}
             <p className="mt-4 text-sm leading-6 text-slate-300">{escrow.description}</p>
+            <DeliverableChecklist description={escrow.description} status={escrow.status} />
             <EscrowAgentResult result={escrow.deliverableResult} />
             <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
               <span className="surface px-3 py-2">Amount <b className="text-white">${escrow.amountUsdc}</b></span>
@@ -196,6 +240,30 @@ export default function EscrowPage() {
 function escrowDeliverableReference(escrowId: string, description: string) {
   const url = description.match(/https?:\/\/[^\s)]+/i)?.[0]?.replace(/[.,;:!?]+$/g, "");
   return url ?? `nexora://escrows/${escrowId}/deliverable`;
+}
+
+function DeliverableChecklist({description, status}: {description: string; status: string}) {
+  const url = description.match(/https?:\/\/[^\s)]+/i)?.[0]?.replace(/[.,;:!?]+$/g, "");
+  const items = [
+    ["Scope defined", description.trim().length > 20],
+    ["Reference link", Boolean(url)],
+    ["Worker submitted", ["submitted", "verified", "released"].includes(status)],
+    ["Creator verified", ["verified", "released"].includes(status)],
+    ["Payment released", status === "released"]
+  ] as const;
+  return (
+    <div className="mt-4 rounded-lg border border-white/[0.08] bg-white/[0.035] p-4">
+      <p className="text-sm font-medium text-white">Deliverable checklist</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {items.map(([label, done]) => (
+          <div key={label} className="surface flex items-center justify-between gap-3 px-3 py-2 text-sm">
+            <span className="text-slate-300">{label}</span>
+            <span className={done ? "text-mint" : "text-slate-500"}>{done ? "Ready" : "Pending"}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 async function assertCanSubmitOnchain(chainEscrowId: string, address: string | undefined) {

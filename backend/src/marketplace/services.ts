@@ -151,6 +151,22 @@ export async function executeBuiltInService(kind: ServiceManifest["kind"], args:
     return analyzeGitHubRepo(repo);
   }
 
+  if (kind === "contract_safety_check") {
+    return analyzeContractSafety(requiredString(args.contract ?? args.address, "contract"));
+  }
+
+  if (kind === "wallet_activity_summary") {
+    return analyzeWalletActivity(requiredString(args.wallet ?? args.address, "wallet"));
+  }
+
+  if (kind === "landing_page_copy_reviewer") {
+    return reviewLandingPageCopy(requiredString(args.url ?? args.copy, "url or copy"));
+  }
+
+  if (kind === "grant_application_reviewer") {
+    return reviewGrantApplication(requiredString(args.application ?? args.summary, "application"));
+  }
+
   return {
     summary: "Service executed",
     note: "Define a backend execution handler for this endpointHash to return structured output."
@@ -181,6 +197,10 @@ export function inferServiceKind(service: Pick<ServiceRecord, "name" | "endpoint
   if (marker.includes("x account") || marker.includes("x-account") || marker.includes("twitter")) return "x_account_analyzer";
   if (marker.includes("website") || marker.includes("url analyzer") || marker.includes("site analyzer")) return "website_analyzer";
   if (marker.includes("github") || marker.includes("repo analyzer") || marker.includes("repository")) return "github_repo_analyzer";
+  if (marker.includes("contract safety") || marker.includes("contract audit") || marker.includes("contract check")) return "contract_safety_check";
+  if (marker.includes("wallet activity") || marker.includes("wallet summary") || marker.includes("wallet risk")) return "wallet_activity_summary";
+  if (marker.includes("landing page") || marker.includes("copy reviewer") || marker.includes("conversion copy")) return "landing_page_copy_reviewer";
+  if (marker.includes("grant") || marker.includes("application reviewer")) return "grant_application_reviewer";
   return "generic";
 }
 
@@ -218,6 +238,50 @@ function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
       platformFeeBps: 200
     };
   }
+  if (kind === "contract_safety_check") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Checks a contract address format, highlights review areas, and returns a human-readable safety checklist.",
+      inputSchema: [{name: "contract", label: "Contract address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["contract", "riskLevel", "checks", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "wallet_activity_summary") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Summarizes a wallet address, expected activity review steps, and risk notes for agent payments.",
+      inputSchema: [{name: "wallet", label: "Wallet address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["wallet", "riskLevel", "summary", "recommendedPolicy"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "landing_page_copy_reviewer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews landing page copy or a URL and returns conversion, clarity, and CTA recommendations.",
+      inputSchema: [{name: "url", label: "URL or page copy", type: "text", required: true, placeholder: "https://example.com or paste copy"}],
+      outputSchema: ["score", "issues", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "grant_application_reviewer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a grant application summary for infrastructure clarity, revenue proof, and ecosystem fit.",
+      inputSchema: [{name: "application", label: "Application summary", type: "text", required: true, placeholder: "Paste your grant application summary"}],
+      outputSchema: ["score", "strengths", "gaps", "recommendations"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
   return {
     kind,
     version: "1.0.0",
@@ -226,6 +290,86 @@ function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
     outputSchema: ["summary", "note"],
     revenueMode: "per_execution",
     platformFeeBps: 200
+  };
+}
+
+function analyzeContractSafety(contract: string) {
+  const valid = /^0x[a-fA-F0-9]{40}$/.test(contract);
+  return {
+    status: valid ? "ok" : "warning",
+    contract,
+    riskLevel: valid ? "medium" : "high",
+    checks: [
+      valid ? "Address format is valid." : "Address format is invalid or incomplete.",
+      "Verify source code and proxy implementation before allowlisting.",
+      "Check ownership, upgrade roles, pausing permissions, and token approvals.",
+      "Start with low transaction caps until the contract has live usage history."
+    ],
+    summary: valid
+      ? "The address format is valid. Nexora recommends source verification and role review before adding it to an agent policy."
+      : "The input does not look like a valid EVM contract address. Do not allowlist until corrected."
+  };
+}
+
+function analyzeWalletActivity(wallet: string) {
+  const valid = /^0x[a-fA-F0-9]{40}$/.test(wallet);
+  return {
+    status: valid ? "ok" : "warning",
+    wallet,
+    riskLevel: valid ? "medium" : "high",
+    summary: valid
+      ? "Wallet format is valid. Use this as a starting point for recipient policy review and combine it with explorer history before high-value transfers."
+      : "Wallet format is invalid or incomplete.",
+    recommendedPolicy: {
+      transactionCapUsdc: valid ? 25 : 0,
+      dailyLimitUsdc: valid ? 100 : 0,
+      recipientAllowlist: valid ? [wallet] : []
+    }
+  };
+}
+
+function reviewLandingPageCopy(input: string) {
+  const isUrl = /^https?:\/\//i.test(input) || /^[\w.-]+\.[a-z]{2,}/i.test(input);
+  return {
+    status: "ok",
+    target: input,
+    score: isUrl ? 78 : 72,
+    issues: [
+      "Make the primary user action visible in the first viewport.",
+      "State the problem solved before listing infrastructure components.",
+      "Move proof points near pricing or transaction actions."
+    ],
+    recommendations: [
+      "Use one concrete CTA for the next step.",
+      "Show a live receipt, policy, or fee proof as product evidence.",
+      "Trim broad claims and anchor the copy around a specific workflow."
+    ],
+    summary: "The page can convert better by making the value proposition, proof, and next action easier to scan."
+  };
+}
+
+function reviewGrantApplication(application: string) {
+  const lengthScore = Math.min(30, Math.floor(application.length / 80));
+  const infraScore = /policy|x402|escrow|wallet|usdc|settlement|treasury/i.test(application) ? 35 : 15;
+  const revenueScore = /revenue|fee|treasury|marketplace|earn/i.test(application) ? 25 : 10;
+  const score = Math.min(100, lengthScore + infraScore + revenueScore);
+  return {
+    status: "ok",
+    score,
+    strengths: [
+      "Clearer if it ties agent wallets, on-chain policy, x402 payments, and treasury fees into one system.",
+      "Strong when it includes live contract addresses and transaction receipts."
+    ],
+    gaps: [
+      "Add exact user workflows instead of only protocol descriptions.",
+      "Show how the project creates recurring ecosystem usage and revenue."
+    ],
+    recommendations: [
+      "Include a short architecture diagram or flow.",
+      "Add metrics: published APIs, payments settled, fees routed, and chains deployed.",
+      "Explain why Arc-native USDC settlement improves the agent commerce workflow."
+    ],
+    summary: `Grant readiness score: ${score}/100. Improve by adding proof, revenue routing, and ecosystem-specific traction.`
   };
 }
 

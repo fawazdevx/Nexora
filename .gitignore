@@ -24,3 +24,7 @@ frontend/.env.arbitrum-sepolia
 frontend/.env.arbitrum-one
 backend/.env.arbitrum-sepolia
 backend/.env.arbitrum-one
+backend/.env.base-sepolia
+contracts/.env.arbitrum-sepolia
+contracts/.env.arbitrum-one
+contracts/.env.base-sepolia

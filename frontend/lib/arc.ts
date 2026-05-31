@@ -34,10 +34,23 @@ export const arbitrumSepoliaWagmiChain = {
   name: "Arbitrum Sepolia",
   nativeCurrency: {name: "Ether", symbol: "ETH", decimals: 18},
   rpcUrls: {
-    default: {http: [import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL ?? "https://sepolia-rollup.arbitrum.io/rpc"]}
+    default: {http: [import.meta.env.VITE_ARB_SEPOLIA_RPC_URL ?? import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL ?? "https://sepolia-rollup.arbitrum.io/rpc"]}
   },
   blockExplorers: {
     default: {name: "Arbiscan", url: "https://sepolia.arbiscan.io"}
+  },
+  testnet: true
+} as const;
+
+export const baseSepoliaWagmiChain = {
+  id: 84532,
+  name: "Base Sepolia",
+  nativeCurrency: {name: "Ether", symbol: "ETH", decimals: 18},
+  rpcUrls: {
+    default: {http: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? "https://base-sepolia-rpc.publicnode.com"]}
+  },
+  blockExplorers: {
+    default: {name: "Basescan", url: "https://sepolia.basescan.org"}
   },
   testnet: true
 } as const;
@@ -47,7 +60,7 @@ export const arbitrumOneWagmiChain = {
   name: "Arbitrum One",
   nativeCurrency: {name: "Ether", symbol: "ETH", decimals: 18},
   rpcUrls: {
-    default: {http: [import.meta.env.VITE_ARBITRUM_ONE_RPC_URL ?? "https://arb1.arbitrum.io/rpc"]}
+    default: {http: [import.meta.env.VITE_ARB_ONE_RPC_URL ?? import.meta.env.VITE_ARBITRUM_ONE_RPC_URL ?? "https://arb1.arbitrum.io/rpc"]}
   },
   blockExplorers: {
     default: {name: "Arbiscan", url: "https://arbiscan.io"}
@@ -58,6 +71,7 @@ export const arbitrumOneWagmiChain = {
 export const supportedChains = [
   arcTestnetWagmiChain,
   ...(import.meta.env.VITE_ENABLE_ARBITRUM_SEPOLIA === "true" ? [arbitrumSepoliaWagmiChain] : []),
+  ...(import.meta.env.VITE_ENABLE_BASE_SEPOLIA === "true" ? [baseSepoliaWagmiChain] : []),
   ...(import.meta.env.VITE_ENABLE_ARBITRUM_ONE === "true" ? [arbitrumOneWagmiChain] : [])
 ] as const;
 

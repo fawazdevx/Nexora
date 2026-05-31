@@ -9,6 +9,7 @@ import NewMarketplaceServicePage from "@/app/marketplace/new/page";
 import MarketplaceServicePage from "@/app/marketplace/service/page";
 import DeveloperDashboardPage from "@/app/developer/page";
 import RevenuePage from "@/app/revenue/page";
+import DeploymentDashboardPage from "@/app/admin/deployments/page";
 import EscrowPage from "@/app/escrow/page";
 import PaymentsPage from "@/app/payments/page";
 import IdentityPage from "@/app/identity/page";
@@ -27,6 +28,7 @@ const routes: Record<string, React.ComponentType> = {
   "/marketplace/new": NewMarketplaceServicePage,
   "/developer": DeveloperDashboardPage,
   "/revenue": RevenuePage,
+  "/admin/deployments": DeploymentDashboardPage,
   "/escrow": EscrowPage,
   "/payments": PaymentsPage,
   "/identity": IdentityPage,

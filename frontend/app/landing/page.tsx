@@ -1,3 +1,5 @@
+import {useEffect} from "react";
+import {motion, useMotionValue, useSpring} from "framer-motion";
 import {
   ArrowRight,
   Bot,
@@ -13,12 +15,35 @@ import {
   UserRoundCheck,
   WalletCards
 } from "lucide-react";
+import {AgentMesh} from "@/components/AgentMesh";
 import {navigateTo} from "@/lib/router";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
   navigateTo(href);
+}
+
+// Shared scroll-reveal: fades and lifts content into view once.
+const reveal = {
+  hidden: {opacity: 0, y: 24},
+  visible: {opacity: 1, y: 0}
+};
+
+function Reveal({children, delay = 0, className, id}: {children: React.ReactNode; delay?: number; className?: string; id?: string}) {
+  return (
+    <motion.div
+      id={id}
+      className={className}
+      variants={reveal}
+      initial="hidden"
+      whileInView="visible"
+      viewport={{once: true, margin: "-80px"}}
+      transition={{duration: 0.6, ease: [0.22, 1, 0.36, 1], delay}}
+    >
+      {children}
+    </motion.div>
+  );
 }
 
 const platformFeatures = [
@@ -47,6 +72,23 @@ export default function LandingPage() {
     [String(snapshot.data?.reputation.score ?? 0), "Reputation score"]
   ];
 
+  // Cursor-following ambient glow (spring-smoothed so it trails gently).
+  const glowX = useMotionValue(-400);
+  const glowY = useMotionValue(-400);
+  const springX = useSpring(glowX, {stiffness: 60, damping: 22, mass: 0.6});
+  const springY = useSpring(glowY, {stiffness: 60, damping: 22, mass: 0.6});
+
+  useEffect(() => {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) return;
+    function onMove(event: PointerEvent) {
+      glowX.set(event.clientX - 300);
+      glowY.set(event.clientY - 300);
+    }
+    window.addEventListener("pointermove", onMove);
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [glowX, glowY]);
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#05040b]">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_78%_22%,rgba(6,182,212,0.22),transparent_34%),radial-gradient(circle_at_18%_18%,rgba(217,70,239,0.18),transparent_30%),linear-gradient(135deg,#05040b_0%,#10071b_46%,#041018_100%)]" />
@@ -60,6 +102,13 @@ export default function LandingPage() {
       />
       <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(5,4,11,0.96)_0%,rgba(5,4,11,0.76)_42%,rgba(5,4,11,0.38)_100%),linear-gradient(180deg,rgba(5,4,11,0.18)_0%,rgba(5,4,11,0.72)_58%,#05040b_100%)]" />
       <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.026)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.026)_1px,transparent_1px)] bg-[size:78px_78px] opacity-30" />
+
+      {/* Cursor-following glow */}
+      <motion.div
+        aria-hidden="true"
+        className="pointer-events-none fixed z-0 h-[600px] w-[600px] rounded-full bg-[radial-gradient(circle,rgba(155,92,246,0.14),transparent_62%)] blur-2xl"
+        style={{left: springX, top: springY}}
+      />
 
       <header className="relative z-10 px-4 py-5 md:px-6">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
@@ -92,8 +141,16 @@ export default function LandingPage() {
       </header>
 
       <main className="relative z-10">
-        <section className="mx-auto flex min-h-[calc(100vh-88px)] max-w-[1500px] items-center px-4 pb-16 pt-10 md:px-6">
-          <div className="max-w-3xl">
+        <section className="relative mx-auto flex min-h-[calc(100vh-88px)] max-w-[1500px] items-center px-4 pb-16 pt-10 md:px-6">
+          <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden [mask-image:radial-gradient(circle_at_30%_45%,black,transparent_72%)]">
+            <AgentMesh />
+          </div>
+          <motion.div
+            className="max-w-3xl"
+            initial={{opacity: 0, y: 28}}
+            animate={{opacity: 1, y: 0}}
+            transition={{duration: 0.7, ease: [0.22, 1, 0.36, 1]}}
+          >
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan">
               AI agent commerce. Programmable earnings. Autonomous payments.
             </p>
@@ -137,17 +194,25 @@ export default function LandingPage() {
                 {snapshot.data?.stats.agentWallets ?? 0} agent wallets monitored
               </span>
             </div>
-          </div>
+          </motion.div>
         </section>
 
         <section id="ecosystem" className="mx-auto max-w-[1500px] px-4 py-6 md:px-6">
-          <div className="panel p-5">
+          <Reveal className="panel p-5">
             <p className="mb-4 text-xs uppercase tracking-[0.18em] text-plasma">Trusted infrastructure</p>
             <div className="grid gap-3 md:grid-cols-5">
-              {infrastructure.map(([Icon, title, subtitle]) => {
+              {infrastructure.map(([Icon, title, subtitle], index) => {
                 const InfraIcon = Icon as typeof CircleDollarSign;
                 return (
-                  <div key={String(title)} className="surface flex items-center gap-3 p-4">
+                  <motion.div
+                    key={String(title)}
+                    className="surface flex items-center gap-3 p-4"
+                    variants={reveal}
+                    initial="hidden"
+                    whileInView="visible"
+                    viewport={{once: true, margin: "-60px"}}
+                    transition={{duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: index * 0.07}}
+                  >
                     <div className="grid h-11 w-11 place-items-center rounded-full border border-plasma/30 bg-plasma/10 text-plasma">
                       <InfraIcon size={20} />
                     </div>
@@ -155,15 +220,15 @@ export default function LandingPage() {
                       <p className="text-sm font-semibold text-white">{String(title)}</p>
                       <p className="text-xs text-slate-500">{String(subtitle)}</p>
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
-          </div>
+          </Reveal>
         </section>
 
         <section id="features" className="mx-auto grid max-w-[1500px] gap-5 px-4 py-10 md:px-6 lg:grid-cols-[1fr_0.9fr_0.65fr]">
-          <div className="panel">
+          <Reveal className="panel">
             <p className="section-kicker">The Nexora platform</p>
             <h2 className="mt-3 text-3xl font-semibold uppercase text-white">
               Everything agents need to automate, earn, and transact.
@@ -173,22 +238,22 @@ export default function LandingPage() {
               {platformFeatures.map(([title, description, Icon]) => {
                 const FeatureIcon = Icon as typeof Bot;
                 return (
-                  <article key={String(title)} className="surface p-4">
-                    <div className="mb-4 grid h-11 w-11 place-items-center rounded-full border border-plasma/30 bg-plasma/10 text-plasma">
+                  <article key={String(title)} className="surface group p-4 transition-all duration-300 hover:-translate-y-1 hover:border-plasma/30">
+                    <div className="mb-4 grid h-11 w-11 place-items-center rounded-full border border-plasma/30 bg-plasma/10 text-plasma transition-all duration-300 group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(155,92,246,0.3)]">
                       <FeatureIcon size={19} />
                     </div>
                     <h3 className="text-sm font-semibold uppercase tracking-normal text-white">{String(title)}</h3>
                     <p className="mt-2 text-xs leading-5 text-slate-400">{String(description)}</p>
-                    <a href="/app" onClick={(event) => navigate(event, "/app")} className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-plasma">
+                    <a href="/app" onClick={(event) => navigate(event, "/app")} className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-plasma transition-all duration-200 group-hover:gap-2">
                       Learn more <ArrowRight size={13} />
                     </a>
                   </article>
                 );
               })}
             </div>
-          </div>
+          </Reveal>
 
-          <div id="developers" className="panel p-0">
+          <Reveal id="developers" className="panel p-0" delay={0.1}>
             <div className="border-b border-white/[0.08] p-5">
               <div className="flex items-center gap-2">
                 <div className="h-4 w-4 rounded bg-gradient-to-br from-plasma to-cyan" />
@@ -223,9 +288,9 @@ export default function LandingPage() {
                 </div>
               </div>
             </div>
-          </div>
+          </Reveal>
 
-          <div id="about" className="space-y-5">
+          <Reveal id="about" className="space-y-5" delay={0.15}>
             <div className="panel">
               <p className="section-kicker">Autonomy. Intelligence. Infrastructure.</p>
               <h2 className="mt-3 text-3xl font-semibold text-white">Powering the agentic economy</h2>
@@ -235,17 +300,17 @@ export default function LandingPage() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
               {stats.map(([value, label]) => (
-                <div key={label} className="surface p-5">
+                <div key={label} className="surface p-5 transition-all duration-300 hover:-translate-y-1 hover:border-plasma/30">
                   <p className="text-3xl font-semibold text-plasma">{value}</p>
                   <p className="mt-2 text-sm text-slate-400">{label}</p>
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
         </section>
 
         <section id="docs" className="mx-auto max-w-[1500px] px-4 py-12 md:px-6">
-          <div className="panel flex flex-col items-start justify-between gap-5 md:flex-row md:items-center">
+          <Reveal className="panel flex flex-col items-start justify-between gap-5 md:flex-row md:items-center">
             <div>
               <p className="section-kicker">Start with Nexora</p>
               <h2 className="page-title">Create an agent wallet and manage autonomous USDC workflows.</h2>
@@ -257,7 +322,7 @@ export default function LandingPage() {
               Open console
               <ArrowRight size={17} />
             </a>
-          </div>
+          </Reveal>
         </section>
       </main>
     </div>

@@ -45,18 +45,18 @@ export function NotificationsProvider({children}: {children: React.ReactNode}) {
       {children}
       <div className="fixed bottom-4 right-4 z-50 grid w-[min(360px,calc(100vw-2rem))] gap-2">
         {items.map((item) => (
-          <div key={item.id} className="rounded-lg border border-white/[0.1] bg-[#101420]/95 p-4 shadow-neon backdrop-blur-xl">
+          <div key={item.id} className="animate-slide-up rounded-xl border border-white/[0.12] bg-gradient-to-br from-[#101420]/98 to-[#0c0f18]/95 p-4 shadow-[0_18px_50px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-3">
-                <div className="mt-0.5 text-mint"><CheckCircle2 size={17} /></div>
+                <div className="mt-0.5 text-mint drop-shadow-[0_0_8px_rgba(110,231,183,0.5)]"><CheckCircle2 size={18} /></div>
                 <div>
-                  <p className="text-sm font-medium text-white">{item.title}</p>
+                  <p className="text-sm font-bold text-white">{item.title}</p>
                   {item.detail ? <p className="mt-1 break-all text-xs leading-5 text-slate-400">{item.detail}</p> : null}
                 </div>
               </div>
               <button
                 type="button"
-                className="text-slate-500 transition hover:text-white"
+                className="text-slate-500 transition-all duration-200 hover:rotate-90 hover:text-white"
                 onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
                 aria-label="Dismiss notification"
               >
@@ -94,35 +94,35 @@ export function NotificationsButton({items = []}: {items?: ActivityItem[]}) {
       </button>
       {open ? (
         <div className="fixed inset-0 z-50">
-          <button type="button" className="absolute inset-0 bg-black/45" onClick={() => setOpen(false)} aria-label="Close activity" />
-          <aside className="absolute right-0 top-0 h-full w-[min(420px,100vw)] border-l border-white/[0.1] bg-[#0c101b] p-5 shadow-neon">
+          <button type="button" className="absolute inset-0 animate-fade-in bg-black/55 backdrop-blur-sm" onClick={() => setOpen(false)} aria-label="Close activity" />
+          <aside className="absolute right-0 top-0 h-full w-[min(420px,100vw)] animate-slide-up border-l border-white/[0.12] bg-gradient-to-b from-[#0c101b] to-[#0a0d16] p-6 shadow-[0_0_60px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm uppercase tracking-[0.16em] text-orchid">Activity</p>
-                <h2 className="mt-1 text-xl font-semibold text-white">Nexora actions</h2>
+                <p className="text-sm font-bold uppercase tracking-[0.16em] text-orchid glow-text">Activity</p>
+                <h2 className="mt-1.5 text-xl font-bold text-white">Nexora actions</h2>
               </div>
               <button type="button" onClick={() => setOpen(false)} className="secondary-button min-h-10 px-3 py-2" aria-label="Close activity">
                 <X size={16} />
               </button>
             </div>
-            <div className="mt-5 grid gap-3 overflow-y-auto pr-1">
+            <div className="mt-6 grid gap-3 overflow-y-auto pr-1">
               {items.map((item) => (
-                <article key={item.id} className="rounded-lg border border-white/[0.08] bg-white/[0.04] p-4">
+                <article key={item.id} className="surface p-4">
                   <div className="flex items-start gap-3">
-                    <div className="mt-0.5 text-mint"><Clock3 size={16} /></div>
+                    <div className="mt-0.5 text-mint drop-shadow-[0_0_8px_rgba(110,231,183,0.4)]"><Clock3 size={16} /></div>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-medium text-white">{item.title}</p>
+                        <p className="font-bold text-white">{item.title}</p>
                         <span className="status-pill px-2 py-0.5 text-[11px]">{item.kind}</span>
                       </div>
                       {item.detail ? <p className="mt-2 break-words text-sm leading-6 text-slate-400">{item.detail}</p> : null}
-                      <p className="mt-2 text-xs text-slate-500">{formatActivityTime(item.createdAt)}</p>
+                      <p className="mt-2 text-xs font-medium text-slate-500">{formatActivityTime(item.createdAt)}</p>
                     </div>
                   </div>
                 </article>
               ))}
               {items.length === 0 ? (
-                <p className="rounded-lg border border-white/[0.08] bg-white/[0.04] p-4 text-sm text-slate-400">No activity yet. Actions such as payments, escrow updates, policy saves, and agent wallet creation will appear here.</p>
+                <p className="surface p-4 text-sm font-medium text-slate-400">No activity yet. Actions such as payments, escrow updates, policy saves, and agent wallet creation will appear here.</p>
               ) : null}
             </div>
           </aside>

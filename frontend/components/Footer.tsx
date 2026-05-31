@@ -22,21 +22,22 @@ function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
 
 export function Footer() {
   return (
-    <footer className="relative border-t border-white/[0.08] bg-void/85 px-4 py-8 text-slate-300 md:px-6">
+    <footer className="relative border-t border-white/[0.1] bg-gradient-to-b from-void/90 to-void/95 px-4 py-10 text-slate-300 backdrop-blur-xl md:px-6">
       <div className="mx-auto flex max-w-[1440px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-xl border border-plasma/25 bg-plasma/10 text-orchid">
-            <Activity size={20} />
+          <div className="group relative grid h-12 w-12 place-items-center rounded-xl border border-plasma/30 bg-gradient-to-br from-plasma/15 to-plasma/5 text-orchid shadow-[0_0_20px_rgba(155,92,246,0.15)] transition-all duration-300 hover:scale-110">
+            <div className="absolute inset-0 rounded-xl bg-plasma/20 blur-lg transition-all duration-300 group-hover:bg-plasma/40" />
+            <Activity size={21} className="relative" />
           </div>
           <div>
-            <p className="text-xl font-semibold text-white">Nexora</p>
-            <p className="mt-1 text-sm text-slate-400">Agent-native USDC payments and earning infrastructure.</p>
+            <p className="bg-gradient-to-r from-white to-slate-200 bg-clip-text text-xl font-bold text-transparent">Nexora</p>
+            <p className="mt-1 text-sm font-medium text-slate-400">Agent-native USDC payments and earning infrastructure.</p>
           </div>
         </div>
 
-        <nav className="flex flex-wrap gap-3 text-[15px]">
+        <nav className="flex flex-wrap gap-2 text-[15px]">
           {links.map((link) => (
-            <a key={link.href} href={link.href} onClick={(event) => navigate(event, link.href)} className="rounded-lg px-3 py-2 transition hover:bg-white/[0.05] hover:text-white">
+            <a key={link.href} href={link.href} onClick={(event) => navigate(event, link.href)} className="rounded-xl px-4 py-2 font-medium transition-all duration-200 hover:bg-white/[0.06] hover:text-white">
               {link.label}
             </a>
           ))}
@@ -62,7 +63,7 @@ export function Footer() {
         </div>
       </div>
 
-      <div className="mx-auto mt-6 flex max-w-[1440px] flex-wrap justify-between gap-3 border-t border-white/[0.07] pt-5 text-sm text-slate-500">
+      <div className="mx-auto mt-7 flex max-w-[1440px] flex-wrap justify-between gap-3 border-t border-white/[0.08] pt-6 text-sm font-medium text-slate-500">
         <span>© {new Date().getFullYear()} Nexora Finance</span>
         <span>Arc Testnet · USDC · x402 · Agent Wallets</span>
       </div>
