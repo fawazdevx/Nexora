@@ -33,6 +33,7 @@ export function PolicyForm() {
   const [contractAllowlist, setContractAllowlist] = useState("");
   const [recipientAllowlist, setRecipientAllowlist] = useState("");
   const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const contractAllowlistItems = splitAddresses(contractAllowlist);
@@ -54,6 +55,7 @@ export function PolicyForm() {
   }, [selectedAgent]);
 
   async function savePolicy() {
+    if (saving) return;
     if (!isConnected || !address) {
       setStatus("Connect your wallet before saving an agent policy.");
       return;
@@ -64,6 +66,7 @@ export function PolicyForm() {
     }
 
     setStatus(selectedAgent.address ? `Submitting policy on ${chainLabel(chain?.id)}...` : "Saving policy while Circle wallet is pending...");
+    setSaving(true);
     try {
       const txHash = selectedAgent.address
         ? await writeAgentPolicy({
@@ -95,6 +98,8 @@ export function PolicyForm() {
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Policy update failed");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -159,8 +164,8 @@ export function PolicyForm() {
         </label>
       </div>
       <div className="mt-6 flex flex-wrap items-center gap-3">
-        <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent}>
-          {selectedAgent?.address ? `Save policy on ${chainLabel(chain?.id)}` : "Save pending policy"}
+        <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent || saving}>
+          {saving ? "Saving policy..." : selectedAgent?.address ? `Save policy on ${chainLabel(chain?.id)}` : "Save pending policy"}
         </button>
         {status ? <span className="max-w-full break-all rounded-md border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-slate-300">{status}</span> : null}
       </div>

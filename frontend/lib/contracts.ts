@@ -5,6 +5,24 @@ import {apiPost} from "@/lib/api";
 export const policyRegistryAbi = [
   {
     type: "function",
+    name: "owner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{name: "", type: "address"}]
+  },
+  {
+    type: "function",
+    name: "agentProfiles",
+    stateMutability: "view",
+    inputs: [{name: "agentWallet", type: "address"}],
+    outputs: [
+      {name: "operator", type: "address"},
+      {name: "arcNameHash", type: "bytes32"},
+      {name: "active", type: "bool"}
+    ]
+  },
+  {
+    type: "function",
     name: "setPolicy",
     stateMutability: "nonpayable",
     inputs: [
@@ -799,16 +817,38 @@ export async function writeAgentPolicy(input: {
   recipientAllowlist?: string[];
   active: boolean;
 }): Promise<Hash> {
-  const {client, contracts} = await walletClient();
+  const {client, account, chainId, contracts} = await walletClient();
+  const reader = await publicClient(chainId);
   const address = requireAddress(contracts.policyRegistry, "Policy registry address");
   const arcNameHash = keccak256(stringToHex(input.arcName?.trim() || input.operatorAddress));
-
-  await client.writeContract({
+  const registryOwner = await reader.readContract({
     address,
     abi: policyRegistryAbi,
-    functionName: "registerAgent",
-    args: [input.agentWallet as Address, input.operatorAddress as Address, arcNameHash]
+    functionName: "owner"
   });
+  const [registeredOperator,, agentActive] = await reader.readContract({
+    address,
+    abi: policyRegistryAbi,
+    functionName: "agentProfiles",
+    args: [input.agentWallet as Address]
+  });
+  const isOwner = registryOwner.toLowerCase() === account.toLowerCase();
+  const isRegisteredOperator = registeredOperator.toLowerCase() === input.operatorAddress.toLowerCase();
+
+  if (!agentActive) {
+    if (!isOwner) {
+      throw new Error("This agent wallet is not registered on this chain yet. Connect the Nexora owner wallet to register it first, then the operator can save policies.");
+    }
+    const registerHash = await client.writeContract({
+      address,
+      abi: policyRegistryAbi,
+      functionName: "registerAgent",
+      args: [input.agentWallet as Address, input.operatorAddress as Address, arcNameHash]
+    });
+    await reader.waitForTransactionReceipt({hash: registerHash});
+  } else if (!isOwner && !isRegisteredOperator) {
+    throw new Error("Only the registered operator or Nexora owner can update this agent policy on the selected chain.");
+  }
 
   const policyHash = await client.writeContract({
     address,
@@ -818,28 +858,31 @@ export async function writeAgentPolicy(input: {
       input.agentWallet as Address,
       parseUnits(input.dailyLimitUsdc || "0", 6),
       parseUnits(input.transactionCapUsdc || "0", 6),
-      true,
-      true,
+      (input.contractAllowlist ?? []).length > 0,
+      (input.recipientAllowlist ?? []).length > 0,
       input.active
     ]
   });
+  await reader.waitForTransactionReceipt({hash: policyHash});
 
   for (const target of input.contractAllowlist ?? []) {
-    await client.writeContract({
+    const allowHash = await client.writeContract({
       address,
       abi: policyRegistryAbi,
       functionName: "setAllowedContract",
       args: [input.agentWallet as Address, target as Address, true]
     });
+    await reader.waitForTransactionReceipt({hash: allowHash});
   }
 
   for (const recipient of input.recipientAllowlist ?? []) {
-    await client.writeContract({
+    const allowHash = await client.writeContract({
       address,
       abi: policyRegistryAbi,
       functionName: "setAllowedRecipient",
       args: [input.agentWallet as Address, recipient as Address, true]
     });
+    await reader.waitForTransactionReceipt({hash: allowHash});
   }
 
   return policyHash;
