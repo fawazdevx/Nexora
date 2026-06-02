@@ -98,7 +98,7 @@ contract NexoraSaveEarnVault is NexoraUpgradeable {
         fee = (profit * withdrawalFeeBps) / 10_000;
     }
 
-    function deposit(uint256 assets) external returns (uint256 shares) {
+    function deposit(uint256 assets) external nonReentrant returns (uint256 shares) {
         if (assets == 0) revert ZeroAmount();
         shares = previewDeposit(assets);
         if (shares == 0) revert ZeroAmount();
@@ -108,13 +108,14 @@ contract NexoraSaveEarnVault is NexoraUpgradeable {
         totalShares += shares;
 
         if (!usdc.transferFrom(msg.sender, address(this), assets)) revert TransferFailed();
+        usdc.approve(address(yieldRouter), 0);
         usdc.approve(address(yieldRouter), assets);
         yieldRouter.depositBest(assets);
 
         emit Deposited(msg.sender, assets, shares);
     }
 
-    function withdraw(uint256 shares) external returns (uint256 assetsAfterFee) {
+    function withdraw(uint256 shares) external nonReentrant returns (uint256 assetsAfterFee) {
         if (shares == 0) revert ZeroAmount();
         if (balanceOf[msg.sender] < shares) revert InsufficientShares();
 

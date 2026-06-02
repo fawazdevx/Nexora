@@ -11,6 +11,7 @@ type DeploymentDashboard = {
     marketplaceFeesUsdc: number;
     escrowFeesUsdc: number;
     planRevenueUsdc: number;
+    bookedPlanVolumeUsdc?: number;
   };
   fees: {
     x402DefaultBps: number;
@@ -50,13 +51,13 @@ export default function DeploymentDashboardPage() {
       <PageHeader
         kicker="Infrastructure admin"
         title="Chain deployments and treasury controls"
-        description="Review Nexora contract deployments, enabled features, treasury routing, and platform fee configuration."
+        description="Review Nexora deployments, enabled features, fee routing, and collected treasury controls."
       />
 
       {error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{error}</p> : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Metric icon={<Landmark size={18} />} label="Treasury revenue" value={usd(dashboard?.treasury.totalPlatformRevenueUsdc)} />
+        <Metric icon={<Landmark size={18} />} label="Treasury fees" value={usd(dashboard?.treasury.totalPlatformRevenueUsdc)} />
         <Metric icon={<ReceiptText size={18} />} label="Marketplace fees" value={usd(dashboard?.treasury.marketplaceFeesUsdc)} />
         <Metric icon={<ShieldCheck size={18} />} label="Escrow fees" value={usd(dashboard?.treasury.escrowFeesUsdc)} />
         <Metric icon={<Network size={18} />} label="Deployed chains" value={dashboard?.chains.length ?? 0} />
@@ -105,8 +106,10 @@ export default function DeploymentDashboardPage() {
             <div className="mt-4 grid gap-2 text-sm">
               <FeeRow label="Marketplace" value={dashboard?.treasury.marketplaceFeesUsdc} />
               <FeeRow label="Escrow" value={dashboard?.treasury.escrowFeesUsdc} />
-              <FeeRow label="Plans" value={dashboard?.treasury.planRevenueUsdc} />
+              <FeeRow label="Active plans" value={dashboard?.treasury.planRevenueUsdc} />
+              <FeeRow label="Booked plan volume" value={dashboard?.treasury.bookedPlanVolumeUsdc} />
             </div>
+            <p className="mt-4 text-xs leading-5 text-slate-500">Treasury balance on-chain remains the source of truth. Booked plan volume is activity, not collected USDC.</p>
           </section>
 
           <section className="panel">

@@ -94,6 +94,7 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
 
     function publishService(string calldata endpointHash, uint256 pricePerUnit) external returns (uint256 serviceId) {
         require(pricePerUnit > 0, "ZERO_PRICE");
+        require(bytes(endpointHash).length > 0, "EMPTY_ENDPOINT");
         serviceId = nextServiceId++;
         services[serviceId] = Service({
             publisher: msg.sender,
@@ -106,6 +107,7 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
 
     function setServiceStatus(uint256 serviceId, bool active) external {
         Service storage service = services[serviceId];
+        require(service.publisher != address(0), "UNKNOWN_SERVICE");
         if (msg.sender != service.publisher && msg.sender != owner) revert NotPublisher();
         service.active = active;
         emit ServiceStatusUpdated(serviceId, active);
@@ -113,9 +115,13 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
 
     function settleRequest(uint256 serviceId, bytes32 requestHash, address payer, uint256 units)
         external
+        nonReentrant
         returns (uint256 grossAmount)
     {
         Service memory service = services[serviceId];
+        require(service.publisher != address(0), "UNKNOWN_SERVICE");
+        require(requestHash != bytes32(0), "ZERO_REQUEST");
+        require(payer != address(0), "ZERO_PAYER");
         if (!service.active) revert InactiveService();
         if (settledRequests[requestHash]) revert DuplicateRequest();
         if (units == 0) revert ZeroUnits();
@@ -142,9 +148,12 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
 
     function settleAgentRequest(uint256 serviceId, bytes32 requestHash, uint256 units)
         external
+        nonReentrant
         returns (uint256 grossAmount)
     {
         Service memory service = services[serviceId];
+        require(service.publisher != address(0), "UNKNOWN_SERVICE");
+        require(requestHash != bytes32(0), "ZERO_REQUEST");
         if (!service.active) revert InactiveService();
         if (settledRequests[requestHash]) revert DuplicateRequest();
         if (units == 0) revert ZeroUnits();

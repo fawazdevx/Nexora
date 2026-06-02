@@ -12,6 +12,7 @@ type RevenueDashboard = {
     marketplaceFeesUsdc: number;
     escrowFeesUsdc: number;
     subscriptionRevenueUsdc: number;
+    bookedPlanVolumeUsdc?: number;
     settledPayments: number;
     publishedServices: number;
     activeAgents: number;
@@ -50,16 +51,16 @@ export default function RevenuePage() {
       <PageHeader
         kicker="Treasury"
         title="Revenue dashboard"
-        description="Track marketplace fees, escrow fees, plan revenue, treasury routing, and receipt-level proof."
+        description="Track collected treasury fees separately from gross marketplace volume and booked plan activity."
       />
 
       {error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{error}</p> : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <RevenueMetric icon={<Landmark size={18} />} label="Platform revenue" value={usd(summary?.totalPlatformRevenueUsdc)} detail="fees and plans" />
+        <RevenueMetric icon={<Landmark size={18} />} label="Treasury fees" value={usd(summary?.totalPlatformRevenueUsdc)} detail="collected fee revenue" />
         <RevenueMetric icon={<ReceiptText size={18} />} label="Marketplace fees" value={usd(summary?.marketplaceFeesUsdc)} detail={`${summary?.settledPayments ?? 0} settled payments`} />
         <RevenueMetric icon={<ShieldCheck size={18} />} label="Escrow fees" value={usd(summary?.escrowFeesUsdc)} detail="released work agreements" />
-        <RevenueMetric icon={<WalletCards size={18} />} label="Active agents" value={summary?.activeAgents ?? 0} detail={`${summary?.policySaves ?? 0} policies saved`} />
+        <RevenueMetric icon={<WalletCards size={18} />} label="Marketplace volume" value={usd(summary?.marketplaceGrossUsdc)} detail={`${summary?.activeAgents ?? 0} active agents`} />
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
@@ -74,6 +75,9 @@ export default function RevenuePage() {
           <div className="surface p-4">
             <p className="text-sm text-slate-400">Configured treasury</p>
             <p className="mt-2 break-all font-mono text-base text-white">{dashboard?.treasury || "Treasury address not configured"}</p>
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              This dashboard reports app-recorded collected fees. The treasury wallet balance is the source of truth for on-chain USDC actually received.
+            </p>
           </div>
           <div className="mt-4 grid gap-3">
             {(dashboard?.bySource ?? []).map((source) => (

@@ -73,15 +73,19 @@ contract Actor {
 }
 
 contract NexoraEscrowTest {
-    function testEscrowRoutesFeeToTreasuryAndReleasesBond() external {
-        MockUsdc usdc = new MockUsdc();
-        address treasury = address(0xBEEF);
+    function deployEscrow(MockUsdc usdc, address treasury) internal returns (NexoraEscrow escrow) {
         NexoraEscrow implementation = new NexoraEscrow();
         NexoraProxy proxy = new NexoraProxy(
             address(implementation),
             abi.encodeCall(NexoraEscrow.initialize, (address(this), address(usdc), treasury))
         );
-        NexoraEscrow escrow = NexoraEscrow(address(proxy));
+        escrow = NexoraEscrow(address(proxy));
+    }
+
+    function testEscrowRoutesFeeToTreasuryAndReleasesBond() external {
+        MockUsdc usdc = new MockUsdc();
+        address treasury = address(0xBEEF);
+        NexoraEscrow escrow = deployEscrow(usdc, treasury);
         Actor creator = new Actor(usdc, escrow);
         Actor counterparty = new Actor(usdc, escrow);
 
@@ -97,5 +101,76 @@ contract NexoraEscrowTest {
         assert(usdc.balanceOf(treasury) == 2e6);
         assert(usdc.balanceOf(address(counterparty)) == 98e6);
         assert(usdc.balanceOf(address(creator)) == 10e6);
+    }
+
+    function testCreateEscrowRejectsExcessiveFee() external {
+        MockUsdc usdc = new MockUsdc();
+        NexoraEscrow escrow = deployEscrow(usdc, address(0xBEEF));
+        Actor creator = new Actor(usdc, escrow);
+
+        try creator.create(address(0xCAFE), 100e6, 10e6, 1_001) {
+            revert("EXCESSIVE_FEE_ACCEPTED");
+        } catch {}
+    }
+
+    function testCreateEscrowRejectsZeroCounterparty() external {
+        MockUsdc usdc = new MockUsdc();
+        NexoraEscrow escrow = deployEscrow(usdc, address(0xBEEF));
+        Actor creator = new Actor(usdc, escrow);
+
+        try creator.create(address(0), 100e6, 10e6, 100) {
+            revert("ZERO_COUNTERPARTY_ACCEPTED");
+        } catch {}
+    }
+
+    function testOnlyCreatorCanReleaseEscrow() external {
+        MockUsdc usdc = new MockUsdc();
+        NexoraEscrow escrow = deployEscrow(usdc, address(0xBEEF));
+        Actor creator = new Actor(usdc, escrow);
+        Actor counterparty = new Actor(usdc, escrow);
+        Actor stranger = new Actor(usdc, escrow);
+
+        usdc.mint(address(creator), 110e6);
+        creator.approveEscrow(110e6);
+        uint256 escrowId = creator.create(address(counterparty), 100e6, 10e6, 200);
+        creator.fund(escrowId);
+        counterparty.submit(escrowId);
+        creator.verify(escrowId);
+
+        try stranger.release(escrowId) {
+            revert("STRANGER_RELEASED_ESCROW");
+        } catch {}
+    }
+
+    function testCancelFundedEscrowRefundsCreator() external {
+        MockUsdc usdc = new MockUsdc();
+        NexoraEscrow escrow = deployEscrow(usdc, address(0xBEEF));
+        Actor creator = new Actor(usdc, escrow);
+        Actor counterparty = new Actor(usdc, escrow);
+
+        usdc.mint(address(creator), 110e6);
+        creator.approveEscrow(110e6);
+        uint256 escrowId = creator.create(address(counterparty), 100e6, 10e6, 200);
+        creator.fund(escrowId);
+        assert(usdc.balanceOf(address(creator)) == 0);
+
+        escrow.cancelEscrow(escrowId);
+
+        (
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            NexoraEscrow.Status status,
+            ,
+            ,
+            ,
+
+        ) = escrow.escrows(escrowId);
+        assert(usdc.balanceOf(address(creator)) == 110e6);
+        assert(uint256(status) == uint256(NexoraEscrow.Status.Cancelled));
     }
 }

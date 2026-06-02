@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 abstract contract NexoraUpgradeable {
     bytes32 internal constant IMPLEMENTATION_SLOT = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
+    bytes32 internal constant REENTRANCY_GUARD_SLOT = bytes32(uint256(keccak256("nexora.proxy.reentrancy.status")) - 1);
 
     address public owner;
     bool private _initialized;
@@ -14,6 +15,7 @@ abstract contract NexoraUpgradeable {
     error AlreadyInitialized();
     error InvalidImplementation();
     error UnsupportedProxiableUUID();
+    error ReentrantCall();
 
     constructor() {
         _initialized = true;
@@ -28,6 +30,22 @@ abstract contract NexoraUpgradeable {
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
+    }
+
+    modifier nonReentrant() {
+        bytes32 slot = REENTRANCY_GUARD_SLOT;
+        uint256 status;
+        assembly {
+            status := sload(slot)
+        }
+        if (status == 2) revert ReentrantCall();
+        assembly {
+            sstore(slot, 2)
+        }
+        _;
+        assembly {
+            sstore(slot, 1)
+        }
     }
 
     function __Nexora_init(address initialOwner) internal initializer {

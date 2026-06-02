@@ -50,16 +50,10 @@ export function Shell({children}: {children: React.ReactNode}) {
 
       <header className="sticky top-0 z-30 border-b border-white/[0.1] bg-gradient-to-b from-void/95 to-void/90 px-3 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:px-4 md:px-6 md:py-4">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 sm:gap-4">
-          <a href="/app" onClick={(event) => navigate(event, "/app")} className="group flex w-[132px] shrink-0 items-center gap-2 transition-all duration-200 hover:scale-[1.02] sm:w-[220px] sm:gap-3">
-            <div className="relative">
-              <div className="absolute inset-0 rounded-xl bg-plasma/30 blur-lg transition-all duration-300 group-hover:bg-plasma/50" />
-              <img src="/nexora-logo.svg" alt="Nexora" className="relative h-9 w-9 shrink-0 rounded-xl shadow-lg sm:h-11 sm:w-11" />
-            </div>
-            <div className="min-w-0">
-              <div className="bg-gradient-to-r from-white to-slate-200 bg-clip-text whitespace-nowrap text-lg font-bold leading-none tracking-tight text-transparent min-[380px]:text-xl sm:text-2xl sm:leading-none">Nexora</div>
-              <div className="mt-1 hidden text-sm font-medium text-slate-400 sm:block">
-                {isConnected ? <ArcNameLabel address={address} fallback="Agent Finance Network" /> : "Agent Finance Network"}
-              </div>
+          <a href="/app" onClick={(event) => navigate(event, "/app")} className="group flex shrink-0 flex-col gap-1 transition-all duration-200 hover:opacity-90">
+            <img src="/nexora-wordmark-tight.png" alt="Nexora" className="h-6 w-auto sm:h-7" />
+            <div className="hidden text-sm font-medium text-slate-400 sm:block">
+              {isConnected ? <ArcNameLabel address={address} fallback="Financial control for AI agents" /> : "Financial control for AI agents"}
             </div>
           </a>
 

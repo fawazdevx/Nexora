@@ -1,4 +1,4 @@
-import {Activity, ExternalLink, Github, Mail} from "lucide-react";
+import {ExternalLink, Github, Mail} from "lucide-react";
 import {navigateTo} from "@/lib/router";
 
 const links = [
@@ -24,15 +24,9 @@ export function Footer() {
   return (
     <footer className="relative border-t border-white/[0.1] bg-gradient-to-b from-void/90 to-void/95 px-4 py-10 text-slate-300 backdrop-blur-xl md:px-6">
       <div className="mx-auto flex max-w-[1440px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="group relative grid h-12 w-12 place-items-center rounded-xl border border-plasma/30 bg-gradient-to-br from-plasma/15 to-plasma/5 text-orchid shadow-[0_0_20px_rgba(155,92,246,0.15)] transition-all duration-300 hover:scale-110">
-            <div className="absolute inset-0 rounded-xl bg-plasma/20 blur-lg transition-all duration-300 group-hover:bg-plasma/40" />
-            <Activity size={21} className="relative" />
-          </div>
-          <div>
-            <p className="bg-gradient-to-r from-white to-slate-200 bg-clip-text text-xl font-bold text-transparent">Nexora</p>
-            <p className="mt-1 text-sm font-medium text-slate-400">Agent-native USDC payments and earning infrastructure.</p>
-          </div>
+        <div className="flex flex-col gap-2.5">
+          <img src="/nexora-wordmark-footer.png" alt="Nexora" className="h-7 w-auto" />
+          <p className="text-sm font-medium text-slate-400">Agent-native USDC payments and earning infrastructure.</p>
         </div>
 
         <nav className="flex flex-wrap gap-2 text-[15px]">

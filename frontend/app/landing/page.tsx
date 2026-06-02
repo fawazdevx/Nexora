@@ -112,11 +112,8 @@ export default function LandingPage() {
 
       <header className="relative z-10 px-4 py-5 md:px-6">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
-          <a href="/" onClick={(event) => navigate(event, "/")} className="flex items-center gap-3">
-            <div className="relative h-9 w-9 overflow-hidden rounded-lg bg-gradient-to-br from-plasma via-violet to-cyan p-px">
-              <div className="grid h-full w-full place-items-center rounded-lg bg-[#090716] text-lg font-black text-white">N</div>
-            </div>
-            <span className="text-xl font-semibold uppercase tracking-[0.18em] text-white">Nexora</span>
+          <a href="/" onClick={(event) => navigate(event, "/")} className="flex items-center transition hover:opacity-90">
+            <img src="/nexora-wordmark-tight.png" alt="Nexora" className="h-8 w-auto md:h-9" />
           </a>
 
           <nav className="hidden items-center gap-8 text-sm text-slate-300 lg:flex">
@@ -152,13 +149,16 @@ export default function LandingPage() {
             transition={{duration: 0.7, ease: [0.22, 1, 0.36, 1]}}
           >
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan">
-              AI agent commerce. Programmable earnings. Autonomous payments.
+              The financial control layer for AI agents.
             </p>
             <h1 className="mt-5 max-w-3xl text-6xl font-black leading-none tracking-normal md:text-8xl xl:text-9xl">
               <span className="bg-gradient-to-r from-fuchsia-400 via-plasma to-cyan bg-clip-text text-transparent">Nexora</span>
             </h1>
             <p className="mt-6 max-w-xl text-xl leading-8 text-slate-200">
               The AI-native economy layer on Arc. Empowering agents, builders, and users to earn, pay, and scale autonomously with USDC.
+            </p>
+            <p className="mt-3 max-w-xl text-sm font-semibold uppercase tracking-[0.16em] text-slate-400">
+              Swap routes, Save/Earn vault routing, x402 payments, and policy-guarded agent wallets.
             </p>
             <div className="mt-8 flex flex-wrap gap-4">
               <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button min-h-12 px-7">
@@ -196,6 +196,23 @@ export default function LandingPage() {
             </div>
           </motion.div>
         </section>
+
+        <Reveal className="mx-auto max-w-[1500px] px-4 pb-4 pt-2 md:px-6">
+          <a
+            href="/app"
+            onClick={(event) => navigate(event, "/app")}
+            className="group relative block overflow-hidden rounded-2xl border border-white/[0.1] bg-white/[0.02] shadow-[0_24px_80px_rgba(0,0,0,0.45)] transition-all duration-300 hover:-translate-y-0.5 hover:border-plasma/40 hover:shadow-[0_28px_90px_rgba(155,92,246,0.22)]"
+          >
+            <div className="pointer-events-none absolute -inset-px z-10 rounded-2xl bg-[radial-gradient(circle_at_50%_0%,rgba(155,92,246,0.16),transparent_62%)] opacity-70 transition-opacity duration-300 group-hover:opacity-100" />
+            <img
+              src="/nexora-banner.png"
+              alt="Nexora — agent wallets, x402 payments, escrow, swap, and Save/Earn vaults on Arc"
+              loading="lazy"
+              decoding="async"
+              className="relative w-full object-cover transition-transform duration-500 group-hover:scale-[1.015]"
+            />
+          </a>
+        </Reveal>
 
         <section id="ecosystem" className="mx-auto max-w-[1500px] px-4 py-6 md:px-6">
           <Reveal className="panel p-5">
@@ -295,7 +312,7 @@ export default function LandingPage() {
               <p className="section-kicker">Autonomy. Intelligence. Infrastructure.</p>
               <h2 className="mt-3 text-3xl font-semibold text-white">Powering the agentic economy</h2>
               <p className="muted-copy mt-4">
-                Nexora combines AI automation, stablecoin rails, and on-chain infrastructure to create a new economy where agents and humans can collaborate, transact, and grow.
+                Nexora combines AI automation, stablecoin rails, and on-chain infrastructure to create a new economy where agents and humans can collaborate, transact, and grow. Its operating motto is simple: the financial control layer for AI agents.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">

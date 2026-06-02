@@ -90,7 +90,7 @@ contract NexoraYieldRouter is NexoraUpgradeable {
         emit StrategyActivated(strategyId, strategy.protocol, strategy.expectedApyBps);
     }
 
-    function depositBest(uint256 amount) external onlyVault {
+    function depositBest(uint256 amount) external onlyVault nonReentrant {
         if (amount == 0) return;
 
         Strategy memory strategy = strategies[activeStrategyId];
@@ -100,12 +100,14 @@ contract NexoraYieldRouter is NexoraUpgradeable {
         }
 
         if (!usdc.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
+        usdc.approve(strategy.adapter, 0);
         usdc.approve(strategy.adapter, amount);
         IYieldStrategy(strategy.adapter).deposit(amount);
         emit DepositedToStrategy(activeStrategyId, amount);
     }
 
-    function withdrawTo(uint256 amount, address recipient) external onlyVault returns (uint256 withdrawn) {
+    function withdrawTo(uint256 amount, address recipient) external onlyVault nonReentrant returns (uint256 withdrawn) {
+        require(recipient != address(0), "ZERO_RECIPIENT");
         uint256 idleBalance = usdc.balanceOf(address(this));
         uint256 fromIdle = amount <= idleBalance ? amount : idleBalance;
         if (fromIdle > 0) {

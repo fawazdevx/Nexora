@@ -59,6 +59,7 @@ contract XyloNetUsdcVaultStrategy is IYieldStrategy {
         if (amount == 0) revert ZeroAmount();
         if (!usdc.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
 
+        usdc.approve(address(vault), 0);
         usdc.approve(address(vault), amount);
         uint256 shares = vault.deposit(amount, address(this));
 

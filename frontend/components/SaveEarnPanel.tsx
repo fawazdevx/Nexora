@@ -85,10 +85,10 @@ export function SaveEarnPanel() {
             </div>
             <p className="section-kicker">Nexora Save/Earn</p>
             <h2 className="mt-2 max-w-2xl text-3xl font-semibold leading-tight text-white md:text-[2.35rem]">
-              Save USDC on Nexora and let the router seek the best vault.
+              Save USDC while Nexora routes toward the best Arc vault.
             </h2>
             <p className="muted-copy mt-4 max-w-2xl">
-              Deposits go into the Nexora Save/Earn vault. The router can allocate funds to approved strategy adapters such as XyloNet once one is activated on-chain.
+              Deposits enter the Nexora Save/Earn vault, then the router allocates through approved Arc strategy adapters. XyloNet is the first target adapter; more vault integrations are being evaluated so Save/Earn can compare approved destinations the way Swap compares Arc routes.
             </p>
           </div>
           <div className="border-t border-white/[0.08] bg-black/15 p-5 md:p-6 lg:border-l lg:border-t-0">
@@ -150,8 +150,8 @@ export function SaveEarnPanel() {
             {[
               ["User action", "Save USDC"],
               ["Asset", "USDC"],
-              ["Routing", "Nexora router"],
-              ["Current adapter", "Activate on-chain"]
+              ["Routing", "Best approved Arc vault"],
+              ["Current adapter", "XyloNet target"]
             ].map(([label, value]) => (
               <div key={label} className="flex items-center justify-between rounded-lg border border-white/[0.08] bg-white/[0.035] px-4 py-3">
                 <span className="flex items-center gap-2 text-sm text-slate-400">

@@ -47,6 +47,7 @@ contract ArcLendingUsdcStrategy is IYieldStrategy {
 
     function deposit(uint256 amount) external onlyRouter {
         if (!usdc.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
+        usdc.approve(address(pool), 0);
         usdc.approve(address(pool), amount);
         pool.supply(address(usdc), amount, address(this));
     }

@@ -48,6 +48,7 @@ contract NexoraEscrow is NexoraUpgradeable {
     error InvalidStatus();
     error TransferFailed();
     error ZeroAmount();
+    error FeeTooHigh();
 
     function initialize(address initialOwner, address usdc_, address treasury_) external {
         __Nexora_init(initialOwner);
@@ -73,6 +74,9 @@ contract NexoraEscrow is NexoraUpgradeable {
         string calldata description
     ) external returns (uint256 escrowId) {
         if (amount == 0) revert ZeroAmount();
+        require(counterparty != address(0), "ZERO_COUNTERPARTY");
+        require(counterparty != msg.sender, "SELF_ESCROW");
+        if (platformFeeBps > 1_000) revert FeeTooHigh();
         escrowId = nextEscrowId++;
         uint256 platformFee = (amount * platformFeeBps) / 10_000;
         escrows[escrowId] = Escrow({
@@ -92,7 +96,7 @@ contract NexoraEscrow is NexoraUpgradeable {
         emit EscrowCreated(escrowId, msg.sender, counterparty, amount);
     }
 
-    function fundEscrow(uint256 escrowId) external {
+    function fundEscrow(uint256 escrowId) external nonReentrant {
         Escrow storage escrow = escrows[escrowId];
         if (msg.sender != escrow.creator) revert NotParticipant();
         if (escrow.status != Status.Draft) revert InvalidStatus();
@@ -119,8 +123,9 @@ contract NexoraEscrow is NexoraUpgradeable {
         emit EscrowVerified(escrowId, verifierNotes);
     }
 
-    function releaseEscrow(uint256 escrowId) external {
+    function releaseEscrow(uint256 escrowId) external nonReentrant {
         Escrow storage escrow = escrows[escrowId];
+        if (msg.sender != escrow.creator) revert NotParticipant();
         if (escrow.status != Status.Verified) revert InvalidStatus();
         escrow.status = Status.Released;
         uint256 fee = escrow.platformFee;
@@ -135,7 +140,12 @@ contract NexoraEscrow is NexoraUpgradeable {
     function cancelEscrow(uint256 escrowId) external onlyOwner {
         Escrow storage escrow = escrows[escrowId];
         if (escrow.status != Status.Funded && escrow.status != Status.Draft) revert InvalidStatus();
+        Status previousStatus = escrow.status;
         escrow.status = Status.Cancelled;
+        if (previousStatus == Status.Funded) {
+            uint256 refund = escrow.amount + escrow.performanceBond;
+            if (refund > 0 && !usdc.transfer(escrow.creator, refund)) revert TransferFailed();
+        }
         emit EscrowCancelled(escrowId);
     }
 }
