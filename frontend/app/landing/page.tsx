@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import {AgentMesh} from "@/components/AgentMesh";
 import {navigateTo} from "@/lib/router";
-import {useAppSnapshot} from "@/hooks/useAppSnapshot";
+import {usePlatformSnapshot} from "@/hooks/useAppSnapshot";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -64,7 +64,7 @@ const infrastructure = [
 ];
 
 export default function LandingPage() {
-  const snapshot = useAppSnapshot();
+  const snapshot = usePlatformSnapshot();
   const stats = [
     [`$${(snapshot.data?.stats.usdcSettled ?? 0).toFixed(2)}`, "USDC settled"],
     [String(snapshot.data?.services.length ?? 0), "Published services"],
