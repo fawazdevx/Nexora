@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useState} from "react";
+import toast from "react-hot-toast";
 import {useAccount} from "wagmi";
 import {chainLabel, contractAddressesForChain, writeAgentPolicy} from "@/lib/contracts";
 import {apiPost} from "@/lib/api";
@@ -66,6 +67,7 @@ export function PolicyForm() {
     }
 
     setStatus(selectedAgent.address ? `Submitting policy on ${chainLabel(chain?.id)}...` : "Saving policy while Circle wallet is pending...");
+    const toastId = toast.loading(selectedAgent.address ? `Saving policy on ${chainLabel(chain?.id)}...` : "Saving pending policy...");
     setSaving(true);
     try {
       const txHash = selectedAgent.address
@@ -96,8 +98,11 @@ export function PolicyForm() {
           ? `Policy submitted on ${chainLabel(chain?.id)} from ${shortAddress(address)}: ${txHash}`
           : "Policy saved. It will be ready for on-chain submission when Circle returns the agent wallet address."
       );
+      toast.success(txHash ? "Policy saved onchain" : "Pending policy saved", {id: toastId});
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Policy update failed");
+      const message = error instanceof Error ? error.message : "Policy update failed";
+      setStatus(message);
+      toast.error(message, {id: toastId});
     } finally {
       setSaving(false);
     }

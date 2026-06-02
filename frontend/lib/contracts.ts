@@ -37,6 +37,24 @@ export const policyRegistryAbi = [
   },
   {
     type: "function",
+    name: "configureAgentPolicy",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "agentWallet", type: "address"},
+      {name: "operator", type: "address"},
+      {name: "arcNameHash", type: "bytes32"},
+      {name: "dailyLimit", type: "uint256"},
+      {name: "transactionCap", type: "uint256"},
+      {name: "contractAllowlistEnabled", type: "bool"},
+      {name: "recipientAllowlistEnabled", type: "bool"},
+      {name: "active", type: "bool"},
+      {name: "contractAllowlist", type: "address[]"},
+      {name: "recipientAllowlist", type: "address[]"}
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
     name: "registerAgent",
     stateMutability: "nonpayable",
     inputs: [
@@ -817,73 +835,30 @@ export async function writeAgentPolicy(input: {
   recipientAllowlist?: string[];
   active: boolean;
 }): Promise<Hash> {
-  const {client, account, chainId, contracts} = await walletClient();
-  const reader = await publicClient(chainId);
+  const {client, chainId, contracts} = await walletClient();
   const address = requireAddress(contracts.policyRegistry, "Policy registry address");
   const arcNameHash = keccak256(stringToHex(input.arcName?.trim() || input.operatorAddress));
-  const registryOwner = await reader.readContract({
-    address,
-    abi: policyRegistryAbi,
-    functionName: "owner"
-  });
-  const [registeredOperator,, agentActive] = await reader.readContract({
-    address,
-    abi: policyRegistryAbi,
-    functionName: "agentProfiles",
-    args: [input.agentWallet as Address]
-  });
-  const isOwner = registryOwner.toLowerCase() === account.toLowerCase();
-  const isRegisteredOperator = registeredOperator.toLowerCase() === input.operatorAddress.toLowerCase();
-
-  if (!agentActive) {
-    if (!isOwner) {
-      throw new Error("This agent wallet is not registered on this chain yet. Connect the Nexora owner wallet to register it first, then the operator can save policies.");
-    }
-    const registerHash = await client.writeContract({
-      address,
-      abi: policyRegistryAbi,
-      functionName: "registerAgent",
-      args: [input.agentWallet as Address, input.operatorAddress as Address, arcNameHash]
-    });
-    await reader.waitForTransactionReceipt({hash: registerHash});
-  } else if (!isOwner && !isRegisteredOperator) {
-    throw new Error("Only the registered operator or Nexora owner can update this agent policy on the selected chain.");
-  }
-
+  const reader = await publicClient(chainId);
+  const contractAllowlist = (input.contractAllowlist ?? []) as Address[];
+  const recipientAllowlist = (input.recipientAllowlist ?? []) as Address[];
   const policyHash = await client.writeContract({
     address,
     abi: policyRegistryAbi,
-    functionName: "setPolicy",
+    functionName: "configureAgentPolicy",
     args: [
       input.agentWallet as Address,
+      input.operatorAddress as Address,
+      arcNameHash,
       parseUnits(input.dailyLimitUsdc || "0", 6),
       parseUnits(input.transactionCapUsdc || "0", 6),
-      (input.contractAllowlist ?? []).length > 0,
-      (input.recipientAllowlist ?? []).length > 0,
-      input.active
+      contractAllowlist.length > 0,
+      recipientAllowlist.length > 0,
+      input.active,
+      contractAllowlist,
+      recipientAllowlist
     ]
   });
   await reader.waitForTransactionReceipt({hash: policyHash});
-
-  for (const target of input.contractAllowlist ?? []) {
-    const allowHash = await client.writeContract({
-      address,
-      abi: policyRegistryAbi,
-      functionName: "setAllowedContract",
-      args: [input.agentWallet as Address, target as Address, true]
-    });
-    await reader.waitForTransactionReceipt({hash: allowHash});
-  }
-
-  for (const recipient of input.recipientAllowlist ?? []) {
-    const allowHash = await client.writeContract({
-      address,
-      abi: policyRegistryAbi,
-      functionName: "setAllowedRecipient",
-      args: [input.agentWallet as Address, recipient as Address, true]
-    });
-    await reader.waitForTransactionReceipt({hash: allowHash});
-  }
 
   return policyHash;
 }

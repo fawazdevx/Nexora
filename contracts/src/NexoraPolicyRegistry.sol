@@ -65,6 +65,51 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     }
 
     function registerAgent(address agentWallet, address operator, bytes32 arcNameHash) external onlyOwner {
+        _registerAgent(agentWallet, operator, arcNameHash);
+    }
+
+    function configureAgentPolicy(
+        address agentWallet,
+        address operator,
+        bytes32 arcNameHash,
+        uint256 dailyLimit,
+        uint256 transactionCap,
+        bool contractAllowlistEnabled,
+        bool recipientAllowlistEnabled,
+        bool active,
+        address[] calldata contractAllowlist,
+        address[] calldata recipientAllowlist
+    ) external {
+        AgentProfile memory profile = agentProfiles[agentWallet];
+
+        if (!profile.active) {
+            if (msg.sender != owner && msg.sender != operator) revert NotOperatorOrOwner();
+            _registerAgent(agentWallet, operator, arcNameHash);
+        } else if (msg.sender != owner && msg.sender != profile.operator) {
+            revert NotOperatorOrOwner();
+        }
+
+        _setPolicy(
+            agentWallet,
+            dailyLimit,
+            transactionCap,
+            contractAllowlistEnabled,
+            recipientAllowlistEnabled,
+            active
+        );
+
+        for (uint256 i = 0; i < contractAllowlist.length; i++) {
+            allowedContracts[agentWallet][contractAllowlist[i]] = true;
+            emit ContractAllowlistUpdated(agentWallet, contractAllowlist[i], true);
+        }
+
+        for (uint256 i = 0; i < recipientAllowlist.length; i++) {
+            allowedRecipients[agentWallet][recipientAllowlist[i]] = true;
+            emit RecipientAllowlistUpdated(agentWallet, recipientAllowlist[i], true);
+        }
+    }
+
+    function _registerAgent(address agentWallet, address operator, bytes32 arcNameHash) internal {
         require(agentWallet != address(0), "ZERO_AGENT");
         require(operator != address(0), "ZERO_OPERATOR");
         agentProfiles[agentWallet] = AgentProfile({operator: operator, arcNameHash: arcNameHash, active: true});
@@ -79,6 +124,24 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         bool recipientAllowlistEnabled,
         bool active
     ) external onlyOperatorOrOwner(agentWallet) {
+        _setPolicy(
+            agentWallet,
+            dailyLimit,
+            transactionCap,
+            contractAllowlistEnabled,
+            recipientAllowlistEnabled,
+            active
+        );
+    }
+
+    function _setPolicy(
+        address agentWallet,
+        uint256 dailyLimit,
+        uint256 transactionCap,
+        bool contractAllowlistEnabled,
+        bool recipientAllowlistEnabled,
+        bool active
+    ) internal {
         policies[agentWallet] = SpendingPolicy({
             dailyLimit: dailyLimit,
             transactionCap: transactionCap,
