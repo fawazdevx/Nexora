@@ -12,7 +12,6 @@ export type AgentWalletRecord = {
   circleWalletSetId?: string | null;
   circleWalletId?: string | null;
   createdAt: string;
-  archivedAt?: string | null;
   policy: {
     dailyLimitUsdc: number;
     transactionCapUsdc: number;
@@ -35,7 +34,6 @@ export type ServiceRecord = {
   featured: boolean;
   txHash?: string | null;
   createdAt: string;
-  archivedAt?: string | null;
 };
 
 export type ServiceManifest = {
@@ -190,9 +188,7 @@ export async function appSnapshot(operatorAddress?: string) {
   const payments = operator
     ? store.payments.filter((payment) => payment.payer.toLowerCase() === operator || payment.publisherAddress.toLowerCase() === operator)
     : store.payments;
-  const visibleServices = store.services.filter((service) => !service.archivedAt);
-  const scopedAgents = (operator ? store.agents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : store.agents)
-    .filter((agent) => !agent.archivedAt);
+  const scopedAgents = operator ? store.agents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : store.agents;
   const agents = scopedAgents.map(sanitizeAgent);
   const subscriptions = operator
     ? store.subscriptions.filter((subscription) => subscription.operatorAddress.toLowerCase() === operator)
@@ -207,12 +203,12 @@ export async function appSnapshot(operatorAddress?: string) {
   const settledPayments = payments.filter((payment) => payment.status === "settled");
   const marketplaceSales = settledPayments.length;
   const completedTasks = store.earnActivations.filter((activation) => !operator || activation.operatorAddress.toLowerCase() === operator).length;
-  const ecosystemContributions = visibleServices.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
+  const ecosystemContributions = store.services.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
   const successfulPayments = settledPayments.length;
 
   return {
     agents,
-    services: visibleServices,
+    services: store.services,
     payments,
     subscriptions,
     escrows,

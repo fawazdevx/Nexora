@@ -1,7 +1,7 @@
 import {useState} from "react";
 import {RefreshCw, Plus, ShieldCheck, Settings} from "lucide-react";
 import {useAccount} from "wagmi";
-import {apiDelete, apiPost} from "@/lib/api";
+import {apiPost} from "@/lib/api";
 import {useArcName} from "@/hooks/useArcName";
 import {PageHeader} from "@/components/PageHeader";
 import {shortAddress} from "@/lib/arc";
@@ -34,22 +34,6 @@ export default function AgentsPage() {
       setStatus(`Agent wallet ${result.id} created for ${arcName ?? shortAddress(address)}. Status: ${result.circleWalletStatus}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Agent wallet creation failed");
-    }
-  }
-
-  async function hideAgent(agentId: string) {
-    if (!address) {
-      setStatus("Connect the operator wallet before hiding an agent.");
-      return;
-    }
-    if (!window.confirm("Hide this agent wallet from the Nexora UI? This only archives the local record and does not delete the Circle wallet or on-chain history.")) return;
-    setStatus("Hiding agent wallet from Nexora UI...");
-    try {
-      await apiDelete(`/api/agents/${encodeURIComponent(agentId)}`, {operatorAddress: address});
-      await snapshot.refetch();
-      setStatus("Agent wallet hidden from the UI.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Agent wallet could not be hidden");
     }
   }
 
@@ -104,9 +88,6 @@ export default function AgentsPage() {
             <button type="button" onClick={() => navigateTo("/settings/policies")} className="secondary-button mt-4 w-full justify-center">
               <Settings size={15} />
               Manage policy
-            </button>
-            <button type="button" onClick={() => void hideAgent(agent.id)} className="secondary-button mt-3 w-full justify-center">
-              Hide test wallet
             </button>
           </article>
         ))}

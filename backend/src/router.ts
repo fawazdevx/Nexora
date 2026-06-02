@@ -80,11 +80,6 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       }));
     }
 
-    if (req.method === "DELETE" && path.startsWith("/api/agents/")) {
-      const agentId = path.split("/")[3] ?? "";
-      return ok(await archiveAgent(agentId, requiredString(body.operatorAddress, "operatorAddress")));
-    }
-
     if (req.method === "GET" && path === "/api/marketplace/services") {
       return ok({services: await listServices()});
     }
@@ -94,11 +89,6 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       const service = (await readStore()).services.find((item) => item.id === serviceId || String(item.chainServiceId) === serviceId);
       if (!service) return response(404, {error: "service_not_found"});
       return ok({service});
-    }
-
-    if (req.method === "DELETE" && path.startsWith("/api/marketplace/services/")) {
-      const serviceId = path.split("/")[4] ?? "";
-      return ok(await archiveService(serviceId, requiredString(body.operatorAddress, "operatorAddress")));
     }
 
     if (req.method === "GET" && path === "/api/swap/readiness") {
@@ -401,7 +391,7 @@ function arrayOfStrings(value: unknown) {
 async function developerDashboard(address: string) {
   const store = await readStore();
   const lower = address.toLowerCase();
-  const services = store.services.filter((service) => service.publisherAddress.toLowerCase() === lower && !service.archivedAt);
+  const services = store.services.filter((service) => service.publisherAddress.toLowerCase() === lower);
   const payments = store.payments.filter((payment) => payment.publisherAddress.toLowerCase() === lower);
   const escrows = store.escrows.filter((escrow) => escrow.creatorAddress.toLowerCase() === lower || escrow.counterpartyAddress.toLowerCase() === lower);
   const settled = payments.filter((payment) => payment.status === "settled");
@@ -421,43 +411,6 @@ async function developerDashboard(address: string) {
       activeEscrows: escrows.filter((escrow) => escrow.status !== "released" && escrow.status !== "cancelled").length
     }
   };
-}
-
-async function archiveAgent(agentId: string, operatorAddress: string) {
-  return updateStore((store) => {
-    const agent = store.agents.find((item) => item.id === agentId);
-    if (!agent) throw new Error("agent wallet not found");
-    if (agent.operatorAddress.toLowerCase() !== operatorAddress.toLowerCase()) {
-      throw new Error("Only the agent operator can hide this wallet.");
-    }
-    agent.archivedAt = new Date().toISOString();
-    pushNotification(store, {
-      operatorAddress,
-      title: "Agent hidden",
-      detail: agent.address ?? agent.arcName ?? agent.id,
-      kind: "agent"
-    });
-    return {archived: true, agentId};
-  });
-}
-
-async function archiveService(serviceId: string, operatorAddress: string) {
-  return updateStore((store) => {
-    const service = store.services.find((item) => item.id === serviceId || String(item.chainServiceId) === serviceId);
-    if (!service) throw new Error("service not found");
-    if (service.publisherAddress.toLowerCase() !== operatorAddress.toLowerCase()) {
-      throw new Error("Only the publisher can hide this service.");
-    }
-    service.archivedAt = new Date().toISOString();
-    service.active = false;
-    pushNotification(store, {
-      operatorAddress,
-      title: "Service hidden",
-      detail: service.name,
-      kind: "payment"
-    });
-    return {archived: true, serviceId: service.id};
-  });
 }
 
 async function platformRevenueDashboard() {

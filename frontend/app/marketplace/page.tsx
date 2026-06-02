@@ -2,7 +2,7 @@ import {useState} from "react";
 import {ExternalLink, GitFork, Plus, ShieldCheck, Star} from "lucide-react";
 import {useAccount} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
-import {apiDelete, apiPost} from "@/lib/api";
+import {apiPost} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
@@ -74,22 +74,6 @@ export default function MarketplacePage() {
     }
   }
 
-  async function hideService(serviceId: string) {
-    if (!address) {
-      setStatus("Connect the publisher wallet before hiding a service.");
-      return;
-    }
-    if (!window.confirm("Hide this published API from the Nexora UI? This archives the local record only; deactivate it on-chain separately if it has a ledger service ID.")) return;
-    setStatus("Hiding service from Nexora UI...");
-    try {
-      await apiDelete(`/api/marketplace/services/${encodeURIComponent(serviceId)}`, {operatorAddress: address});
-      await snapshot.refetch();
-      setStatus("Service hidden from the UI.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Service could not be hidden");
-    }
-  }
-
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -156,11 +140,6 @@ export default function MarketplacePage() {
             <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button relative mt-3 w-full justify-center">
               Public service page
             </button>
-            {address && service.publisherAddress.toLowerCase() === address.toLowerCase() ? (
-              <button type="button" onClick={() => void hideService(service.id)} className="secondary-button relative mt-3 w-full justify-center">
-                Hide test API
-              </button>
-            ) : null}
             <ServiceResult result={serviceResults[service.id]} />
           </article>
         ))}
