@@ -7,6 +7,7 @@ import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
 import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
 import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
+import {settleFacilitatorPayment, supportedX402, verifyFacilitatorPayment} from "./x402/protocol-facilitator.js";
 
 export type AppRequest = {
   method: string;
@@ -32,6 +33,24 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path === "/api/health") {
       return ok({ok: true, network: "Arc Testnet", chainId: config.arc.chainId});
+    }
+
+    if (req.method === "GET" && (path === "/x402/supported" || path === "/api/x402/supported")) {
+      return ok(supportedX402());
+    }
+
+    if (req.method === "POST" && (path === "/x402/verify" || path === "/api/x402/verify")) {
+      return ok(await verifyFacilitatorPayment({
+        paymentPayload: body.paymentPayload ?? body.payment,
+        paymentRequirements: body.paymentRequirements
+      }));
+    }
+
+    if (req.method === "POST" && (path === "/x402/settle" || path === "/api/x402/facilitator-settle")) {
+      return ok(await settleFacilitatorPayment({
+        paymentPayload: body.paymentPayload ?? body.payment,
+        paymentRequirements: body.paymentRequirements
+      }));
     }
 
     if (req.method === "GET" && path === "/api/readiness") {
@@ -350,7 +369,8 @@ export function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,PATCH,HEAD,OPTIONS",
-    "access-control-allow-headers": "content-type,authorization,x-payment"
+    "access-control-allow-headers": "content-type,authorization,x-payment,x-accept-payment,x402-version",
+    "access-control-expose-headers": "x-accept-payment,x-payment-response,x402-version"
   };
 }
 

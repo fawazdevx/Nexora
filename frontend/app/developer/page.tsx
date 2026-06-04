@@ -35,6 +35,19 @@ export default function DeveloperDashboardPage() {
         <p className="text-sm text-slate-400">Operator</p>
         <p className="mt-2 text-lg text-white">{address ? shortAddress(address) : "Connect wallet"}</p>
       </div>
+      <div className="panel">
+        <p className="section-kicker">x402 facilitator</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Use Nexora as an Arc payment facilitator.</h2>
+        <p className="muted-copy mt-3 max-w-3xl">
+          External APIs can return x402 payment requirements, then call Nexora to verify a signed USDC authorization and settle it on Arc.
+          This is separate from the marketplace UI and is intended for direct developer integration.
+        </p>
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <Endpoint method="GET" path="/x402/supported" detail="Supported schemes, networks, and assets." />
+          <Endpoint method="POST" path="/x402/verify" detail="Verify payment payload against requirements before serving content." />
+          <Endpoint method="POST" path="/x402/settle" detail="Submit the signed USDC authorization and record settlement." />
+        </div>
+      </div>
     </div>
   );
 }
@@ -44,6 +57,16 @@ function Metric({label, value}: {label: string; value: string | number}) {
     <div className="panel">
       <p className="text-sm text-slate-400">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function Endpoint({method, path, detail}: {method: string; path: string; detail: string}) {
+  return (
+    <div className="surface p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-orchid">{method}</p>
+      <p className="mt-2 font-mono text-sm text-white">{path}</p>
+      <p className="mt-2 text-sm leading-6 text-slate-400">{detail}</p>
     </div>
   );
 }
