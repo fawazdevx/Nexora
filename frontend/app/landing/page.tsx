@@ -158,30 +158,41 @@ export default function LandingPage() {
           </motion.div>
 
           <motion.aside
-            className="panel"
+            className="overflow-hidden rounded-2xl border border-white/[0.1] bg-gradient-to-br from-panel/95 to-panel/85 shadow-neon backdrop-blur-2xl"
             initial={{opacity: 0, y: 20}}
             animate={{opacity: 1, y: 0}}
             transition={{duration: 0.55, delay: 0.1}}
           >
-            <p className="section-kicker">Live infrastructure</p>
-            <h2 className="mt-3 text-2xl font-semibold text-white">Agent finance, not another wallet dashboard.</h2>
-            <div className="mt-6 grid gap-3">
-              {infra.map(([label, value, Icon]) => {
-                const ItemIcon = Icon as typeof Network;
-                return (
-                  <div key={label as string} className="surface flex items-center justify-between gap-3 px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <ItemIcon size={17} className="text-orchid" />
-                      <span className="text-sm text-slate-400">{label as string}</span>
-                    </div>
-                    <span className="text-right text-sm font-semibold text-white">{value as string}</span>
-                  </div>
-                );
-              })}
+            <div className="border-b border-white/[0.08] bg-black/20 p-4">
+              <img
+                src="/nexora-banner.png"
+                alt="Nexora app preview"
+                className="aspect-[16/10] w-full rounded-xl border border-white/[0.08] object-cover"
+                loading="eager"
+                decoding="async"
+              />
             </div>
-            <p className="mt-5 text-sm leading-6 text-slate-500">
-              Swap and Save/Earn are Arc-only today. Arbitrum Sepolia and Base Sepolia are wired for core Nexora contract flows.
-            </p>
+            <div className="p-6">
+              <p className="section-kicker">Live infrastructure</p>
+              <h2 className="mt-3 text-2xl font-semibold text-white">Agent finance, not another wallet dashboard.</h2>
+              <div className="mt-6 grid gap-3">
+                {infra.map(([label, value, Icon]) => {
+                  const ItemIcon = Icon as typeof Network;
+                  return (
+                    <div key={label as string} className="surface flex items-center justify-between gap-3 px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <ItemIcon size={17} className="text-orchid" />
+                        <span className="text-sm text-slate-400">{label as string}</span>
+                      </div>
+                      <span className="text-right text-sm font-semibold text-white">{value as string}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-5 text-sm leading-6 text-slate-500">
+                Swap and Save/Earn are Arc-only today. Arbitrum Sepolia and Base Sepolia are wired for core Nexora contract flows.
+              </p>
+            </div>
           </motion.aside>
         </section>
 
