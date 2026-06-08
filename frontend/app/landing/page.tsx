@@ -1,21 +1,21 @@
-import {useEffect} from "react";
-import {motion, useMotionValue, useSpring} from "framer-motion";
+import {motion} from "framer-motion";
 import {
   ArrowRight,
+  BadgeCheck,
   Bot,
+  Braces,
   ChartNoAxesCombined,
   CircleDollarSign,
-  DatabaseZap,
+  Code2,
   FileText,
-  Globe2,
+  Landmark,
+  LockKeyhole,
+  Network,
   RadioTower,
   ShieldCheck,
-  Sparkles,
   Store,
-  UserRoundCheck,
   WalletCards
 } from "lucide-react";
-import {AgentMesh} from "@/components/AgentMesh";
 import {navigateTo} from "@/lib/router";
 import {usePlatformSnapshot} from "@/hooks/useAppSnapshot";
 
@@ -24,324 +24,305 @@ function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   navigateTo(href);
 }
 
-// Shared scroll-reveal: fades and lifts content into view once.
 const reveal = {
-  hidden: {opacity: 0, y: 24},
+  hidden: {opacity: 0, y: 18},
   visible: {opacity: 1, y: 0}
 };
 
-function Reveal({children, delay = 0, className, id}: {children: React.ReactNode; delay?: number; className?: string; id?: string}) {
+function Reveal({children, className = "", id}: {children: React.ReactNode; className?: string; id?: string}) {
   return (
-    <motion.div
+    <motion.section
       id={id}
       className={className}
       variants={reveal}
       initial="hidden"
       whileInView="visible"
       viewport={{once: true, margin: "-80px"}}
-      transition={{duration: 0.6, ease: [0.22, 1, 0.36, 1], delay}}
+      transition={{duration: 0.5, ease: [0.22, 1, 0.36, 1]}}
     >
       {children}
-    </motion.div>
+    </motion.section>
   );
 }
 
-const platformFeatures = [
-  ["AI Agent Wallets", "Autonomous wallets with granular policies, limits, allowlists, and agent execution rules.", WalletCards],
-  ["x402 Payments", "Pay-per-request APIs, agent-to-agent payments, metering, authorization, and USDC settlement.", RadioTower],
-  ["One-Click Earn", "Discover stablecoin yield routes, automate workflows, and keep earning actions policy-capped.", ChartNoAxesCombined],
-  ["Marketplace", "Publish APIs and agent services with transparent USDC pricing and execution receipts.", Store],
-  ["Arc Identity", "Resolve .arc names, operator profiles, ecosystem badges, and trusted participation history.", UserRoundCheck],
-  ["Reputation System", "Track settled payments, completed tasks, verified builders, and agent reliability.", Sparkles]
+const capabilities = [
+  {
+    title: "Agent wallet policies",
+    copy: "Create agent wallets, set daily limits, transaction caps, contract allowlists, and recipient allowlists before agents spend.",
+    icon: ShieldCheck
+  },
+  {
+    title: "x402 API payments",
+    copy: "Publish paid APIs, protect endpoints with the Nexora SDK, and settle per-request USDC payments through the facilitator.",
+    icon: RadioTower
+  },
+  {
+    title: "Escrow for work",
+    copy: "Hold USDC for service work, track deliverables, verify completion, and route platform fees to treasury.",
+    icon: LockKeyhole
+  },
+  {
+    title: "Arc Swap + Save/Earn",
+    copy: "Compare Arc liquidity routes and route USDC into Save/Earn opportunities. These flows currently run on Arc only.",
+    icon: ChartNoAxesCombined
+  }
 ];
 
-const infrastructure = [
-  [CircleDollarSign, "USDC", "Stablecoin"],
-  [WalletCards, "Agent Wallets", "Autonomous custody"],
-  [RadioTower, "x402", "Payment protocol"],
-  [Globe2, "Arc Names", ".arc identity"],
-  [DatabaseZap, "Arc Network", "Scalable settlement"]
+const userSteps = [
+  "Connect wallet",
+  "Create agent wallet",
+  "Save spending policy",
+  "Pay for services, use escrow, swap, or Save/Earn"
+];
+
+const infra = [
+  ["Primary network", "Arc Testnet", Network],
+  ["Settlement asset", "USDC", CircleDollarSign],
+  ["Payment protocol", "x402", RadioTower],
+  ["Wallet layer", "Circle agent wallets", WalletCards],
+  ["SDK package", "@nexorafi/x402", Braces]
 ];
 
 export default function LandingPage() {
   const snapshot = usePlatformSnapshot();
-  const stats = [
-    [`$${(snapshot.data?.stats.usdcSettled ?? 0).toFixed(2)}`, "USDC settled"],
-    [String(snapshot.data?.services.length ?? 0), "Published services"],
-    [String(snapshot.data?.stats.agentWallets ?? 0), "Agent wallets"],
-    [String(snapshot.data?.reputation.score ?? 0), "Reputation score"]
-  ];
-
-  // Cursor-following ambient glow (spring-smoothed so it trails gently).
-  const glowX = useMotionValue(-400);
-  const glowY = useMotionValue(-400);
-  const springX = useSpring(glowX, {stiffness: 60, damping: 22, mass: 0.6});
-  const springY = useSpring(glowY, {stiffness: 60, damping: 22, mass: 0.6});
-
-  useEffect(() => {
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) return;
-    function onMove(event: PointerEvent) {
-      glowX.set(event.clientX - 300);
-      glowY.set(event.clientY - 300);
-    }
-    window.addEventListener("pointermove", onMove);
-    return () => window.removeEventListener("pointermove", onMove);
-  }, [glowX, glowY]);
+  const stats = snapshot.data?.stats;
+  const services = snapshot.data?.services.length ?? 0;
+  const agentWallets = stats?.agentWallets ?? 0;
+  const settled = stats?.usdcSettled ?? 0;
+  const policySaves = stats?.policySaves ?? 0;
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#05040b]">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_78%_22%,rgba(6,182,212,0.22),transparent_34%),radial-gradient(circle_at_18%_18%,rgba(217,70,239,0.18),transparent_30%),linear-gradient(135deg,#05040b_0%,#10071b_46%,#041018_100%)]" />
-      <img
-        src="/hero_image.png"
-        alt=""
-        aria-hidden="true"
-        fetchPriority="high"
-        decoding="async"
-        className="pointer-events-none fixed inset-0 h-full w-full object-cover opacity-46"
-      />
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(5,4,11,0.96)_0%,rgba(5,4,11,0.76)_42%,rgba(5,4,11,0.38)_100%),linear-gradient(180deg,rgba(5,4,11,0.18)_0%,rgba(5,4,11,0.72)_58%,#05040b_100%)]" />
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.026)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.026)_1px,transparent_1px)] bg-[size:78px_78px] opacity-30" />
+    <div className="relative min-h-screen overflow-hidden bg-[#06070b] text-slate-100">
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(12,16,24,0.92),rgba(6,7,11,0.96)),radial-gradient(circle_at_78%_12%,rgba(125,211,252,0.16),transparent_28rem),radial-gradient(circle_at_18%_22%,rgba(155,92,246,0.18),transparent_30rem)]" />
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.024)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.024)_1px,transparent_1px)] bg-[size:88px_88px] opacity-35" />
 
-      {/* Cursor-following glow */}
-      <motion.div
-        aria-hidden="true"
-        className="pointer-events-none fixed z-0 h-[600px] w-[600px] rounded-full bg-[radial-gradient(circle,rgba(155,92,246,0.14),transparent_62%)] blur-2xl"
-        style={{left: springX, top: springY}}
-      />
-
-      <header className="relative z-10 px-4 py-5 md:px-6">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
+      <header className="relative z-10 border-b border-white/[0.08] bg-[#06070b]/70 px-4 py-4 backdrop-blur-xl md:px-6">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">
           <a href="/" onClick={(event) => navigate(event, "/")} className="flex items-center transition hover:opacity-90">
-            <img src="/nexora-wordmark-tight.png" alt="Nexora" className="h-8 w-auto md:h-9" />
+            <img src="/nexora-wordmark-tight.png" alt="Nexora" className="h-8 w-auto" />
           </a>
-
-          <nav className="hidden items-center gap-8 text-sm text-slate-300 lg:flex">
-            <a href="#features" className="transition hover:text-white">Features</a>
-            <a href="#ecosystem" className="transition hover:text-white">Ecosystem</a>
-            <a href="#developers" className="transition hover:text-white">Developers</a>
-            <a href="#docs" className="transition hover:text-white">Docs</a>
-            <a href="#about" className="transition hover:text-white">About</a>
+          <nav className="hidden items-center gap-7 text-sm font-medium text-slate-400 lg:flex">
+            <a href="#platform" className="hover:text-white">Platform</a>
+            <a href="#developers" className="hover:text-white">Developers</a>
+            <a href="#users" className="hover:text-white">Users</a>
+            <a href="#security" className="hover:text-white">Security</a>
           </nav>
-
           <div className="flex items-center gap-3">
-            <span className="hidden rounded-md border border-white/[0.12] bg-white/[0.04] px-4 py-2 text-sm text-slate-200 sm:inline-flex">
-              <span className="mr-2 mt-1 h-2 w-2 rounded-full bg-mint" />
-              Arc Testnet
-            </span>
-            <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button">
+            <a href="/docs/api" onClick={(event) => navigate(event, "/docs/api")} className="secondary-button hidden min-h-10 px-4 py-2 text-sm sm:inline-flex">
+              Docs
+            </a>
+            <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button min-h-10 px-4 py-2 text-sm">
               Launch App
-              <ArrowRight size={16} />
+              <ArrowRight size={15} />
             </a>
           </div>
         </div>
       </header>
 
       <main className="relative z-10">
-        <section className="relative mx-auto flex min-h-[calc(100vh-88px)] max-w-[1500px] items-center px-4 pb-16 pt-10 md:px-6">
-          <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden [mask-image:radial-gradient(circle_at_30%_45%,black,transparent_72%)]">
-            <AgentMesh />
-          </div>
-          <motion.div
-            className="max-w-3xl"
-            initial={{opacity: 0, y: 28}}
-            animate={{opacity: 1, y: 0}}
-            transition={{duration: 0.7, ease: [0.22, 1, 0.36, 1]}}
-          >
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan">
-              The financial control layer for AI agents.
-            </p>
-            <h1 className="mt-5 max-w-3xl text-6xl font-black leading-none tracking-normal md:text-8xl xl:text-9xl">
-              <span className="bg-gradient-to-r from-fuchsia-400 via-plasma to-cyan bg-clip-text text-transparent">Nexora</span>
+        <section className="mx-auto grid min-h-[calc(100vh-72px)] max-w-[1440px] items-center gap-12 px-4 py-16 md:px-6 lg:grid-cols-[1fr_440px]">
+          <motion.div initial={{opacity: 0, y: 20}} animate={{opacity: 1, y: 0}} transition={{duration: 0.55}}>
+            <div className="inline-flex items-center gap-2 rounded-full border border-mint/20 bg-mint/10 px-4 py-2 text-sm font-semibold text-mint">
+              <BadgeCheck size={15} />
+              Built for Arc USDC workflows
+            </div>
+            <h1 className="mt-7 max-w-4xl text-5xl font-semibold leading-[0.98] tracking-normal text-white md:text-7xl xl:text-8xl">
+              Nexora
             </h1>
-            <p className="mt-6 max-w-xl text-xl leading-8 text-slate-200">
-              The AI-native economy layer on Arc. Empowering agents, builders, and users to earn, pay, and scale autonomously with USDC.
+            <p className="mt-6 max-w-3xl text-2xl font-medium leading-9 text-slate-200 md:text-3xl">
+              The financial control layer for AI agents on Arc.
             </p>
-            <p className="mt-3 max-w-xl text-sm font-semibold uppercase tracking-[0.16em] text-slate-400">
-              Swap routes, Save/Earn vault routing, x402 payments, and policy-guarded agent wallets.
+            <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-400">
+              Create policy-controlled agent wallets, monetize APIs with x402, manage escrow payments, and route USDC through swap and Save/Earn flows.
             </p>
-            <div className="mt-8 flex flex-wrap gap-4">
-              <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button min-h-12 px-7">
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button px-6">
                 Launch App
-                <ArrowRight size={18} />
+                <ArrowRight size={17} />
               </a>
-              <a href="#docs" className="secondary-button min-h-12 px-7">
-                Explore Docs
+              <a href="/docs/api" onClick={(event) => navigate(event, "/docs/api")} className="secondary-button px-6">
+                Read Docs
                 <FileText size={17} />
               </a>
+              <a href="/builders" onClick={(event) => navigate(event, "/builders")} className="secondary-button px-6">
+                Builder Directory
+              </a>
             </div>
 
-            <div className="mt-8 grid max-w-xl grid-cols-2 gap-3 rounded-lg border border-white/[0.08] bg-white/[0.035] p-3 backdrop-blur-xl sm:grid-cols-4">
-              {[
-                ["Built on", "Arc"],
-                ["Powered by", "Circle"],
-                ["Protocol", "x402"],
-                ["Asset", "USDC"]
-              ].map(([label, value]) => (
-                <div key={label} className="border-white/[0.08] px-3 py-2 sm:border-r last:border-r-0">
-                  <p className="text-[11px] text-slate-500">{label}</p>
-                  <p className="mt-1 text-sm font-semibold text-white">{value}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <span className="status-pill border-mint/20 bg-mint/10 text-mint">
-                <ShieldCheck size={13} />
-                Policy guarded
-              </span>
-              <span className="status-pill border-white/[0.12] bg-black/25 text-slate-200">
-                {snapshot.data?.stats.agentWallets ?? 0} agent wallets monitored
-              </span>
+            <div className="mt-10 grid max-w-3xl gap-3 sm:grid-cols-4">
+              <Metric value={`$${settled.toFixed(2)}`} label="Settled volume" />
+              <Metric value={String(services)} label="Published services" />
+              <Metric value={String(agentWallets)} label="Agent wallets" />
+              <Metric value={String(policySaves)} label="Policies saved" />
             </div>
           </motion.div>
+
+          <motion.aside
+            className="panel"
+            initial={{opacity: 0, y: 20}}
+            animate={{opacity: 1, y: 0}}
+            transition={{duration: 0.55, delay: 0.1}}
+          >
+            <p className="section-kicker">Live infrastructure</p>
+            <h2 className="mt-3 text-2xl font-semibold text-white">Agent finance, not another wallet dashboard.</h2>
+            <div className="mt-6 grid gap-3">
+              {infra.map(([label, value, Icon]) => {
+                const ItemIcon = Icon as typeof Network;
+                return (
+                  <div key={label as string} className="surface flex items-center justify-between gap-3 px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <ItemIcon size={17} className="text-orchid" />
+                      <span className="text-sm text-slate-400">{label as string}</span>
+                    </div>
+                    <span className="text-right text-sm font-semibold text-white">{value as string}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-5 text-sm leading-6 text-slate-500">
+              Swap and Save/Earn are Arc-only today. Arbitrum Sepolia and Base Sepolia are wired for core Nexora contract flows.
+            </p>
+          </motion.aside>
         </section>
 
-        <Reveal className="mx-auto max-w-[1500px] px-4 pb-4 pt-2 md:px-6">
-          <a
-            href="/app"
-            onClick={(event) => navigate(event, "/app")}
-            className="group relative block overflow-hidden rounded-2xl border border-white/[0.1] bg-white/[0.02] shadow-[0_24px_80px_rgba(0,0,0,0.45)] transition-all duration-300 hover:-translate-y-0.5 hover:border-plasma/40 hover:shadow-[0_28px_90px_rgba(155,92,246,0.22)]"
-          >
-            <div className="pointer-events-none absolute -inset-px z-10 rounded-2xl bg-[radial-gradient(circle_at_50%_0%,rgba(155,92,246,0.16),transparent_62%)] opacity-70 transition-opacity duration-300 group-hover:opacity-100" />
-            <img
-              src="/nexora-banner.png"
-              alt="Nexora — agent wallets, x402 payments, escrow, swap, and Save/Earn vaults on Arc"
-              loading="lazy"
-              decoding="async"
-              className="relative w-full object-cover transition-transform duration-500 group-hover:scale-[1.015]"
-            />
-          </a>
+        <Reveal id="platform" className="mx-auto max-w-[1440px] px-4 py-10 md:px-6">
+          <div className="mb-8 max-w-3xl">
+            <p className="section-kicker">What Nexora does</p>
+            <h2 className="page-title">A control plane for agent payments and USDC services.</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {capabilities.map((item) => {
+              const Icon = item.icon;
+              return (
+                <article key={item.title} className="panel">
+                  <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-orchid">
+                    <Icon size={20} />
+                  </div>
+                  <h3 className="text-lg font-semibold text-white">{item.title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-slate-400">{item.copy}</p>
+                </article>
+              );
+            })}
+          </div>
         </Reveal>
 
-        <section id="ecosystem" className="mx-auto max-w-[1500px] px-4 py-6 md:px-6">
-          <Reveal className="panel p-5">
-            <p className="mb-4 text-xs uppercase tracking-[0.18em] text-plasma">Trusted infrastructure</p>
-            <div className="grid gap-3 md:grid-cols-5">
-              {infrastructure.map(([Icon, title, subtitle], index) => {
-                const InfraIcon = Icon as typeof CircleDollarSign;
-                return (
-                  <motion.div
-                    key={String(title)}
-                    className="surface flex items-center gap-3 p-4"
-                    variants={reveal}
-                    initial="hidden"
-                    whileInView="visible"
-                    viewport={{once: true, margin: "-60px"}}
-                    transition={{duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: index * 0.07}}
-                  >
-                    <div className="grid h-11 w-11 place-items-center rounded-full border border-plasma/30 bg-plasma/10 text-plasma">
-                      <InfraIcon size={20} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-white">{String(title)}</p>
-                      <p className="text-xs text-slate-500">{String(subtitle)}</p>
-                    </div>
-                  </motion.div>
-                );
-              })}
+        <Reveal id="developers" className="mx-auto grid max-w-[1440px] gap-5 px-4 py-10 md:px-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="panel">
+            <p className="section-kicker">For developers</p>
+            <h2 className="mt-3 text-3xl font-semibold text-white">Monetize API routes with x402.</h2>
+            <p className="muted-copy mt-4">
+              Use the Nexora SDK to return payment requirements, verify signed payment headers, settle USDC payments, and serve paid responses.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <a href="/docs/api" onClick={(event) => navigate(event, "/docs/api")} className="action-button">SDK Docs</a>
+              <a href="/x402/playground" onClick={(event) => navigate(event, "/x402/playground")} className="secondary-button">x402 Playground</a>
             </div>
-          </Reveal>
-        </section>
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-white/[0.1] bg-[#050813]">
+            <div className="flex items-center gap-2 border-b border-white/[0.08] px-5 py-3 text-sm text-slate-400">
+              <Code2 size={16} />
+              Install and protect a route
+            </div>
+            <pre className="overflow-x-auto p-5 text-[13px] leading-6 text-slate-200"><code>{`npm install @nexorafi/x402
 
-        <section id="features" className="mx-auto grid max-w-[1500px] gap-5 px-4 py-10 md:px-6 lg:grid-cols-[1fr_0.9fr_0.65fr]">
-          <Reveal className="panel">
-            <p className="section-kicker">The Nexora platform</p>
-            <h2 className="mt-3 text-3xl font-semibold uppercase text-white">
-              Everything agents need to automate, earn, and transact.
-            </h2>
-            <p className="muted-copy mt-3">A production-focused stack for the autonomous stablecoin economy.</p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              {platformFeatures.map(([title, description, Icon]) => {
-                const FeatureIcon = Icon as typeof Bot;
-                return (
-                  <article key={String(title)} className="surface group p-4 transition-all duration-300 hover:-translate-y-1 hover:border-plasma/30">
-                    <div className="mb-4 grid h-11 w-11 place-items-center rounded-full border border-plasma/30 bg-plasma/10 text-plasma transition-all duration-300 group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(155,92,246,0.3)]">
-                      <FeatureIcon size={19} />
-                    </div>
-                    <h3 className="text-sm font-semibold uppercase tracking-normal text-white">{String(title)}</h3>
-                    <p className="mt-2 text-xs leading-5 text-slate-400">{String(description)}</p>
-                    <a href="/app" onClick={(event) => navigate(event, "/app")} className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-plasma transition-all duration-200 group-hover:gap-2">
-                      Learn more <ArrowRight size={13} />
-                    </a>
-                  </article>
-                );
-              })}
-            </div>
-          </Reveal>
+import { nexoraX402 } from "@nexorafi/x402";
 
-          <Reveal id="developers" className="panel p-0" delay={0.1}>
-            <div className="border-b border-white/[0.08] p-5">
-              <div className="flex items-center gap-2">
-                <div className="h-4 w-4 rounded bg-gradient-to-br from-plasma to-cyan" />
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white">Nexora Console</p>
-              </div>
-            </div>
-            <div className="grid min-h-[430px] grid-cols-[120px_1fr]">
-              <aside className="border-r border-white/[0.08] p-4">
-                {["Dashboard", "Wallets", "Earn", "Payments", "Agents"].map((item, index) => (
-                  <div key={item} className={index === 0 ? "mb-2 rounded-md bg-plasma/15 px-3 py-2 text-xs text-white" : "mb-2 px-3 py-2 text-xs text-slate-500"}>
-                    {item}
-                  </div>
-                ))}
-              </aside>
-              <div className="p-5">
-                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Overview</p>
-                <p className="mt-3 text-3xl font-semibold text-white">{(snapshot.data?.stats.usdcSettled ?? 0).toFixed(2)} <span className="text-sm text-slate-400">USDC</span></p>
-                <div className="mt-5 h-28 rounded-lg border border-white/[0.08] bg-[linear-gradient(135deg,rgba(168,85,247,0.16),rgba(6,182,212,0.05))]" />
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="surface p-4">
-                    <p className="text-sm text-slate-400">Active agents</p>
-                    <p className="mt-1 text-2xl font-semibold text-white">{snapshot.data?.stats.agentWallets ?? 0}</p>
-                    <p className="mt-1 text-xs text-mint">All systems operational</p>
-                  </div>
-                  <div className="surface p-4">
-                    <p className="text-sm text-slate-400">Pending payments</p>
-                    <p className="mt-1 text-2xl font-semibold text-white">{snapshot.data?.payments.filter((payment) => payment.status === "authorized").length ?? 0}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {(snapshot.data?.payments.filter((payment) => payment.status === "authorized").reduce((sum, payment) => sum + payment.amountUsdc, 0) ?? 0).toFixed(2)} USDC total
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Reveal>
+app.get("/paid-report",
+  nexoraX402({
+    facilitatorUrl: "https://nexorafibackend.vercel.app",
+    payTo: "0xYourPublisherWallet",
+    asset: "0x3600000000000000000000000000000000000000",
+    price: "0.05",
+    network: "arc-testnet"
+  }),
+  (_req, res) => res.json({ ok: true })
+);`}</code></pre>
+          </div>
+        </Reveal>
 
-          <Reveal id="about" className="space-y-5" delay={0.15}>
-            <div className="panel">
-              <p className="section-kicker">Autonomy. Intelligence. Infrastructure.</p>
-              <h2 className="mt-3 text-3xl font-semibold text-white">Powering the agentic economy</h2>
-              <p className="muted-copy mt-4">
-                Nexora combines AI automation, stablecoin rails, and on-chain infrastructure to create a new economy where agents and humans can collaborate, transact, and grow. Its operating motto is simple: the financial control layer for AI agents.
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-              {stats.map(([value, label]) => (
-                <div key={label} className="surface p-5 transition-all duration-300 hover:-translate-y-1 hover:border-plasma/30">
-                  <p className="text-3xl font-semibold text-plasma">{value}</p>
-                  <p className="mt-2 text-sm text-slate-400">{label}</p>
+        <Reveal id="users" className="mx-auto grid max-w-[1440px] gap-5 px-4 py-10 md:px-6 lg:grid-cols-[1fr_0.9fr]">
+          <div className="panel">
+            <p className="section-kicker">For users</p>
+            <h2 className="mt-3 text-3xl font-semibold text-white">A safer way to let agents spend USDC.</h2>
+            <div className="mt-6 grid gap-3">
+              {userSteps.map((step, index) => (
+                <div key={step} className="surface flex items-center gap-4 px-4 py-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-mint/25 bg-mint/10 text-sm font-semibold text-mint">{index + 1}</span>
+                  <span className="font-medium text-white">{step}</span>
                 </div>
               ))}
             </div>
-          </Reveal>
-        </section>
+          </div>
+          <div className="panel">
+            <p className="section-kicker">Public surfaces</p>
+            <div className="mt-5 grid gap-3">
+              <SurfaceLink href="/marketplace" icon={<Store size={18} />} title="Marketplace" copy="Discover and buy paid APIs." />
+              <SurfaceLink href="/builders" icon={<Bot size={18} />} title="Builder directory" copy="View builders and published services." />
+              <SurfaceLink href="/revenue" icon={<Landmark size={18} />} title="Revenue proof" copy="Separate treasury fees from gross volume." />
+            </div>
+          </div>
+        </Reveal>
 
-        <section id="docs" className="mx-auto max-w-[1500px] px-4 py-12 md:px-6">
-          <Reveal className="panel flex flex-col items-start justify-between gap-5 md:flex-row md:items-center">
+        <Reveal id="security" className="mx-auto max-w-[1440px] px-4 py-10 md:px-6">
+          <div className="panel grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
             <div>
-              <p className="section-kicker">Start with Nexora</p>
-              <h2 className="page-title">Create an agent wallet and manage autonomous USDC workflows.</h2>
-              <p className="muted-copy mt-3 max-w-2xl">
-                Connect your wallet to create agent policies, publish or buy paid APIs, track payments, and save USDC through the Earn flow.
+              <p className="section-kicker">Security and limits</p>
+              <h2 className="mt-3 text-3xl font-semibold text-white">Built for explicit controls before mainnet.</h2>
+              <p className="muted-copy mt-4">
+                Nexora keeps policy limits, fee routing, and network support visible so users can understand what is live and what is still testnet-only.
               </p>
             </div>
-            <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button min-h-12 px-6">
-              Open console
-              <ArrowRight size={17} />
-            </a>
-          </Reveal>
-        </section>
+            <div className="grid gap-3 md:grid-cols-2">
+              {[
+                "Arc Testnet is the primary deployment.",
+                "Swap and Save/Earn currently work only on Arc.",
+                "Treasury wallet balance is the source of truth for collected USDC.",
+                "Contracts are upgradeable; app env should use proxy addresses.",
+                "Agent policies use caps and allowlists before autonomous spending.",
+                "x402 SDK payments include signature and replay checks."
+              ].map((item) => (
+                <div key={item} className="surface px-4 py-3 text-sm leading-6 text-slate-300">{item}</div>
+              ))}
+            </div>
+          </div>
+        </Reveal>
+
+        <Reveal className="mx-auto max-w-[1440px] px-4 py-14 md:px-6">
+          <div className="panel flex flex-col items-start justify-between gap-5 md:flex-row md:items-center">
+            <div>
+              <p className="section-kicker">Build with Nexora</p>
+              <h2 className="page-title">Start with an agent wallet or integrate the x402 SDK.</h2>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button">Open Console</a>
+              <a href="/docs/api" onClick={(event) => navigate(event, "/docs/api")} className="secondary-button">Read Docs</a>
+            </div>
+          </div>
+        </Reveal>
       </main>
     </div>
+  );
+}
+
+function Metric({value, label}: {value: string; label: string}) {
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.035] px-4 py-3 backdrop-blur-sm">
+      <p className="text-2xl font-semibold text-white">{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{label}</p>
+    </div>
+  );
+}
+
+function SurfaceLink({href, icon, title, copy}: {href: string; icon: React.ReactNode; title: string; copy: string}) {
+  return (
+    <a href={href} onClick={(event) => navigate(event, href)} className="surface flex items-center gap-4 px-4 py-3 transition hover:border-plasma/30">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-orchid">
+        {icon}
+      </div>
+      <div>
+        <p className="font-semibold text-white">{title}</p>
+        <p className="mt-1 text-sm text-slate-400">{copy}</p>
+      </div>
+    </a>
   );
 }
