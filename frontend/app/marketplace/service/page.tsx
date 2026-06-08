@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react";
-import {ArrowLeft, ExternalLink, ShieldCheck, Sparkles} from "lucide-react";
+import {ArrowLeft, Code2, ExternalLink, ShieldCheck, Sparkles} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
 import {apiGet} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
@@ -67,6 +67,17 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
                 {service.manifest.outputSchema.map((item) => <span key={item} className="status-pill">{item}</span>)}
               </div>
             </div>
+
+            <div className="mt-6">
+              <div className="flex items-center gap-2 text-sm font-medium text-white">
+                <Code2 size={16} className="text-orchid" />
+                API integration
+              </div>
+              <p className="mt-3 text-sm leading-6 text-slate-400">
+                Builders can protect a compatible endpoint with the Nexora x402 SDK and use this service manifest as the paid route definition.
+              </p>
+              <CodeBlock code={serviceSnippet(service)} />
+            </div>
           </div>
 
           <aside className="space-y-5">
@@ -99,6 +110,15 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
                 View publish transaction <ExternalLink size={15} />
               </a>
             ) : null}
+
+            <div className="panel">
+              <p className="section-kicker">Payment config</p>
+              <div className="mt-4 grid gap-2">
+                <Info label="Network" value="Arc Testnet" />
+                <Info label="Asset" value="USDC" />
+                <Info label="Endpoint hash" value={service.endpointHash} />
+              </div>
+            </div>
           </aside>
         </section>
       ) : null}
@@ -117,4 +137,39 @@ function Info({label, value}: {label: string; value: string}) {
 
 function formatKind(kind: string) {
   return kind.replaceAll("_", " ");
+}
+
+function serviceSnippet(service: Service) {
+  const inputExample = service.manifest.inputSchema[0]?.name ?? "input";
+  return `import { nexoraX402 } from "@nexorafi/x402";
+
+app.post(
+  "/api/${service.endpointHash}",
+  nexoraX402({
+    facilitatorUrl: "https://nexorafibackend.vercel.app",
+    payTo: "${service.publisherAddress}",
+    asset: "0x3600000000000000000000000000000000000000",
+    price: "${service.pricePerUnitUsdc}",
+    network: "arc-testnet",
+    resource: "${service.endpointHash}",
+    description: "${escapeSnippet(service.name)}"
+  }),
+  async (req, res) => {
+    const ${inputExample} = req.body.${inputExample};
+    res.json({ ok: true, ${inputExample} });
+  }
+);`;
+}
+
+function escapeSnippet(value: string) {
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function CodeBlock({code}: {code: string}) {
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-white/[0.1] bg-[#050813]">
+      <div className="border-b border-white/[0.08] px-4 py-2 text-xs text-slate-500">SDK example</div>
+      <pre className="overflow-x-auto p-4 text-[13px] leading-6 text-slate-200"><code>{code}</code></pre>
+    </div>
+  );
 }

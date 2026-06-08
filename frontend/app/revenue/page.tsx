@@ -6,9 +6,17 @@ import {arcTestnet, shortAddress} from "@/lib/arc";
 
 type RevenueDashboard = {
   treasury?: string;
+  treasuryBalance?: {
+    available: boolean;
+    balanceUsdc: number;
+    asset: string;
+    treasury: string;
+    updatedAt: string;
+  };
   summary: {
     totalPlatformRevenueUsdc: number;
     marketplaceGrossUsdc: number;
+    facilitatorVolumeUsdc?: number;
     marketplaceFeesUsdc: number;
     escrowFeesUsdc: number;
     subscriptionRevenueUsdc: number;
@@ -18,7 +26,7 @@ type RevenueDashboard = {
     activeAgents: number;
     policySaves: number;
   };
-  bySource: Array<{source: string; revenueUsdc: number; count: number}>;
+  bySource: Array<{source: string; revenueUsdc: number; amountUsdc?: number; kind?: "revenue" | "volume"; count: number}>;
   feeReceipts: Array<{
     id: string;
     source: string;
@@ -58,9 +66,9 @@ export default function RevenuePage() {
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <RevenueMetric icon={<Landmark size={18} />} label="Treasury fees" value={usd(summary?.totalPlatformRevenueUsdc)} detail="collected fee revenue" />
+        <RevenueMetric icon={<WalletCards size={18} />} label="Treasury balance" value={dashboard?.treasuryBalance?.available ? usd(dashboard.treasuryBalance.balanceUsdc) : "Unavailable"} detail="on-chain USDC balance" />
         <RevenueMetric icon={<ReceiptText size={18} />} label="Marketplace fees" value={usd(summary?.marketplaceFeesUsdc)} detail={`${summary?.settledPayments ?? 0} settled payments`} />
         <RevenueMetric icon={<ShieldCheck size={18} />} label="Escrow fees" value={usd(summary?.escrowFeesUsdc)} detail="released work agreements" />
-        <RevenueMetric icon={<WalletCards size={18} />} label="Marketplace volume" value={usd(summary?.marketplaceGrossUsdc)} detail={`${summary?.activeAgents ?? 0} active agents`} />
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
@@ -76,14 +84,27 @@ export default function RevenuePage() {
             <p className="text-sm text-slate-400">Configured treasury</p>
             <p className="mt-2 break-all font-mono text-base text-white">{dashboard?.treasury || "Treasury address not configured"}</p>
             <p className="mt-3 text-xs leading-5 text-slate-500">
-              This dashboard reports app-recorded collected fees. The treasury wallet balance is the source of truth for on-chain USDC actually received.
+              This dashboard separates app-recorded fees from gross volume. The on-chain treasury balance is the source of truth for USDC actually received.
             </p>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="surface px-4 py-3">
+              <p className="text-xs text-slate-500">Marketplace volume</p>
+              <p className="mt-2 text-lg font-semibold text-white">{usd(summary?.marketplaceGrossUsdc)}</p>
+            </div>
+            <div className="surface px-4 py-3">
+              <p className="text-xs text-slate-500">Facilitator volume</p>
+              <p className="mt-2 text-lg font-semibold text-white">{usd(summary?.facilitatorVolumeUsdc)}</p>
+            </div>
           </div>
           <div className="mt-4 grid gap-3">
             {(dashboard?.bySource ?? []).map((source) => (
               <div key={source.source} className="surface flex items-center justify-between gap-3 px-4 py-3 text-sm">
                 <span className="text-slate-300">{source.source}</span>
-                <span className="text-right text-white">{usd(source.revenueUsdc)} <span className="text-slate-500">· {source.count}</span></span>
+                <span className="text-right text-white">
+                  {usd(source.kind === "volume" ? source.amountUsdc : source.revenueUsdc)}
+                  <span className="text-slate-500"> · {source.kind === "volume" ? "volume" : "fees"} · {source.count}</span>
+                </span>
               </div>
             ))}
           </div>

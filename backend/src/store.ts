@@ -121,6 +121,21 @@ export type NotificationRecord = {
   createdAt: string;
 };
 
+export type FacilitatorEventRecord = {
+  id: string;
+  kind: "verify" | "settle";
+  status: "success" | "failed";
+  payer?: string | null;
+  payTo?: string | null;
+  network?: string | null;
+  asset?: string | null;
+  amountUsdc?: number;
+  requestHash?: string | null;
+  txHash?: string | null;
+  reason?: string | null;
+  createdAt: string;
+};
+
 type StoreShape = {
   agents: AgentWalletRecord[];
   services: ServiceRecord[];
@@ -129,6 +144,7 @@ type StoreShape = {
   subscriptions: SubscriptionRecord[];
   escrows: EscrowRecord[];
   notifications: NotificationRecord[];
+  facilitatorEvents: FacilitatorEventRecord[];
 };
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
@@ -171,13 +187,13 @@ export async function assertStoreReady() {
 export function storageFriendlyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (/ENOTFOUND|getaddrinfo/i.test(message)) {
-    return "Nexora database is unreachable. Check DATABASE_URL in the backend environment; the database host cannot be resolved.";
+    return "Nexora data service is temporarily unreachable. Please try again shortly.";
   }
   if (/ECONNREFUSED|timeout|ETIMEDOUT|ECONNRESET/i.test(message)) {
-    return "Nexora database connection failed. Check DATABASE_URL, database availability, and network access from the backend.";
+    return "Nexora data service is temporarily unavailable. Please try again shortly.";
   }
   if (/password authentication failed|28P01/i.test(message)) {
-    return "Nexora database authentication failed. Check the username and password in DATABASE_URL.";
+    return "Nexora data service is unavailable. The team has been notified.";
   }
   return message;
 }
@@ -266,12 +282,14 @@ function emptyStore(): StoreShape {
     earnActivations: [],
     subscriptions: [],
     escrows: [],
-    notifications: []
+    notifications: [],
+    facilitatorEvents: []
   };
 }
 
 function normalizeStore(value: unknown): StoreShape {
   const store = {...emptyStore(), ...(value && typeof value === "object" ? value : {})} as StoreShape;
+  store.facilitatorEvents = Array.isArray(store.facilitatorEvents) ? store.facilitatorEvents : [];
   store.services = store.services.map((service) => ({
     ...service,
     manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash)

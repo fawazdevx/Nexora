@@ -19,7 +19,9 @@ import {
 } from "@/lib/contracts";
 
 const tokens = Object.keys(xylonetSwapTokens) as XyloNetSwapToken[];
-const routeVenues = ["XyloNet", "Synthra", "UnitFlow"] as const;
+const routeVenues = ["XyloNet", "Synthra"] as const;
+const swapFeeBps = Number(import.meta.env.VITE_SWAP_FEE_BPS ?? "0");
+const swapFeeRecipient = import.meta.env.VITE_SWAP_FEE_RECIPIENT ?? "";
 
 type RoutePreview = {
   venue: typeof routeVenues[number];
@@ -58,6 +60,8 @@ export default function SwapPage() {
     return formatUnits(minRaw, xylonetSwapTokens[quote.tokenOut].decimals);
   }, [quote, slippageBps]);
   const balanceNumber = Number(balance?.formatted ?? "0");
+  const feeEnabled = Number.isFinite(swapFeeBps) && swapFeeBps > 0 && Boolean(swapFeeRecipient);
+  const feeAmount = feeEnabled && Number.isFinite(amountNumber) ? amountNumber * swapFeeBps / 10_000 : 0;
 
   function resetQuote() {
     setQuote(null);
@@ -162,8 +166,7 @@ export default function SwapPage() {
       setQuote(best);
       setRoutes([
         routePreviewFor("XyloNet", liveQuotes, settled[0]),
-        routePreviewFor("Synthra", liveQuotes, settled[1]),
-        {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
+        routePreviewFor("Synthra", liveQuotes, settled[1])
       ]);
     } catch (error) {
       if (requestId !== quoteRequestId.current) return;
@@ -171,8 +174,7 @@ export default function SwapPage() {
       setQuote(null);
       setRoutes([
         {venue: "XyloNet", status: "unavailable", message: "No live route for this pair."},
-        {venue: "Synthra", status: "unavailable", message: "No live route for this pair."},
-        {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
+        {venue: "Synthra", status: "unavailable", message: "No live route for this pair."}
       ]);
       setStatus(message);
     } finally {
@@ -303,6 +305,15 @@ export default function SwapPage() {
                 <span className="font-semibold text-slate-300">Price impact</span>
                 <span className="font-bold text-white">Protected by slippage</span>
               </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="font-semibold text-slate-300">Nexora swap fee</span>
+                <span className="font-bold text-white">{feeEnabled ? `${feeAmount.toFixed(6)} ${tokenIn}` : "0.00 USDC"}</span>
+              </div>
+              {!feeEnabled ? (
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  Swap fee capture is disabled until a verified router fee path is configured.
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -340,7 +351,7 @@ export default function SwapPage() {
           </div>
 
           <div className="grid gap-3">
-            {routes.filter((route) => route.status !== "unavailable" || route.venue === "UnitFlow").map((route) => (
+            {routes.filter((route) => route.status !== "unavailable").map((route) => (
               <div key={route.venue} className="surface p-5 transition-all duration-200 hover:scale-[1.01]">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -413,7 +424,7 @@ function RouteStatus({status}: {status: RoutePreview["status"]}) {
   const labels = {
     best: "Best",
     available: "Live",
-    unavailable: "Pending",
+    unavailable: "No route",
     error: "Error"
   };
   const colors = {
@@ -428,16 +439,14 @@ function RouteStatus({status}: {status: RoutePreview["status"]}) {
 function defaultRoutes(): RoutePreview[] {
   return [
     {venue: "XyloNet", status: "available", message: "Live quotes for verified USDC to EURC/USYC pools."},
-    {venue: "Synthra", status: "available", message: "Live quotes for verified USDC to EURC pools."},
-    {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
+    {venue: "Synthra", status: "available", message: "Live quotes for verified USDC to EURC pools."}
   ];
 }
 
 function unavailableRoutes(message: string): RoutePreview[] {
   return [
     {venue: "XyloNet", status: "unavailable", message},
-    {venue: "Synthra", status: "unavailable", message: "Pending verified quote integration."},
-    {venue: "UnitFlow", status: "unavailable", message: "Pending universal-router quote integration."}
+    {venue: "Synthra", status: "unavailable", message: "No live route for this pair."}
   ];
 }
 

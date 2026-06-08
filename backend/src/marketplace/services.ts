@@ -496,7 +496,7 @@ async function analyzeXAccount(handle: string) {
   if (!config.integrations.xBearerToken) {
     return {
       status: "not_configured",
-      message: "Set X_BEARER_TOKEN in the backend environment to fetch real X account data."
+      message: "Live X account analysis is not available yet. Try another service or check back later."
     };
   }
 

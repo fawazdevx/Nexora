@@ -71,22 +71,27 @@ export async function verifyFacilitatorPayment(input: FacilitatorInput) {
   const parsed = parseFacilitatorInput(input);
   const duplicate = await isRequestSettled(parsed.requestHash);
   if (duplicate) {
-    return {
+    const result = {
       isValid: false,
       invalidReason: "payment authorization has already been settled",
       payer: parsed.authorization.from
     };
+    await recordFacilitatorEvent(parsed, "verify", "failed", {reason: result.invalidReason});
+    return result;
   }
 
   const signatureValid = await verifyPaymentSignature(parsed);
   if (!signatureValid) {
-    return {
+    const result = {
       isValid: false,
       invalidReason: "invalid payment signature",
       payer: parsed.authorization.from
     };
+    await recordFacilitatorEvent(parsed, "verify", "failed", {reason: result.invalidReason});
+    return result;
   }
 
+  await recordFacilitatorEvent(parsed, "verify", "success");
   return {
     isValid: true,
     payer: parsed.authorization.from,
@@ -99,10 +104,10 @@ export async function verifyFacilitatorPayment(input: FacilitatorInput) {
 
 export async function settleFacilitatorPayment(input: FacilitatorInput) {
   const verification = await verifyFacilitatorPayment(input);
-  if (!verification.isValid) {
+  if (verification.isValid !== true) {
     return {
       success: false,
-      errorReason: verification.invalidReason,
+      errorReason: "invalidReason" in verification ? verification.invalidReason : "payment verification failed",
       payer: verification.payer
     };
   }
@@ -112,7 +117,7 @@ export async function settleFacilitatorPayment(input: FacilitatorInput) {
   if (!config.facilitator.privateKey) {
     return {
       success: false,
-      errorReason: "FACILITATOR_PRIVATE_KEY is required for server-side x402 settlement",
+      errorReason: "Nexora facilitator settlement is temporarily unavailable.",
       payer: parsed.authorization.from
     };
   }
@@ -147,6 +152,7 @@ export async function settleFacilitatorPayment(input: FacilitatorInput) {
   });
   const receipt = await publicClient.waitForTransactionReceipt({hash});
   await recordExternalSettlement(parsed, hash);
+  await recordFacilitatorEvent(parsed, "settle", receipt.status === "success" ? "success" : "failed", {txHash: hash});
 
   return {
     success: receipt.status === "success",
@@ -157,6 +163,34 @@ export async function settleFacilitatorPayment(input: FacilitatorInput) {
     amount: parsed.authorization.value,
     asset: parsed.requirements.asset
   };
+}
+
+async function recordFacilitatorEvent(
+  input: ReturnType<typeof parseFacilitatorInput>,
+  kind: "verify" | "settle",
+  status: "success" | "failed",
+  extra: {reason?: string | null; txHash?: string | null} = {}
+) {
+  const amountUsdc = Number(input.authorization.value) / 1_000_000;
+  await updateStore((store) => {
+    store.facilitatorEvents.push({
+      id: crypto.randomUUID(),
+      kind,
+      status,
+      payer: input.authorization.from,
+      payTo: input.authorization.to,
+      network: input.requirements.network,
+      asset: input.requirements.asset,
+      amountUsdc,
+      requestHash: input.requestHash,
+      txHash: extra.txHash ?? null,
+      reason: extra.reason ?? null,
+      createdAt: new Date().toISOString()
+    });
+    if (store.facilitatorEvents.length > 500) {
+      store.facilitatorEvents = store.facilitatorEvents.slice(-500);
+    }
+  });
 }
 
 function parseFacilitatorInput(input: FacilitatorInput) {

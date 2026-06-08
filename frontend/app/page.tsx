@@ -145,7 +145,7 @@ export default function HomePage() {
       <section className="grid gap-4 md:grid-cols-3">
         {[
           {title: "Agent wallets", copy: pendingAgents > 0 ? `${pendingAgents} waiting for Circle wallet address.` : "Create and review Circle-backed agent wallets.", href: "/agents", icon: WalletCards},
-          {title: "Market", copy: services.length > 0 ? `${services.length} service${services.length === 1 ? "" : "s"} available.` : "Publish paid APIs or test service payments.", href: "/marketplace", icon: Store},
+          {title: "Market", copy: services.length > 0 ? `${services.length} service${services.length === 1 ? "" : "s"} available.` : "Publish paid APIs or run a marketplace purchase.", href: "/marketplace", icon: Store},
           {title: "Spending rules", copy: agents.length > 0 ? "Set limits and approved destinations for your agent." : "Create an agent before saving rules.", href: "/settings/policies", icon: ShieldCheck}
         ].map((item) => {
           const Icon = item.icon;
@@ -174,7 +174,7 @@ export default function HomePage() {
               ["Create agent", agents.length > 0],
               ["Circle wallet address", readyAgents > 0],
               ["Save spending rules", agents.some((agent) => agent.policy.contractAllowlist.length + agent.policy.recipientAllowlist.length > 0 || agent.policy.txHash)],
-              ["Publish or test a service", services.length > 0]
+              ["Publish or buy a service", services.length > 0]
             ].map(([label, complete]) => (
               <div key={String(label)} className="surface flex items-center justify-between px-4 py-3.5 text-sm transition-all duration-200 hover:scale-[1.01]">
                 <span className="font-medium text-slate-300">{String(label)}</span>
@@ -199,7 +199,7 @@ export default function HomePage() {
               </div>
             </div>
           ) : (
-            <p className="surface p-5 text-sm font-medium text-slate-400">No payment activity yet. Publish or test a marketplace service to create the first receipt.</p>
+            <p className="surface p-5 text-sm font-medium text-slate-400">No payment activity yet. Publish or buy a marketplace service to create the first receipt.</p>
           )}
         </div>
       </section>

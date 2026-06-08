@@ -102,7 +102,7 @@ export default function DeploymentDashboardPage() {
           <section className="panel">
             <p className="text-sm text-slate-400">Treasury destination</p>
             <h2 className="mt-1 text-xl font-semibold text-white">Fee routing</h2>
-            <p className="mt-4 break-all font-mono text-sm text-white">{dashboard?.treasury.address || "TREASURY_ADDRESS is not configured"}</p>
+            <p className="mt-4 break-all font-mono text-sm text-white">{dashboard?.treasury.address || "Treasury address unavailable"}</p>
             <div className="mt-4 grid gap-2 text-sm">
               <FeeRow label="Marketplace" value={dashboard?.treasury.marketplaceFeesUsdc} />
               <FeeRow label="Escrow" value={dashboard?.treasury.escrowFeesUsdc} />
@@ -144,7 +144,7 @@ function ContractRow({label, address, explorerUrl}: {label: string; address: str
     <div className="surface flex items-center justify-between gap-3 px-4 py-3 text-sm">
       <div className="min-w-0">
         <p className="text-slate-400">{label}</p>
-        <p className={address ? "mt-1 font-mono text-white" : "mt-1 text-slate-500"}>{address ? shortAddress(address) : "Not configured"}</p>
+            <p className={address ? "mt-1 font-mono text-white" : "mt-1 text-slate-500"}>{address ? shortAddress(address) : "Unavailable"}</p>
       </div>
       {address ? <a href={`${explorerUrl}/address/${address}`} target="_blank" rel="noreferrer" className="text-sky hover:text-white" aria-label={`View ${label}`}><ExternalLink size={15} /></a> : null}
     </div>

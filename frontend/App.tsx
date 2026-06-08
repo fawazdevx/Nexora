@@ -7,6 +7,9 @@ import SwapPage from "@/app/swap/page";
 import MarketplacePage from "@/app/marketplace/page";
 import NewMarketplaceServicePage from "@/app/marketplace/new/page";
 import MarketplaceServicePage from "@/app/marketplace/service/page";
+import ApiDocsPage from "@/app/docs/api/page";
+import BuildersPage from "@/app/builders/page";
+import X402PlaygroundPage from "@/app/x402/playground/page";
 import DeveloperDashboardPage from "@/app/developer/page";
 import RevenuePage from "@/app/revenue/page";
 import DeploymentDashboardPage from "@/app/admin/deployments/page";
@@ -26,6 +29,9 @@ const routes: Record<string, React.ComponentType> = {
   "/swap": SwapPage,
   "/marketplace": MarketplacePage,
   "/marketplace/new": NewMarketplaceServicePage,
+  "/builders": BuildersPage,
+  "/docs/api": ApiDocsPage,
+  "/x402/playground": X402PlaygroundPage,
   "/developer": DeveloperDashboardPage,
   "/revenue": RevenuePage,
   "/admin/deployments": DeploymentDashboardPage,

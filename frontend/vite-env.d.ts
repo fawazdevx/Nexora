@@ -50,6 +50,8 @@ interface ImportMetaEnv {
   readonly VITE_NEXORA_X_URL?: string;
   readonly VITE_NEXORA_GITHUB_URL?: string;
   readonly VITE_NEXORA_CONTACT_URL?: string;
+  readonly VITE_SWAP_FEE_BPS?: string;
+  readonly VITE_SWAP_FEE_RECIPIENT?: string;
 }
 
 interface ImportMeta {

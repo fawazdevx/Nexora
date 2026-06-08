@@ -98,7 +98,7 @@ export function PublishServiceForm() {
       setStatus(
         chainResult
           ? `Service #${chainResult.chainServiceId} submitted from ${shortAddress(address)}: ${chainResult.txHash}`
-          : `Service published from ${shortAddress(address)}. It can be tested off-chain until the x402 ledger is configured.`
+          : `Service published from ${shortAddress(address)}. It is saved as a draft until on-chain publishing is available.`
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Publish failed");

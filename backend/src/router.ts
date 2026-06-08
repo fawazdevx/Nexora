@@ -1,4 +1,5 @@
 import {config} from "./config.js";
+import {createPublicClient, formatUnits, http, isAddress, parseAbi} from "viem";
 import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
 import {createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy} from "./circle/agent-wallets.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
@@ -8,6 +9,8 @@ import {integrationReadiness} from "./readiness.js";
 import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
 import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
 import {settleFacilitatorPayment, supportedX402, verifyFacilitatorPayment} from "./x402/protocol-facilitator.js";
+
+const erc20BalanceAbi = parseAbi(["function balanceOf(address account) view returns (uint256)"]);
 
 export type AppRequest = {
   method: string;
@@ -101,6 +104,14 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path === "/api/marketplace/services") {
       return ok({services: await listServices()});
+    }
+
+    if (req.method === "GET" && path === "/api/public/builders") {
+      return ok(await publicBuilderDirectory());
+    }
+
+    if (req.method === "GET" && path === "/api/x402/analytics") {
+      return ok(await facilitatorAnalytics());
     }
 
     if (req.method === "GET" && path.startsWith("/api/marketplace/services/")) {
@@ -435,7 +446,11 @@ async function developerDashboard(address: string) {
 
 async function platformRevenueDashboard() {
   const store = await readStore();
+  const treasuryBalance = await treasuryUsdcBalance();
   const settledPayments = store.payments.filter((payment) => payment.status === "settled");
+  const facilitatorVolume = store.facilitatorEvents
+    .filter((event) => event.kind === "settle" && event.status === "success")
+    .reduce((sum, event) => sum + (event.amountUsdc ?? 0), 0);
   const escrowRevenue = store.escrows
     .filter((escrow) => escrow.status === "released")
     .reduce((sum, escrow) => sum + escrow.platformFeeUsdc, 0);
@@ -477,10 +492,12 @@ async function platformRevenueDashboard() {
 
   return {
     treasury,
+    treasuryBalance,
     feeReceipts: feeReceipts.slice(0, 40),
     summary: {
       totalPlatformRevenueUsdc: roundUsdc(collectedFees),
       marketplaceGrossUsdc: roundUsdc(marketplaceGross),
+      facilitatorVolumeUsdc: roundUsdc(facilitatorVolume),
       marketplaceFeesUsdc: roundUsdc(marketplaceFees),
       escrowFeesUsdc: roundUsdc(escrowRevenue),
       subscriptionRevenueUsdc: roundUsdc(collectedSubscriptions),
@@ -491,14 +508,107 @@ async function platformRevenueDashboard() {
       policySaves
     },
     bySource: [
-      {source: "x402 marketplace", revenueUsdc: roundUsdc(marketplaceFees), count: settledPayments.length},
-      {source: "escrow", revenueUsdc: roundUsdc(escrowRevenue), count: store.escrows.filter((escrow) => escrow.status === "released").length},
-      {source: "active plans", revenueUsdc: roundUsdc(collectedSubscriptions), count: store.subscriptions.filter((subscription) => subscription.status === "active").length},
-      {source: "booked plan volume", revenueUsdc: roundUsdc(bookedSubscriptions), count: store.subscriptions.length},
-      {source: "Save/Earn", revenueUsdc: 0, count: store.earnActivations.length},
-      {source: "Swap", revenueUsdc: 0, count: 0}
+      {source: "x402 marketplace fees", revenueUsdc: roundUsdc(marketplaceFees), amountUsdc: roundUsdc(marketplaceFees), kind: "revenue", count: settledPayments.length},
+      {source: "escrow fees", revenueUsdc: roundUsdc(escrowRevenue), amountUsdc: roundUsdc(escrowRevenue), kind: "revenue", count: store.escrows.filter((escrow) => escrow.status === "released").length},
+      {source: "active plan revenue", revenueUsdc: roundUsdc(collectedSubscriptions), amountUsdc: roundUsdc(collectedSubscriptions), kind: "revenue", count: store.subscriptions.filter((subscription) => subscription.status === "active").length},
+      {source: "booked plan volume", revenueUsdc: 0, amountUsdc: roundUsdc(bookedSubscriptions), kind: "volume", count: store.subscriptions.length},
+      {source: "x402 facilitator volume", revenueUsdc: 0, amountUsdc: roundUsdc(facilitatorVolume), kind: "volume", count: store.facilitatorEvents.filter((event) => event.kind === "settle" && event.status === "success").length},
+      {source: "Save/Earn fees", revenueUsdc: 0, amountUsdc: 0, kind: "revenue", count: store.earnActivations.length},
+      {source: "Swap fees", revenueUsdc: 0, amountUsdc: 0, kind: "revenue", count: 0}
     ]
   };
+}
+
+async function treasuryUsdcBalance() {
+  if (!isAddress(config.contracts.treasury) || !isAddress(config.contracts.usdc)) {
+    return {
+      available: false,
+      balanceUsdc: 0,
+      asset: config.contracts.usdc,
+      treasury: config.contracts.treasury,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  try {
+    const publicClient = createPublicClient({
+      transport: http(config.arc.rpcUrl),
+      chain: {
+        id: config.arc.chainId,
+        name: "Arc Testnet",
+        nativeCurrency: {name: "USDC", symbol: "USDC", decimals: 18},
+        rpcUrls: {default: {http: [config.arc.rpcUrl]}}
+      }
+    });
+    const raw = await publicClient.readContract({
+      address: config.contracts.usdc as `0x${string}`,
+      abi: erc20BalanceAbi,
+      functionName: "balanceOf",
+      args: [config.contracts.treasury as `0x${string}`]
+    });
+    return {
+      available: true,
+      balanceUsdc: roundUsdc(Number(formatUnits(raw, 6))),
+      asset: config.contracts.usdc,
+      treasury: config.contracts.treasury,
+      updatedAt: new Date().toISOString()
+    };
+  } catch {
+    return {
+      available: false,
+      balanceUsdc: 0,
+      asset: config.contracts.usdc,
+      treasury: config.contracts.treasury,
+      updatedAt: new Date().toISOString()
+    };
+  }
+}
+
+async function facilitatorAnalytics() {
+  const store = await readStore();
+  const events = store.facilitatorEvents;
+  const verifyEvents = events.filter((event) => event.kind === "verify");
+  const settleEvents = events.filter((event) => event.kind === "settle");
+  const successfulSettles = settleEvents.filter((event) => event.status === "success");
+  const activeIntegrators = new Set(successfulSettles.map((event) => event.payTo?.toLowerCase()).filter(Boolean)).size;
+  return {
+    summary: {
+      verifications: verifyEvents.length,
+      settlements: successfulSettles.length,
+      failed: events.filter((event) => event.status === "failed").length,
+      volumeUsdc: roundUsdc(successfulSettles.reduce((sum, event) => sum + (event.amountUsdc ?? 0), 0)),
+      activeIntegrators
+    },
+    recentEvents: events.slice(-40).reverse()
+  };
+}
+
+async function publicBuilderDirectory() {
+  const store = await readStore();
+  const byPublisher = new Map<string, typeof store.services>();
+  for (const service of store.services.filter((item) => item.active)) {
+    const key = service.publisherAddress.toLowerCase();
+    byPublisher.set(key, [...(byPublisher.get(key) ?? []), service]);
+  }
+
+  const builders = [...byPublisher.entries()].map(([address, services]) => {
+    const settled = store.payments.filter((payment) => payment.publisherAddress.toLowerCase() === address && payment.status === "settled");
+    const fees = settled.reduce((sum, payment) => sum + (payment.platformFeeUsdc ?? 0), 0);
+    const gross = settled.reduce((sum, payment) => sum + (payment.grossAmountUsdc ?? payment.amountUsdc), 0);
+    return {
+      address: services[0]?.publisherAddress ?? address,
+      services,
+      serviceCount: services.length,
+      settledPayments: settled.length,
+      grossVolumeUsdc: roundUsdc(gross),
+      platformFeesUsdc: roundUsdc(fees),
+      featured: services.some((service) => service.featured),
+      firstPublishedAt: services.map((service) => service.createdAt).sort()[0] ?? null
+    };
+  });
+
+  builders.sort((a, b) => Number(b.featured) - Number(a.featured) || b.settledPayments - a.settledPayments || b.serviceCount - a.serviceCount);
+  return {builders};
 }
 
 async function deploymentDashboard() {

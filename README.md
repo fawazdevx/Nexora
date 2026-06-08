@@ -1,81 +1,242 @@
 # Nexora
 
-Nexora is a Web3 platform for AI agent commerce, programmable earning infrastructure, and autonomous USDC payments on the Arc ecosystem using Circle products.
+**The financial control layer for AI agents.**
 
-The first contract layer is intentionally upgradeable. Each core module is deployed behind a `NexoraProxy` using an ERC1967 UUPS-style implementation, so future releases can upgrade logic while preserving proxy addresses and state.
+Nexora is an Arc-first, USDC-native infrastructure app for AI agents, developers, and service operators. It combines agent wallets, onchain spending policies, x402 facilitation, paid API publishing, escrow, swap routing, Save/Earn routing, reputation, and treasury tracking in one stack.
 
-## Apps
+Arc is the primary deployment because USDC is native gas on Arc, which makes agent payments and x402 settlement simpler to build and test.
 
-- `contracts/`: Foundry contracts and deployment scripts.
-- `frontend/`: Vite React operator console with RainbowKit wallet connect.
-- `backend/`: Node API/facilitator scaffold.
+## What Nexora Does
+
+- **Agent wallets:** create and manage Circle agent wallets for autonomous USDC activity.
+- **Onchain policies:** configure daily spend limits, transaction caps, contract allowlists, and recipient allowlists.
+- **x402 facilitator:** expose `/x402/supported`, `/x402/verify`, and `/x402/settle` endpoints for external paid APIs.
+- **Paid API marketplace:** publish API/service manifests with per-execution USDC pricing.
+- **USDC settlement:** record and settle paid requests through the Nexora facilitator ledger.
+- **Escrow:** create USDC work agreements with fund, submit, verify, release, and cancel flows.
+- **Save/Earn:** deposit USDC into the Nexora vault and route toward approved Arc strategies.
+- **Swap:** compare Arc liquidity routes for stablecoin swaps.
+- **Reputation and revenue:** track settled payments, service activity, treasury fees, and operator reputation.
+
+> Current network note: Swap and Save/Earn currently work only on Arc. Arbitrum Sepolia and Base Sepolia are secondary test deployments for contract interactions.
 
 ## Repository Layout
 
 ```text
-contracts/
-  src/
-    NexoraPolicyRegistry.sol
-    X402FacilitatorLedger.sol
-    OperatorReputation.sol
-    NexoraYieldRouter.sol
-    NexoraSaveEarnVault.sol
-  script/
-    DeployNexoraUpgradeable.s.sol
-  test/
-frontend/
-  App.tsx
-  index.html
-  vite.config.ts
-backend/
-docs/
-  PLATFORM_BLUEPRINT.md
-  UPGRADEABILITY.md
+contracts/   Foundry smart contracts, tests, deployment scripts, upgrade scripts
+backend/     Node/TypeScript API, x402 facilitator, Circle wallet integration, marketplace execution
+frontend/    Vite/React app, RainbowKit wallet connect, operator console, landing page
+sdk/x402/    Developer SDK and middleware for integrating Nexora x402 payments
 ```
 
-## Build
+## Smart Contracts
 
-```shell
-cd contracts
-forge build
-forge test
+Core contracts:
+
+- `NexoraPolicyRegistry`: agent registration, spending policy, allowlists, facilitator checks.
+- `X402FacilitatorLedger`: paid service publishing and USDC request settlement.
+- `OperatorReputation`: reputation signal storage.
+- `NexoraYieldRouter`: routes Save/Earn deposits to active strategies.
+- `NexoraSaveEarnVault`: user-facing USDC Save/Earn vault.
+- `NexoraEscrow`: USDC work agreement escrow.
+- `NexoraProxy` / `NexoraUpgradeable`: upgradeable proxy pattern.
+
+Integrations should use proxy addresses, not implementation addresses.
+
+## x402 Facilitator
+
+Nexora exposes facilitator endpoints for external APIs:
+
+```text
+GET  /x402/supported
+POST /x402/verify
+POST /x402/settle
 ```
 
-## Upgradeable Deployment Pattern
+The facilitator validates:
 
-Deploy one implementation and one proxy per module:
+- x402 version and scheme
+- supported network and asset
+- payment recipient
+- max amount
+- authorization time window
+- EIP-712 `TransferWithAuthorization` signature
+- replay protection through nonce/request hash tracking
 
-```solidity
-NexoraPolicyRegistry implementation = new NexoraPolicyRegistry();
-NexoraProxy proxy = new NexoraProxy(
-    address(implementation),
-    abi.encodeCall(NexoraPolicyRegistry.initialize, (owner))
+Settlement uses USDC `transferWithAuthorization(...)` on Arc.
+
+### Developer SDK
+
+The local SDK lives in `sdk/x402` and provides:
+
+- `NexoraX402Client`
+- `nexoraX402(...)` Express-style middleware
+- `withNexoraX402(...)` Next.js route helper
+- payment requirement builders
+
+Example:
+
+```ts
+import {nexoraX402} from "@nexora/x402";
+
+app.get(
+  "/paid-report",
+  nexoraX402({
+    facilitatorUrl: "https://nexorafibackend.vercel.app",
+    payTo: "0xPublisherWallet",
+    asset: "0x3600000000000000000000000000000000000000",
+    price: "0.05",
+    network: "arc-testnet"
+  }),
+  (_req, res) => {
+    res.json({report: "paid result"});
+  }
 );
 ```
 
-Integrations must use the proxy address. To upgrade:
+See `sdk/x402/README.md` for Express and Next.js examples.
 
-```solidity
-NexoraPolicyRegistry(proxy).upgradeTo(newImplementation);
+Backend-only facilitator env:
+
+```env
+FACILITATOR_SIGNING_MODE=server
+FACILITATOR_PRIVATE_KEY=0x...
 ```
 
-See [docs/UPGRADEABILITY.md](docs/UPGRADEABILITY.md) for the upgrade flow and production safeguards.
+Use a dedicated facilitator wallet. Do not use your owner/deployer key, and never expose this key to the frontend.
 
-## Arc Deployment
+## Local Development
+
+Install dependencies:
+
+```bash
+cd backend
+npm install
+
+cd ../frontend
+npm install
+
+cd ../contracts
+forge install
+```
+
+Run backend:
+
+```bash
+cd backend
+npm run dev
+```
+
+Run frontend:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Run contract tests:
+
+```bash
+cd contracts
+forge test -vvv
+```
+
+Typecheck:
+
+```bash
+cd backend
+npm run typecheck
+
+cd ../frontend
+npm run typecheck
+```
+
+## Environment Variables
+
+### Backend
+
+```env
+PORT=4000
+DATABASE_URL=
+
+ARC_RPC_URL=https://rpc.testnet.arc.network
+ARC_CHAIN_ID=5042002
+ARC_EXPLORER_URL=https://testnet.arcscan.app
+
+USDC_ADDRESS=0x3600000000000000000000000000000000000000
+POLICY_REGISTRY_ADDRESS=
+REPUTATION_ADDRESS=
+X402_LEDGER_ADDRESS=
+YIELD_ROUTER_ADDRESS=
+SAVE_EARN_VAULT_ADDRESS=
+NEXORA_ESCROW_ADDRESS=
+TREASURY_ADDRESS=
+
+CIRCLE_API_KEY=
+CIRCLE_ENTITY_SECRET=
+CIRCLE_KIT_KEY=
+
+FACILITATOR_SIGNING_MODE=server
+FACILITATOR_PRIVATE_KEY=
+
+SYNTHRA_API_KEY=
+SYNTHRA_API_URL=https://trading-api.synthra.org
+```
+
+Optional multi-chain testnet env:
+
+```env
+ARB_SEPOLIA_RPC_URL=
+ARB_SEPOLIA_CHAIN_ID=421614
+ARB_SEPOLIA_USDC_ADDRESS=0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d
+ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS=
+ARB_SEPOLIA_REPUTATION_ADDRESS=
+ARB_SEPOLIA_X402_LEDGER_ADDRESS=
+ARB_SEPOLIA_YIELD_ROUTER_ADDRESS=
+ARB_SEPOLIA_SAVE_EARN_VAULT_ADDRESS=
+ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS=
+
+BASE_SEPOLIA_RPC_URL=https://base-sepolia-rpc.publicnode.com
+BASE_SEPOLIA_CHAIN_ID=84532
+BASE_SEPOLIA_USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e
+BASE_SEPOLIA_POLICY_REGISTRY_ADDRESS=
+BASE_SEPOLIA_REPUTATION_ADDRESS=
+BASE_SEPOLIA_X402_LEDGER_ADDRESS=
+BASE_SEPOLIA_YIELD_ROUTER_ADDRESS=
+BASE_SEPOLIA_SAVE_EARN_VAULT_ADDRESS=
+BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS=
+```
+
+### Frontend
+
+```env
+VITE_NEXORA_API_URL=http://localhost:4000
+VITE_WC_PROJECT_ID=
+
+VITE_ARC_RPC_URL=https://rpc.testnet.arc.network
+VITE_ARC_EXPLORER_URL=https://testnet.arcscan.app
+VITE_ARC_NAMES_REGISTRY_ADDRESS=
+
+VITE_USDC_ADDRESS=0x3600000000000000000000000000000000000000
+VITE_POLICY_REGISTRY_ADDRESS=
+VITE_REPUTATION_ADDRESS=
+VITE_X402_LEDGER_ADDRESS=
+VITE_YIELD_ROUTER_ADDRESS=
+VITE_SAVE_EARN_VAULT_ADDRESS=
+VITE_NEXORA_ESCROW_ADDRESS=
+
+VITE_ENABLE_ARBITRUM_SEPOLIA=true
+VITE_ENABLE_BASE_SEPOLIA=true
+```
+
+## Deploy Contracts
 
 From `contracts/`:
 
-```shell
-cp .env.example .env
-
-export ARC_CHAIN_ID=5042002
-export ARC_RPC_URL=https://rpc.testnet.arc.network
-export USDC_ADDRESS=0x3600000000000000000000000000000000000000
-export TREASURY_ADDRESS=<your-treasury-address>
-export OWNER_ADDRESS=<owner-address>
-export AI_OPERATOR_ADDRESS=<agent-operator-address>
-export NEXORA_FEE_BPS=250
-export NEXORA_WITHDRAWAL_FEE_BPS=100
+```bash
+set -a
+source .env
+set +a
 
 forge script script/DeployNexora.s.sol:DeployNexora \
   --rpc-url $ARC_RPC_URL \
@@ -86,21 +247,9 @@ forge script script/DeployNexora.s.sol:DeployNexora \
   -vvv
 ```
 
-Write the returned proxy addresses into `contracts/.env`:
+For upgrades, keep app env pointed at the same proxy addresses and run the relevant script:
 
-```shell
-POLICY_REGISTRY_PROXY_ADDRESS=
-OPERATOR_REPUTATION_PROXY_ADDRESS=
-X402_LEDGER_PROXY_ADDRESS=
-YIELD_ROUTER_PROXY_ADDRESS=
-SAVE_EARN_VAULT_PROXY_ADDRESS=
-```
-
-For later upgrades, keep integrations pointed at the same proxy address and run the matching upgrade script. Example:
-
-```shell
-source .env
-
+```bash
 forge script script/UpgradeNexora.s.sol:UpgradePolicyRegistry \
   --rpc-url $ARC_RPC_URL \
   --chain-id $ARC_CHAIN_ID \
@@ -110,67 +259,55 @@ forge script script/UpgradeNexora.s.sol:UpgradePolicyRegistry \
   -vvv
 ```
 
-Arc docs currently list Arc Testnet as chain ID `5042002`, RPC `https://rpc.testnet.arc.network`, explorer `https://testnet.arcscan.app`, and USDC ERC-20 interface `0x3600000000000000000000000000000000000000`.
+Available upgrade entrypoints:
 
-## Frontend
+- `UpgradePolicyRegistry`
+- `UpgradeOperatorReputation`
+- `UpgradeX402Ledger`
+- `UpgradeYieldRouter`
+- `UpgradeSaveEarnVault`
+- `UpgradeNexoraEscrow`
 
-From `frontend/`:
+## Example Product Flows
 
-```shell
-cp .env.example .env
-npm install
-npm run dev
-```
+### Save an Agent Policy
 
-The frontend uses `VITE_*` variables. After contract deployment, copy proxy addresses into `VITE_POLICY_REGISTRY_ADDRESS`, `VITE_X402_LEDGER_ADDRESS`, `VITE_REPUTATION_ADDRESS`, and `VITE_SAVE_EARN_VAULT_ADDRESS`.
+1. Connect wallet.
+2. Create or select an agent wallet.
+3. Set daily limit and transaction cap.
+4. Optionally choose contract and recipient allowlists.
+5. Save policy onchain.
 
-## Local Full App
+### Publish a Paid API
 
-Run the backend and frontend together; the frontend calls `VITE_NEXORA_API_URL`.
+1. Open Marketplace publish flow.
+2. Choose a service template such as Website Analyzer or GitHub Repo Analyzer.
+3. Set endpoint manifest and USDC price.
+4. Publish onchain through the x402 ledger.
 
-```shell
-cd backend
-cp .env.example .env
-npm install
-npm run dev
-```
+### Use x402 Facilitator
 
-```shell
-cd frontend
-cp .env.example .env
-npm install
-npm run dev -- --port 5173
-```
+1. Your API returns x402 payment requirements.
+2. User or agent signs a USDC authorization.
+3. Your API calls `POST /x402/verify`.
+4. Your API calls `POST /x402/settle`.
+5. Nexora settles the payment on Arc and records it.
 
-The backend now loads `backend/.env`, persists app state to PostgreSQL when `DATABASE_URL` is configured, falls back to `NEXORA_STORE_PATH` for local development, and exposes live endpoints for the operator snapshot, marketplace services, x402 authorizations/settlements, earn opportunities, monetization plans, Circle agent wallet requests, policy saves, payments, and reputation. On Vercel, set `VITE_NEXORA_API_URL` to the deployed backend URL; a static frontend deployment alone cannot create Circle wallets, persist marketplace data, or settle x402 requests.
+### Escrow
 
-Required production secrets:
+1. Creator creates a work agreement.
+2. Creator funds escrow.
+3. Counterparty submits work.
+4. Creator verifies and releases USDC.
 
-```shell
-CIRCLE_API_KEY=
-CIRCLE_ENTITY_SECRET=
-DATABASE_URL=
-FACILITATOR_PRIVATE_KEY=
-```
+## Security Notes
 
-Use a durable PostgreSQL database for production, such as Supabase or Vercel Postgres. Without `DATABASE_URL`, serverless deployments fall back to `/tmp`, so created agent wallets can disappear after cold starts or redeploys.
+- Contracts are upgradeable; production deployments should use multisig/timelock admin controls.
+- The facilitator private key must be backend-only and dedicated to settlement.
+- Serverless deployments should use durable storage through `DATABASE_URL`; `/tmp` storage is not persistent.
+- External vault, DEX, and strategy integrations should be reviewed separately before mainnet usage.
+- Nexora is currently testnet software.
 
-Without those secrets, contract-backed frontend writes still work where the user wallet signs them, but Circle wallet creation and server-side facilitator signing report as not configured through `/api/readiness` instead of silently failing.
+## Status
 
-After deployment, add the XyloNet strategy adapter using the Arc testnet vault and pool addresses:
-
-```solidity
-ArcLendingUsdcStrategy xylonet = new ArcLendingUsdcStrategy(
-  USDC_ADDRESS,
-  XYLONET_RECEIPT_TOKEN,
-  XYLONET_POOL,
-  YIELD_ROUTER_PROXY,
-  "Xylonet"
-);
-
-NexoraYieldRouter(YIELD_ROUTER_PROXY).addStrategy(address(xylonet), "Xylonet", 0);
-```
-
-## Product Blueprint
-
-See [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md) for the full architecture overview, frontend pages, backend structure, x402 facilitator flow, Circle integration flow, database schema, API routes, UX direction, MVP scope, monetization plan, roadmap, and Arc/Circle positioning.
+Nexora is actively in development. Arc is the primary deployment. Arbitrum Sepolia and Base Sepolia are used for multi-chain test coverage. Swap and Save/Earn are Arc-only until more non-Arc integrations are completed.

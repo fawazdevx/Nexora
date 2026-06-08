@@ -260,16 +260,16 @@ function circleErrorMessage(prefix: string, input: unknown) {
 function circleFriendlyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (/entity secret is invalid/i.test(message)) {
-    return "Circle entity secret is invalid. Use the exact 32-byte entity secret that was registered for this Circle API key, then redeploy the backend.";
+    return "Agent wallet service is not ready. Please try again after wallet infrastructure is refreshed.";
   }
   if (/already been set/i.test(message)) {
-    return "Circle entity secret is already registered for this Circle project. Update the backend env to use the raw secret that matches the registered Circle API key.";
+    return "Agent wallet service is being reconnected. Please try again shortly.";
   }
   return message;
 }
 
 function circleClient() {
-  if (!config.circle.entitySecret) throw new Error("CIRCLE_ENTITY_SECRET is required for Circle developer-controlled wallets");
+  if (!config.circle.entitySecret) throw new Error("Agent wallet service is not available right now.");
   return initiateDeveloperControlledWalletsClient({
     apiKey: config.circle.apiKey,
     entitySecret: config.circle.entitySecret
@@ -280,7 +280,7 @@ function circleBlockchain() {
   if (config.arc.chainId === 5042002) return Blockchain.ArcTestnet;
   if (config.arc.chainId === 421614) return Blockchain.ArbSepolia;
   if (config.arc.chainId === 42161) return Blockchain.Arb;
-  throw new Error(`Circle agent wallets are not configured for chain ${config.arc.chainId}. Add a Circle blockchain mapping before creating agent wallets on this network.`);
+  throw new Error("Agent wallet creation is not available on this network yet.");
 }
 
 async function pollCircleTransaction(transactionId: string) {

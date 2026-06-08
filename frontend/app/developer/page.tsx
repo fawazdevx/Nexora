@@ -3,6 +3,7 @@ import {useAccount} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
 import {apiGet} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
+import {navigateTo} from "@/lib/router";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 export default function DeveloperDashboardPage() {
@@ -24,6 +25,7 @@ export default function DeveloperDashboardPage() {
         kicker="Developer dashboard"
         title="Hosted x402 revenue"
         description="Track published APIs, marketplace revenue, facilitator fees, and active escrows."
+        action={<div className="flex flex-wrap gap-3"><button className="secondary-button" onClick={() => navigateTo("/x402/playground")}>Playground</button><button className="secondary-button" onClick={() => navigateTo("/docs/api")}>API docs</button></div>}
       />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Metric label="Services" value={dashboard?.summary?.publishedServices ?? data?.services.length ?? 0} />
@@ -47,6 +49,7 @@ export default function DeveloperDashboardPage() {
           <Endpoint method="POST" path="/x402/verify" detail="Verify payment payload against requirements before serving content." />
           <Endpoint method="POST" path="/x402/settle" detail="Submit the signed USDC authorization and record settlement." />
         </div>
+        <button className="action-button mt-5" onClick={() => navigateTo("/docs/api")}>Open integration guide</button>
       </div>
     </div>
   );
