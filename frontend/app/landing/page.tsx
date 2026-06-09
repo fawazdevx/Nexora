@@ -97,12 +97,11 @@ export default function LandingPage() {
         src="/hero_image.png"
         alt=""
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 h-full w-full object-cover opacity-35"
+        className="pointer-events-none fixed inset-0 h-full w-full object-cover object-center opacity-45"
         loading="eager"
         decoding="async"
       />
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(6,7,11,0.94)_0%,rgba(6,7,11,0.78)_48%,rgba(6,7,11,0.9)_100%),linear-gradient(180deg,rgba(12,16,24,0.82),rgba(6,7,11,0.98)),radial-gradient(circle_at_78%_12%,rgba(125,211,252,0.16),transparent_28rem),radial-gradient(circle_at_18%_22%,rgba(155,92,246,0.18),transparent_30rem)]" />
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.024)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.024)_1px,transparent_1px)] bg-[size:88px_88px] opacity-35" />
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(6,7,11,0.86)_0%,rgba(6,7,11,0.58)_48%,rgba(6,7,11,0.84)_100%),linear-gradient(180deg,rgba(12,16,24,0.64),rgba(6,7,11,0.94)),radial-gradient(circle_at_78%_12%,rgba(125,211,252,0.12),transparent_28rem),radial-gradient(circle_at_18%_22%,rgba(155,92,246,0.14),transparent_30rem)]" />
 
       <header className="relative z-10 border-b border-white/[0.08] bg-[#06070b]/70 px-4 py-4 backdrop-blur-xl md:px-6">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">

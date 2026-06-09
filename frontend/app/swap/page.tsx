@@ -403,16 +403,16 @@ function SwapBox(props: {
           </span>
         ) : null}
       </span>
-      <div className="grid gap-3 rounded-xl border border-white/[0.12] bg-gradient-to-br from-slate-950/90 to-slate-950/70 p-4 shadow-inner backdrop-blur-sm sm:grid-cols-[1fr_140px]">
+      <div className="grid min-w-0 gap-3 rounded-xl border border-white/[0.12] bg-gradient-to-br from-slate-950/90 to-slate-950/70 p-4 shadow-inner backdrop-blur-sm sm:grid-cols-[minmax(0,1fr)_minmax(116px,140px)]">
         <input
-          className="min-h-12 bg-transparent text-3xl font-bold text-white outline-none placeholder:text-slate-600"
+          className="min-h-12 min-w-0 bg-transparent text-2xl font-bold text-white outline-none placeholder:text-slate-600 sm:text-3xl"
           value={props.amount}
           onChange={(event) => props.onAmountChange(event.target.value)}
           inputMode="decimal"
           readOnly={props.readOnly}
           placeholder={props.placeholder}
         />
-        <select className="field bg-slate-900 text-white" value={props.token} onChange={(event) => props.onTokenChange(event.target.value as XyloNetSwapToken)}>
+        <select className="field w-full min-w-0 bg-slate-900 text-white" value={props.token} onChange={(event) => props.onTokenChange(event.target.value as XyloNetSwapToken)}>
           {tokens.map((token) => <option key={token} value={token}>{token}</option>)}
         </select>
       </div>
