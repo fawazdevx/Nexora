@@ -1,7 +1,6 @@
 import {useState} from "react";
 import {Activity, ArrowRight, Bot, BriefcaseBusiness, CircleDollarSign, Code2, Gauge, Landmark, RadioTower, ShieldCheck, Sparkles, Store, WalletCards} from "lucide-react";
 import {useAccount} from "wagmi";
-import {MetricCard} from "@/components/MetricCard";
 import {ArcNameLabel} from "@/components/ArcNameLabel";
 import {navigateTo} from "@/lib/router";
 import {apiPost} from "@/lib/api";
@@ -96,14 +95,14 @@ export default function HomePage() {
             {status ? <p className="mt-5 break-all rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.08] to-white/[0.04] p-4 text-sm font-medium text-slate-300 shadow-inner backdrop-blur-sm">{status}</p> : null}
             <div className="mt-8 grid max-w-4xl gap-3 sm:grid-cols-4">
               {[
-                {label: "Agent wallets", value: `${readyAgents} ready`},
-                {label: "Pending wallets", value: String(pendingAgents)},
-                {label: "Services", value: String(services.length)},
-                {label: "Identity", value: isConnected ? <ArcNameLabel address={address} fallback={shortAddress(address)} /> : ".arc ready"}
+                {label: "Agent wallets", value: `${readyAgents}/${agents.length}`},
+                {label: "USDC volume", value: `$${settledVolume.toFixed(2)}`},
+                {label: "Policies", value: String(policySaves)},
+                {label: "Services", value: String(services.length)}
               ].map(({label, value}) => (
-                <div key={label} className="surface px-4 py-3.5">
+                <div key={label} className="rounded-xl border border-white/[0.08] bg-white/[0.035] px-4 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
-                  <p className="mt-2.5 text-[15px] font-bold text-white">{value}</p>
+                  <p className="mt-2 text-[15px] font-bold text-white">{value}</p>
                 </div>
               ))}
             </div>
@@ -141,54 +140,39 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          {label: "Agent wallets", value: String(agents.length), delta: "operator scope"},
-          {label: "USDC volume", value: `$${settledVolume.toFixed(2)}`, delta: "settled payments"},
-          {label: "Earn actions", value: String(earnActions), delta: "save activity"},
-          {label: "Rules saved", value: String(policySaves), delta: "agent controls"}
-        ].map((stat) => <MetricCard key={stat.label} {...stat} />)}
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          {title: "Agent wallets", copy: pendingAgents > 0 ? `${pendingAgents} wallet${pendingAgents === 1 ? "" : "s"} pending activation.` : "Create and review Circle-backed agent wallets.", href: "/agents", icon: WalletCards},
-          {title: "Marketplace", copy: services.length > 0 ? `${services.length} service${services.length === 1 ? "" : "s"} available for paid execution.` : "Publish paid APIs or buy a marketplace service.", href: "/marketplace", icon: Store},
-          {title: "Escrow", copy: "Create work agreements, fund them in USDC, and release after verification.", href: "/escrow", icon: BriefcaseBusiness},
-          {title: "Developer docs", copy: "Integrate the Nexora x402 SDK or test the facilitator playground.", href: "/docs/api", icon: Code2}
-        ].map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.href} onClick={() => navigateTo(item.href)} className="panel text-left transition-all duration-200 hover:border-white/[0.18]">
-              <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.12] bg-white/[0.04] text-orchid">
-                <Icon size={20} />
-              </div>
-              <h3 className="text-lg font-bold text-white">{item.title}</h3>
-              <p className="mt-3 text-sm leading-6 text-slate-400">{item.copy}</p>
-            </button>
-          );
-        })}
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+      <section className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
         <div className="panel">
           <div className="mb-5 flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold text-white">Operational checklist</h3>
-            <span className="status-pill border-orchid/30 bg-orchid/10 font-semibold text-orchid">Workspace</span>
+            <div>
+              <p className="section-kicker">Workspace</p>
+              <h3 className="mt-2 text-xl font-bold text-white">Main areas</h3>
+            </div>
+            <span className="text-sm font-semibold text-slate-500">{earnActions} Save/Earn actions</span>
           </div>
-          <div className="grid gap-2.5">
+          <div className="divide-y divide-white/[0.08] rounded-2xl border border-white/[0.08] bg-white/[0.025]">
             {[
-              ["Connect wallet", isConnected],
-              ["Create agent", agents.length > 0],
-              ["Circle wallet address", readyAgents > 0],
-              ["Save spending rules", agents.some((agent) => agent.policy.contractAllowlist.length + agent.policy.recipientAllowlist.length > 0 || agent.policy.txHash)],
-              ["Publish or buy a service", services.length > 0]
-            ].map(([label, complete]) => (
-              <div key={String(label)} className="surface flex items-center justify-between px-4 py-3.5 text-sm transition-all duration-200 hover:scale-[1.01]">
-                <span className="font-medium text-slate-300">{String(label)}</span>
-                <span className={complete ? "font-bold text-mint drop-shadow-[0_0_8px_rgba(110,231,183,0.4)]" : "font-semibold text-slate-500"}>{complete ? "Done" : "Next"}</span>
-              </div>
-            ))}
+              {title: "Agent wallets", copy: pendingAgents > 0 ? `${pendingAgents} pending wallet${pendingAgents === 1 ? "" : "s"} need review.` : "Create and manage policy-controlled agent wallets.", href: "/agents", icon: WalletCards},
+              {title: "Marketplace", copy: services.length > 0 ? `${services.length} paid service${services.length === 1 ? "" : "s"} available.` : "Publish or buy x402 paid APIs.", href: "/marketplace", icon: Store},
+              {title: "Escrow", copy: "Fund work agreements in USDC and release after verification.", href: "/escrow", icon: BriefcaseBusiness},
+              {title: "Revenue", copy: "Compare on-chain treasury balance with app-recorded fees and volume.", href: "/revenue", icon: Landmark},
+              {title: "Developer docs", copy: "Install the SDK or test the x402 playground.", href: "/docs/api", icon: Code2}
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <button key={item.href} onClick={() => navigateTo(item.href)} className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition hover:bg-white/[0.035]">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.1] bg-white/[0.04] text-orchid">
+                      <Icon size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-white">{item.title}</p>
+                      <p className="mt-1 text-sm leading-5 text-slate-400">{item.copy}</p>
+                    </div>
+                  </div>
+                  <ArrowRight size={16} className="shrink-0 text-slate-600" />
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -209,27 +193,17 @@ export default function HomePage() {
           ) : (
             <p className="surface p-5 text-sm font-medium text-slate-400">No payment activity yet. Publish or buy a marketplace service to create the first receipt.</p>
           )}
-        </div>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-3">
-        {[
-          {label: "Treasury", title: "Revenue proof", copy: "Compare app-recorded fees with on-chain treasury balance.", href: "/revenue", icon: Landmark},
-          {label: "Policies", title: "Policy center", copy: "Review caps, allowlists, and saved on-chain policy state.", href: "/settings/policies", icon: ShieldCheck},
-          {label: "x402", title: "Facilitator playground", copy: "Inspect supported x402 config and test verification payloads.", href: "/x402/playground", icon: RadioTower}
-        ].map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.href} className="surface p-5 text-left transition hover:border-plasma/30" onClick={() => navigateTo(item.href)}>
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-orchid">
-                <Icon size={15} />
-                {item.label}
-              </div>
-              <h3 className="mt-3 text-lg font-semibold text-white">{item.title}</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-400">{item.copy}</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <button onClick={() => navigateTo("/settings/policies")} className="surface flex items-center justify-between px-4 py-3 text-left text-sm font-semibold text-white transition hover:border-plasma/30">
+              <span className="flex items-center gap-2"><ShieldCheck size={16} className="text-orchid" /> Policy center</span>
+              <ArrowRight size={15} className="text-slate-600" />
             </button>
-          );
-        })}
+            <button onClick={() => navigateTo("/x402/playground")} className="surface flex items-center justify-between px-4 py-3 text-left text-sm font-semibold text-white transition hover:border-plasma/30">
+              <span className="flex items-center gap-2"><RadioTower size={16} className="text-orchid" /> x402 playground</span>
+              <ArrowRight size={15} className="text-slate-600" />
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   );

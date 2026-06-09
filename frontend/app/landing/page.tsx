@@ -93,7 +93,15 @@ export default function LandingPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#06070b] text-slate-100">
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(12,16,24,0.92),rgba(6,7,11,0.96)),radial-gradient(circle_at_78%_12%,rgba(125,211,252,0.16),transparent_28rem),radial-gradient(circle_at_18%_22%,rgba(155,92,246,0.18),transparent_30rem)]" />
+      <img
+        src="/hero_image.png"
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 h-full w-full object-cover opacity-35"
+        loading="eager"
+        decoding="async"
+      />
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(6,7,11,0.94)_0%,rgba(6,7,11,0.78)_48%,rgba(6,7,11,0.9)_100%),linear-gradient(180deg,rgba(12,16,24,0.82),rgba(6,7,11,0.98)),radial-gradient(circle_at_78%_12%,rgba(125,211,252,0.16),transparent_28rem),radial-gradient(circle_at_18%_22%,rgba(155,92,246,0.18),transparent_30rem)]" />
       <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.024)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.024)_1px,transparent_1px)] bg-[size:88px_88px] opacity-35" />
 
       <header className="relative z-10 border-b border-white/[0.08] bg-[#06070b]/70 px-4 py-4 backdrop-blur-xl md:px-6">
@@ -158,7 +166,7 @@ export default function LandingPage() {
           </motion.div>
 
           <motion.aside
-            className="overflow-hidden rounded-2xl border border-white/[0.1] bg-gradient-to-br from-panel/95 to-panel/85 shadow-neon backdrop-blur-2xl"
+            className="overflow-hidden rounded-2xl border border-white/[0.1] bg-gradient-to-br from-panel/88 to-panel/72 shadow-neon backdrop-blur-2xl"
             initial={{opacity: 0, y: 20}}
             animate={{opacity: 1, y: 0}}
             transition={{duration: 0.55, delay: 0.1}}
