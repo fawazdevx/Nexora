@@ -1,7 +1,9 @@
 import {useEffect, useMemo, useRef, useState} from "react";
-import {ArrowDownUp, CheckCircle2, ExternalLink, RefreshCw} from "lucide-react";
+import {createPortal} from "react-dom";
+import {ArrowDownUp, Check, CheckCircle2, ChevronDown, ExternalLink, Loader2, RefreshCw} from "lucide-react";
 import {formatUnits} from "viem";
 import {useAccount} from "wagmi";
+import toast from "react-hot-toast";
 import {PageHeader} from "@/components/PageHeader";
 import {arcTestnet, shortAddress, switchToArc} from "@/lib/arc";
 import {
@@ -14,7 +16,6 @@ import {
   type SynthraSwapQuote,
   type XyloNetSwapQuote,
   type XyloNetSwapToken,
-  xylonet,
   xylonetSwapTokens
 } from "@/lib/contracts";
 
@@ -22,15 +23,41 @@ const tokens = Object.keys(xylonetSwapTokens) as XyloNetSwapToken[];
 const routeVenues = ["XyloNet", "Synthra"] as const;
 const swapFeeBps = Number(import.meta.env.VITE_SWAP_FEE_BPS ?? "0");
 const swapFeeRecipient = import.meta.env.VITE_SWAP_FEE_RECIPIENT ?? "";
+const eurcUsd = Number(import.meta.env.VITE_EURC_USD ?? "1.08") || 1.08;
+
+const SLIPPAGE_PRESETS: Array<[string, string]> = [
+  ["0.5%", "50"],
+  ["1%", "100"],
+  ["3%", "300"]
+];
+
+// Anchored USD estimate: USDC/USYC ≈ $1, EURC via configurable EUR/USD rate.
+const TOKEN_META: Record<XyloNetSwapToken, {name: string; glyph: string; gradient: string; usd: number}> = {
+  USDC: {name: "USD Coin", glyph: "$", gradient: "from-[#2775ca] to-[#1b5fa6]", usd: 1},
+  EURC: {name: "Euro Coin", glyph: "€", gradient: "from-[#2f6bff] to-[#4453d6]", usd: eurcUsd},
+  USYC: {name: "US Yield Coin", glyph: "%", gradient: "from-mint to-emerald-500", usd: 1}
+};
 
 type RoutePreview = {
   venue: typeof routeVenues[number];
-  status: "best" | "available" | "unavailable" | "error";
+  status: "best" | "available" | "quoteOnly" | "unavailable" | "error";
   output?: string;
   message: string;
 };
 
 type AggregatorQuote = XyloNetSwapQuote | SynthraSwapQuote;
+
+function txToast(title: string, hash: string) {
+  const href = `${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${hash}`;
+  return (
+    <span>
+      {title} ·{" "}
+      <a href={href} target="_blank" rel="noreferrer" className="font-semibold text-mint underline-offset-2 hover:underline">
+        View tx
+      </a>
+    </span>
+  );
+}
 
 export default function SwapPage() {
   const {address, chain, isConnected} = useAccount();
@@ -59,9 +86,16 @@ export default function SwapPage() {
     const minRaw = quote.amountOutRaw * BigInt(10_000 - Number(slippageBps)) / 10_000n;
     return formatUnits(minRaw, xylonetSwapTokens[quote.tokenOut].decimals);
   }, [quote, slippageBps]);
+  const exchangeRate = useMemo(() => {
+    if (!quote) return null;
+    const input = Number(quote.amountIn);
+    if (!Number.isFinite(input) || input <= 0) return null;
+    return Number(quote.amountOut) / input;
+  }, [quote]);
   const balanceNumber = Number(balance?.formatted ?? "0");
   const feeEnabled = Number.isFinite(swapFeeBps) && swapFeeBps > 0 && Boolean(swapFeeRecipient);
   const feeAmount = feeEnabled && Number.isFinite(amountNumber) ? amountNumber * swapFeeBps / 10_000 : 0;
+  const visibleRoutes = routes.filter((route) => route.venue);
 
   function resetQuote() {
     setQuote(null);
@@ -186,8 +220,8 @@ export default function SwapPage() {
     if (!quote) return;
     setExecuting(true);
     setSwapStep("approve");
-    setStatus("Approve if needed, then confirm the swap in your wallet.");
     setTxHash(null);
+    const toastId = toast.loading("Approve if needed, then confirm the swap in your wallet…");
     try {
       window.setTimeout(() => setSwapStep((step) => step === "approve" ? "swap" : step), 900);
       const result = quote.venue === "XyloNet"
@@ -195,10 +229,10 @@ export default function SwapPage() {
         : await executeSynthraSwap({quote, slippageBps: Number(slippageBps)});
       setTxHash(result.swapHash);
       setSwapStep("confirmed");
-      setStatus(`Swap submitted through ${quote.venue}.`);
+      toast.success(txToast(`Swap submitted through ${quote.venue}`, result.swapHash), {id: toastId});
     } catch (error) {
       setSwapStep("idle");
-      setStatus(error instanceof Error ? error.message : "Swap failed");
+      toast.error(error instanceof Error ? error.message : "Swap failed", {id: toastId});
     } finally {
       setExecuting(false);
     }
@@ -219,7 +253,7 @@ export default function SwapPage() {
       />
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,540px)_1fr]">
-        <div className="panel space-y-5">
+        <div className="panel space-y-4">
           <SwapBox
             label="You pay"
             amount={amount}
@@ -236,8 +270,8 @@ export default function SwapPage() {
           />
 
           <div className="flex justify-center">
-            <button type="button" className="secondary-button h-12 min-h-12 w-12 rounded-full p-0 transition-all duration-200 hover:rotate-180 hover:scale-110" onClick={flipPair} aria-label="Flip swap pair">
-              <ArrowDownUp size={19} />
+            <button type="button" className="secondary-button h-11 min-h-11 w-11 rounded-full p-0 transition-all duration-300 hover:rotate-180 hover:scale-110 hover:border-plasma/40" onClick={flipPair} aria-label="Flip swap pair">
+              <ArrowDownUp size={18} />
             </button>
           </div>
 
@@ -248,21 +282,43 @@ export default function SwapPage() {
             onAmountChange={() => undefined}
             onTokenChange={updateTokenOut}
             readOnly
+            loading={loading}
             placeholder="0.00"
           />
 
-          <div className="grid gap-3 sm:grid-cols-[1fr_160px]">
-            <label className="grid gap-2.5 text-sm font-semibold text-slate-300">
-              Slippage
-              <select className="field bg-slate-950 text-white" value={slippageBps} onChange={(event) => setSlippageBps(event.target.value)}>
-                <option value="50">0.5%</option>
-                <option value="100">1%</option>
-                <option value="300">3%</option>
-              </select>
-            </label>
-            <div className="surface flex flex-col justify-center px-4 py-3.5 text-sm">
-              <span className="font-semibold text-slate-400">Network</span>
-              <span className={onArc ? "font-bold text-mint drop-shadow-[0_0_8px_rgba(110,231,183,0.4)]" : "font-bold text-orchid"}>{onArc ? "Arc Testnet" : "Switch needed"}</span>
+          {exchangeRate ? (
+            <div className="flex items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-2.5 text-sm">
+              <span className="text-slate-400">Rate</span>
+              <span className="font-semibold text-white">1 {tokenIn} ≈ {trimTokenAmount(String(exchangeRate))} {tokenOut}</span>
+            </div>
+          ) : null}
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-semibold text-slate-300">Max slippage</span>
+              <span className={onArc ? "text-xs font-bold text-mint" : "text-xs font-bold text-orchid"}>{onArc ? "Arc Testnet" : "Switch needed"}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {SLIPPAGE_PRESETS.map(([label, bps]) => (
+                <button
+                  key={bps}
+                  type="button"
+                  onClick={() => setSlippageBps(bps)}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition ${slippageBps === bps ? "border-plasma/40 bg-gradient-to-br from-plasma/[0.2] to-plasma/[0.08] text-white" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-plasma/30 hover:text-white"}`}
+                >
+                  {label}
+                </button>
+              ))}
+              <div className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm ${SLIPPAGE_PRESETS.some(([, bps]) => bps === slippageBps) ? "border-white/[0.1] bg-white/[0.04]" : "border-plasma/40 bg-plasma/[0.12]"}`}>
+                <input
+                  inputMode="decimal"
+                  value={(Number(slippageBps) / 100).toString()}
+                  onChange={(event) => setSlippageBps(String(Math.max(0, Math.round((Number(event.target.value) || 0) * 100))))}
+                  className="w-10 bg-transparent text-right font-semibold text-white outline-none"
+                  aria-label="Custom slippage"
+                />
+                <span className="text-slate-400">%</span>
+              </div>
             </div>
           </div>
 
@@ -276,7 +332,8 @@ export default function SwapPage() {
                 <RefreshCw size={17} className={loading ? "animate-spin" : ""} />
               </button>
               <button type="button" className="action-button min-h-12" onClick={() => void swap()} disabled={swapDisabled}>
-                {executing ? swapButtonLabel(swapStep) : quote ? `Swap through ${quote.venue}` : "Swap"}
+                {executing ? <Loader2 size={17} className="animate-spin" /> : null}
+                {executing ? swapButtonLabel(swapStep) : quote ? `Swap through ${quote.venue}` : "No executable route"}
               </button>
             </div>
           )}
@@ -289,7 +346,7 @@ export default function SwapPage() {
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="font-semibold text-slate-300">Minimum received</span>
-                <span className="font-bold text-white">{minReceived} {quote.tokenOut}</span>
+                <span className="font-bold text-white">{trimTokenAmount(minReceived)} {quote.tokenOut}</span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="font-semibold text-slate-300">Router</span>
@@ -302,8 +359,8 @@ export default function SwapPage() {
                 </div>
               ) : null}
               <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="font-semibold text-slate-300">Price impact</span>
-                <span className="font-bold text-white">Protected by slippage</span>
+                <span className="font-semibold text-slate-300">Slippage protection</span>
+                <span className="font-bold text-white">{Number(slippageBps) / 100}% max</span>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="font-semibold text-slate-300">Nexora swap fee</span>
@@ -350,26 +407,150 @@ export default function SwapPage() {
             {quote ? <CheckCircle2 className="text-mint drop-shadow-[0_0_12px_rgba(110,231,183,0.5)]" size={24} /> : null}
           </div>
 
-          <div className="grid gap-3">
-            {routes.filter((route) => route.status !== "unavailable").map((route) => (
-              <div key={route.venue} className="surface p-5 transition-all duration-200 hover:scale-[1.01]">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-bold text-white">{route.venue}</p>
-                    <p className="mt-1.5 text-sm font-medium text-slate-400">{route.message}</p>
+          {!isConnected ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] px-6 py-12 text-center">
+              <p className="max-w-xs text-sm leading-6 text-slate-400">Connect your wallet on Arc Testnet to preview live routes across integrated venues.</p>
+            </div>
+          ) : loading ? (
+            <div className="grid gap-3">
+              {routeVenues.map((venue) => (
+                <div key={venue} className="surface p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="shimmer h-4 w-24 rounded" />
+                      <div className="shimmer h-3 w-40 rounded" />
+                    </div>
+                    <div className="shimmer h-6 w-14 rounded-full" />
                   </div>
-                  <RouteStatus status={route.status} />
+                  <div className="shimmer mt-4 h-9 w-full rounded-xl" />
                 </div>
-                {route.output ? (
-                  <div className="mt-4 rounded-xl bg-slate-950/70 px-4 py-3 text-sm font-medium text-slate-300 backdrop-blur-sm">
-                    Output: <span className="font-bold text-white">{route.output} {tokenOut}</span>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {visibleRoutes.map((route) => {
+                const dim = route.status === "unavailable" || route.status === "error";
+                return (
+                  <div key={route.venue} className={`surface p-5 transition-all duration-200 ${dim ? "opacity-60" : "hover:scale-[1.01]"}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-white">{route.venue}</p>
+                        <p className="mt-1.5 text-sm font-medium text-slate-400">{route.message}</p>
+                      </div>
+                      <RouteStatus status={route.status} />
+                    </div>
+                    {route.output ? (
+                      <div className="mt-4 rounded-xl bg-slate-950/70 px-4 py-3 text-sm font-medium text-slate-300 backdrop-blur-sm">
+                        Output: <span className="font-bold text-white">{route.output} {tokenOut}</span>
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function TokenBadge({token, size = 24}: {token: XyloNetSwapToken; size?: number}) {
+  const meta = TOKEN_META[token];
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${meta.gradient} font-bold text-white shadow-[0_0_12px_rgba(0,0,0,0.3)]`}
+      style={{width: size, height: size, fontSize: size * 0.5}}
+      aria-hidden="true"
+    >
+      {meta.glyph}
+    </span>
+  );
+}
+
+function TokenPicker({value, onChange}: {value: XyloNetSwapToken; onChange: (value: XyloNetSwapToken) => void}) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{top: number; left: number} | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const MENU_WIDTH = 224; // w-56
+
+  function place() {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const left = Math.min(Math.max(8, rect.right - MENU_WIDTH), window.innerWidth - MENU_WIDTH - 8);
+    setCoords({top: rect.bottom + 8, left});
+  }
+
+  function toggle() {
+    if (!open) place();
+    setOpen((current) => !current);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(event: MouseEvent) {
+      const target = event.target as Node;
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function onReflow() {
+      setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onReflow, true);
+    window.addEventListener("resize", onReflow);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", onReflow, true);
+      window.removeEventListener("resize", onReflow);
+    };
+  }, [open]);
+
+  return (
+    <div className="shrink-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={toggle}
+        className="flex items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.06] py-1.5 pl-1.5 pr-2.5 transition hover:border-plasma/40 hover:bg-white/[0.1]"
+      >
+        <TokenBadge token={value} size={26} />
+        <span className="font-bold text-white">{value}</span>
+        <ChevronDown size={15} className={`text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && coords
+        ? createPortal(
+            <div
+              ref={menuRef}
+              style={{top: coords.top, left: coords.left, width: MENU_WIDTH}}
+              className="fixed z-[80] overflow-hidden rounded-xl border border-white/[0.12] bg-gradient-to-b from-[#0c101b] to-[#0a0d16] p-1.5 shadow-[0_24px_60px_rgba(0,0,0,0.5)] backdrop-blur-2xl"
+            >
+              {tokens.map((token) => {
+                const active = token === value;
+                return (
+                  <button
+                    key={token}
+                    type="button"
+                    onClick={() => {
+                      onChange(token);
+                      setOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition ${active ? "bg-plasma/15" : "hover:bg-white/[0.05]"}`}
+                  >
+                    <TokenBadge token={token} size={30} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-white">{token}</p>
+                      <p className="truncate text-xs text-slate-500">{TOKEN_META[token].name}</p>
+                    </div>
+                    {active ? <Check size={15} className="text-mint" /> : null}
+                  </button>
+                );
+              })}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
@@ -385,8 +566,11 @@ function SwapBox(props: {
   onHalf?: () => void;
   onMax?: () => void;
   readOnly?: boolean;
+  loading?: boolean;
   placeholder?: string;
 }) {
+  const usd = Number(props.amount) * TOKEN_META[props.token].usd;
+  const showUsd = Number.isFinite(usd) && usd > 0;
   return (
     <label className="grid gap-2.5 text-sm font-semibold text-slate-300">
       <span className="flex flex-wrap items-center justify-between gap-2">
@@ -403,18 +587,23 @@ function SwapBox(props: {
           </span>
         ) : null}
       </span>
-      <div className="grid min-w-0 gap-3 rounded-xl border border-white/[0.12] bg-gradient-to-br from-slate-950/90 to-slate-950/70 p-4 shadow-inner backdrop-blur-sm sm:grid-cols-[minmax(0,1fr)_minmax(116px,140px)]">
-        <input
-          className="min-h-12 min-w-0 bg-transparent text-2xl font-bold text-white outline-none placeholder:text-slate-600 sm:text-3xl"
-          value={props.amount}
-          onChange={(event) => props.onAmountChange(event.target.value)}
-          inputMode="decimal"
-          readOnly={props.readOnly}
-          placeholder={props.placeholder}
-        />
-        <select className="field w-full min-w-0 bg-slate-900 text-white" value={props.token} onChange={(event) => props.onTokenChange(event.target.value as XyloNetSwapToken)}>
-          {tokens.map((token) => <option key={token} value={token}>{token}</option>)}
-        </select>
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-white/[0.12] bg-gradient-to-br from-slate-950/90 to-slate-950/70 p-4 shadow-inner backdrop-blur-sm">
+        <div className="min-w-0">
+          {props.readOnly && props.loading ? (
+            <div className="shimmer h-9 w-32 rounded-lg" />
+          ) : (
+            <input
+              className="min-h-9 w-full min-w-0 bg-transparent text-2xl font-bold text-white outline-none placeholder:text-slate-600 sm:text-3xl"
+              value={props.amount}
+              onChange={(event) => props.onAmountChange(event.target.value)}
+              inputMode="decimal"
+              readOnly={props.readOnly}
+              placeholder={props.placeholder}
+            />
+          )}
+          <p className="mt-1 h-4 text-xs font-medium text-slate-500">{showUsd ? `≈ $${usd.toFixed(2)}` : ""}</p>
+        </div>
+        <TokenPicker value={props.token} onChange={props.onTokenChange} />
       </div>
     </label>
   );
@@ -424,12 +613,14 @@ function RouteStatus({status}: {status: RoutePreview["status"]}) {
   const labels = {
     best: "Best",
     available: "Live",
+    quoteOnly: "Quote only",
     unavailable: "No route",
     error: "Error"
   };
   const colors = {
     best: "border-mint/35 bg-gradient-to-br from-mint/15 to-mint/10 text-mint shadow-[0_0_16px_rgba(110,231,183,0.2)]",
     available: "border-cyan/35 bg-gradient-to-br from-cyan/15 to-cyan/10 text-cyan shadow-[0_0_16px_rgba(125,211,252,0.2)]",
+    quoteOnly: "border-amber-300/35 bg-gradient-to-br from-amber-300/15 to-amber-300/10 text-amber-200 shadow-[0_0_16px_rgba(252,211,77,0.14)]",
     unavailable: "border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] text-slate-400",
     error: "border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 text-magenta shadow-[0_0_16px_rgba(236,72,153,0.2)]"
   };
@@ -443,13 +634,6 @@ function defaultRoutes(): RoutePreview[] {
   ];
 }
 
-function unavailableRoutes(message: string): RoutePreview[] {
-  return [
-    {venue: "XyloNet", status: "unavailable", message},
-    {venue: "Synthra", status: "unavailable", message: "No live route for this pair."}
-  ];
-}
-
 function routePreviewFor(
   venue: "XyloNet" | "Synthra",
   liveQuotes: AggregatorQuote[],
@@ -460,7 +644,7 @@ function routePreviewFor(
     const quote = result.value;
     const detail = quote.venue === "XyloNet"
       ? `Live route through ${shortAddress(quote.pool)}`
-      : `Live route through ${quote.feeTier / 10_000}% fee tier`;
+      : `SDK route through ${quote.feeTier / 10_000}% fee tier`;
     return {
       venue,
       status: isBest ? "best" : "available",

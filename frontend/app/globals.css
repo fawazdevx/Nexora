@@ -102,6 +102,30 @@ option {
   .glow-text {
     @apply drop-shadow-[0_0_12px_rgba(192,132,252,0.4)];
   }
+
+  /* Bento feature cell with a slow rotating conic border glow on hover. */
+  .bento-feature {
+    @apply relative overflow-hidden rounded-2xl border border-white/[0.1] bg-gradient-to-br from-panel/95 to-panel/85 p-6 shadow-neon backdrop-blur-2xl transition-all duration-300;
+  }
+
+  .bento-feature::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(from 0deg, transparent 0deg, rgba(192, 132, 252, 0.55) 70deg, rgba(110, 231, 183, 0.45) 150deg, transparent 230deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    animation: spin-conic 6s linear infinite;
+  }
+
+  .bento-feature:hover::before {
+    opacity: 1;
+  }
 }
 
 @layer utilities {
@@ -126,12 +150,59 @@ option {
     animation: scaleIn 0.3s ease-out;
   }
 
+  /* Slow drifting aurora layer for hero/background depth. */
+  .aurora {
+    background:
+      radial-gradient(40rem 30rem at 18% 20%, rgba(155, 92, 246, 0.22), transparent 60%),
+      radial-gradient(34rem 26rem at 82% 12%, rgba(125, 211, 252, 0.16), transparent 60%),
+      radial-gradient(36rem 30rem at 65% 80%, rgba(110, 231, 183, 0.12), transparent 60%);
+    background-size: 180% 180%;
+    animation: auroraShift 22s ease-in-out infinite alternate;
+  }
+
+  /* Fine film grain to kill banding and add tactility over dark gradients. */
+  .grain {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+    opacity: 0.06;
+  }
+
+  .shimmer {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 25%, rgba(255, 255, 255, 0.1) 37%, rgba(255, 255, 255, 0.04) 63%);
+    background-size: 400% 100%;
+    animation: shimmer 1.4s ease infinite;
+  }
+
   @keyframes fadeIn {
     from {
       opacity: 0;
     }
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes auroraShift {
+    0% {
+      background-position: 0% 0%;
+    }
+    100% {
+      background-position: 100% 100%;
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 100% 0;
+    }
+    100% {
+      background-position: -100% 0;
+    }
+  }
+
+  @keyframes spin-conic {
+    to {
+      transform: rotate(360deg);
     }
   }
 
@@ -165,4 +236,12 @@ option {
 
 [data-rk] button:hover {
   transform: scale(1.02) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora,
+  .shimmer,
+  .bento-feature::before {
+    animation: none !important;
+  }
 }

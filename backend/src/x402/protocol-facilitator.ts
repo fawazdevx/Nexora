@@ -279,7 +279,8 @@ async function verifyPaymentSignature(input: ReturnType<typeof parseFacilitatorI
 
 async function isRequestSettled(hash: string) {
   const store = await readStore();
-  return store.payments.some((payment) => payment.requestHash === hash && payment.status === "settled");
+  return store.payments.some((payment) => payment.requestHash === hash && payment.status === "settled")
+    || store.facilitatorEvents.some((event) => event.requestHash === hash && event.kind === "settle" && event.status === "success");
 }
 
 async function recordExternalSettlement(input: ReturnType<typeof parseFacilitatorInput>, txHash: string) {

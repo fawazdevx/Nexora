@@ -1,22 +1,28 @@
 import {Blockchain, initiateDeveloperControlledWalletsClient} from "@circle-fin/developer-controlled-wallets";
 import {config} from "../config.js";
+import {normalizePolicyV2} from "../policies/engine.js";
 import {assertStoreReady, pushNotification, readStore, updateStore} from "../store.js";
+import type {AgentPolicy} from "../store.js";
 
 type CreateAgentWalletInput = {
   operatorAddress: string;
   arcName?: string;
   dailyLimitUsdc: number;
   transactionCapUsdc: number;
+  policyV2?: AgentPolicy["v2"];
 };
 
 type AgentPolicyInput = {
+  operatorAddress: string;
   dailyLimitUsdc: number;
   transactionCapUsdc: number;
   contractAllowlist: string[];
   recipientAllowlist: string[];
+  policyV2?: AgentPolicy["v2"];
 };
 
 export async function createAgentWallet(input: CreateAgentWalletInput) {
+  await assertPremiumPolicyAccess(input.operatorAddress, input.policyV2);
   if (config.circle.apiKey) {
     await assertStoreReady();
 
@@ -73,7 +79,8 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
           transactionCapUsdc: input.transactionCapUsdc,
           contractAllowlist: [],
           recipientAllowlist: [],
-          active: true
+          active: true,
+          v2: normalizePolicyV2(input.policyV2)
         }
       };
       store.agents.push(record);
@@ -100,7 +107,8 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
         transactionCapUsdc: input.transactionCapUsdc,
         contractAllowlist: [],
         recipientAllowlist: [],
-        active: true
+        active: true,
+        v2: normalizePolicyV2(input.policyV2)
       }
     };
       store.agents.push(record);
@@ -115,17 +123,22 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
 }
 
 export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput & {txHash?: string | null}) {
+  await assertPremiumPolicyAccess(input.operatorAddress, input.policyV2);
   return updateStore((store) => {
     const agent = store.agents.find((item) => item.id === agentId || item.address?.toLowerCase() === agentId.toLowerCase());
     if (!agent && agentId !== "local") throw new Error("agent wallet not found");
     if (agent) {
+      if (agent.operatorAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) {
+        throw new Error("agent operator wallet required");
+      }
       agent.policy = {
         dailyLimitUsdc: input.dailyLimitUsdc,
         transactionCapUsdc: input.transactionCapUsdc,
         contractAllowlist: input.contractAllowlist,
         recipientAllowlist: input.recipientAllowlist,
         active: true,
-        txHash: input.txHash ?? null
+        txHash: input.txHash ?? null,
+        v2: normalizePolicyV2(input.policyV2)
       };
       pushNotification(store, {
         operatorAddress: agent.operatorAddress,
@@ -141,6 +154,34 @@ export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput
       policy: input
     };
   });
+}
+
+async function assertPremiumPolicyAccess(operatorAddress: string, policyV2?: AgentPolicy["v2"]) {
+  if (!hasPremiumPolicySettings(policyV2)) return;
+  const store = await readStore();
+  const now = Date.now();
+  const hasPlan = store.subscriptions.some((subscription) => (
+    subscription.operatorAddress.toLowerCase() === operatorAddress.toLowerCase()
+    && subscription.plan === "premium_agent_automation"
+    && subscription.status === "active"
+    && (!subscription.currentPeriodEnd || Date.parse(subscription.currentPeriodEnd) > now)
+  ));
+  if (!hasPlan) {
+    const error = new Error("Premium Agent Automation is required for advanced policy controls.");
+    (error as Error & {status?: number}).status = 402;
+    throw error;
+  }
+}
+
+function hasPremiumPolicySettings(policyV2?: AgentPolicy["v2"]) {
+  if (!policyV2) return false;
+  return Number(policyV2.weeklyLimitUsdc || 0) > 0
+    || Number(policyV2.monthlyLimitUsdc || 0) > 0
+    || Number(policyV2.maxUnitsPerRequest || 0) > 0
+    || Number(policyV2.cooldownSeconds || 0) > 0
+    || Boolean(policyV2.expiresAt)
+    || Boolean(policyV2.requireOnchainPolicy)
+    || (policyV2.serviceAllowlist?.length ?? 0) > 0;
 }
 
 export async function submitAgentX402Settlement(input: {

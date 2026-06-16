@@ -158,6 +158,7 @@ npm run typecheck
 ```env
 PORT=4000
 DATABASE_URL=
+PGSSL_REJECT_UNAUTHORIZED=true
 
 ARC_RPC_URL=https://rpc.testnet.arc.network
 ARC_CHAIN_ID=5042002
@@ -174,7 +175,17 @@ TREASURY_ADDRESS=
 
 CIRCLE_API_KEY=
 CIRCLE_ENTITY_SECRET=
-CIRCLE_KIT_KEY=
+
+NEXORA_AUTH_SECRET=
+NEXORA_REQUIRE_SIGNED_AUTH=false
+NEXORA_ADMIN_SECRET=
+NEXORA_WEBHOOK_SECRET=
+NEXORA_INDEXER_SECRET=
+CORS_ALLOWED_ORIGINS=
+
+ARC_INDEXER_FROM_BLOCK=0
+ARC_INDEXER_MAX_BLOCKS=5000
+ARC_INDEXER_CONFIRMATIONS=2
 
 FACILITATOR_SIGNING_MODE=server
 FACILITATOR_PRIVATE_KEY=
@@ -292,6 +303,19 @@ Available upgrade entrypoints:
 3. Your API calls `POST /x402/verify`.
 4. Your API calls `POST /x402/settle`.
 5. Nexora settles the payment on Arc and records it.
+
+### Index Onchain Analytics
+
+The backend can index Arc contract events into the app store so revenue, policy, escrow, Save/Earn, and marketplace analytics are backed by chain events instead of only local app records.
+
+```bash
+curl -X POST https://your-backend.example/api/indexer/arc/sync \
+  -H "x-indexer-secret: $NEXORA_INDEXER_SECRET"
+
+curl https://your-backend.example/api/indexer/arc/status
+```
+
+Set `ARC_INDEXER_FROM_BLOCK` to the earliest Nexora deployment block for the current Arc proxy deployment. Keep `ARC_INDEXER_MAX_BLOCKS` modest on serverless deployments so each sync scans a bounded block range. Run the sync endpoint from a cron job until cursors reach the current safe block.
 
 ### Escrow
 

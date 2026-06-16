@@ -16,6 +16,8 @@ backend/node_modules/
 /broadcast/**/dry-run/
 .agents
 .codex
+.claude
+skills-lock.json
 # Docs
 docs/
 

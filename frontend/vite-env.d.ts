@@ -1,5 +1,6 @@
 interface ImportMetaEnv {
   readonly MODE?: string;
+  readonly NEXT_PUBLIC_MAINTENANCE_MODE?: string;
   readonly VITE_ARC_CHAIN_ID?: string;
   readonly VITE_CHAIN_NAME?: string;
   readonly VITE_ARC_RPC_URL?: string;
@@ -23,8 +24,10 @@ interface ImportMetaEnv {
   readonly VITE_REPUTATION_ADDRESS?: string;
   readonly VITE_SAVE_EARN_VAULT_ADDRESS?: string;
   readonly VITE_SAVE_EARN_DEPLOY_BLOCK?: string;
+  readonly VITE_SAVE_EARN_APR?: string;
   readonly VITE_USDC_ADDRESS?: string;
   readonly VITE_NEXORA_ESCROW_ADDRESS?: string;
+  readonly VITE_TREASURY_ADDRESS?: string;
   readonly VITE_ARB_SEPOLIA_USDC_ADDRESS?: string;
   readonly VITE_ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS?: string;
   readonly VITE_ARB_SEPOLIA_X402_LEDGER_ADDRESS?: string;
@@ -52,6 +55,7 @@ interface ImportMetaEnv {
   readonly VITE_NEXORA_CONTACT_URL?: string;
   readonly VITE_SWAP_FEE_BPS?: string;
   readonly VITE_SWAP_FEE_RECIPIENT?: string;
+  readonly VITE_EURC_USD?: string;
 }
 
 interface ImportMeta {

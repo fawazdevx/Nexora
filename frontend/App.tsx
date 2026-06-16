@@ -12,6 +12,7 @@ import BuildersPage from "@/app/builders/page";
 import X402PlaygroundPage from "@/app/x402/playground/page";
 import DeveloperDashboardPage from "@/app/developer/page";
 import RevenuePage from "@/app/revenue/page";
+import GatewayPage from "@/app/gateway/page";
 import DeploymentDashboardPage from "@/app/admin/deployments/page";
 import EscrowPage from "@/app/escrow/page";
 import PaymentsPage from "@/app/payments/page";
@@ -34,6 +35,7 @@ const routes: Record<string, React.ComponentType> = {
   "/x402/playground": X402PlaygroundPage,
   "/developer": DeveloperDashboardPage,
   "/revenue": RevenuePage,
+  "/gateway": GatewayPage,
   "/admin/deployments": DeploymentDashboardPage,
   "/escrow": EscrowPage,
   "/payments": PaymentsPage,
@@ -45,7 +47,6 @@ const routes: Record<string, React.ComponentType> = {
 
 export default function App() {
   const [pathname, setPathname] = useState(() => currentPath());
-  const maintenanceMode = import.meta.env.VITE_MAINTENANCE_MODE === "true";
 
   useEffect(() => {
     const handleLocation = (event: Event) => setPathname(readNavigationPath(event));
@@ -58,10 +59,6 @@ export default function App() {
   }, []);
 
   const Page = useMemo(() => routes[pathname] ?? null, [pathname]);
-
-  if (maintenanceMode && pathname !== "/maintenance") {
-    return <MaintenancePage />;
-  }
 
   if (Page) return <Page />;
 

@@ -1,6 +1,59 @@
 import {readStore, updateStore, type ServiceManifest, type ServiceRecord} from "../store.js";
 import {pushNotification} from "../store.js";
 import {config} from "../config.js";
+import {safeHttpUrl} from "../security.js";
+
+export type PlatformPlan = {
+  id: "developer_analytics" | "premium_agent_automation" | "enterprise_policy" | "verified_builder";
+  name: string;
+  amountUsdc: number;
+  interval: "month" | "one_time";
+  benefit: string;
+  features: string[];
+};
+
+const PLATFORM_PLANS = [
+  {
+    id: "developer_analytics",
+    name: "Developer analytics",
+    amountUsdc: 29,
+    interval: "month",
+    benefit: "API usage analytics and hosted service manifests",
+    features: [
+      "Per-service execution, gross, fee, and net revenue analytics",
+      "Recent paid API execution receipts and x402 settlement links",
+      "Builder revenue dashboard for published API services"
+    ]
+  },
+  {
+    id: "premium_agent_automation",
+    name: "Premium agent automation",
+    amountUsdc: 49,
+    interval: "month",
+    benefit: "Advanced controls for policy-driven agent payments",
+    features: [
+      "Weekly and monthly agent spending budgets",
+      "Service allowlists, cooldowns, expiry, and max API unit limits",
+      "On-chain policy enforcement requirement for agent payments"
+    ]
+  },
+  {
+    id: "enterprise_policy",
+    name: "Enterprise wallet policy",
+    amountUsdc: 299,
+    interval: "month",
+    benefit: "Multi-agent policy management and compliance export",
+    features: ["Multi-agent policy management", "Compliance export", "Team review workflow"]
+  },
+  {
+    id: "verified_builder",
+    name: "Verified builder badge",
+    amountUsdc: 15,
+    interval: "one_time",
+    benefit: "Reputation badge review and marketplace trust signal",
+    features: ["Marketplace trust signal", "Builder profile review", "Public directory highlighting"]
+  }
+] satisfies PlatformPlan[];
 
 type ServiceInput = {
   publisherAddress: string;
@@ -70,49 +123,84 @@ export async function featureService(input: {serviceId: string; operatorAddress:
 }
 
 export async function platformPlans() {
-  return [
-    {
-      id: "developer_analytics",
-      name: "Developer analytics",
-      amountUsdc: 29,
-      interval: "month",
-      benefit: "API usage analytics and hosted service manifests"
-    },
-    {
-      id: "premium_agent_automation",
-      name: "Premium agent automation",
-      amountUsdc: 49,
-      interval: "month",
-      benefit: "Higher automation limits and yield route monitoring"
-    },
-    {
-      id: "enterprise_policy",
-      name: "Enterprise wallet policy",
-      amountUsdc: 299,
-      interval: "month",
-      benefit: "Multi-agent policy management and compliance export"
-    },
-    {
-      id: "verified_builder",
-      name: "Verified builder badge",
-      amountUsdc: 15,
-      interval: "one_time",
-      benefit: "Reputation badge review and marketplace trust signal"
-    }
-  ];
+  return PLATFORM_PLANS;
 }
 
-export async function subscribePlan(input: {operatorAddress: string; plan: string; amountUsdc: number}) {
+export async function subscribePlan(input: {operatorAddress: string; plan: string}) {
+  const plan = requirePlatformPlan(input.plan);
   return updateStore((store) => {
     const subscription = {
       id: crypto.randomUUID(),
-      ...input,
+      operatorAddress: input.operatorAddress,
+      plan: plan.id,
+      planName: plan.name,
+      amountUsdc: plan.amountUsdc,
+      interval: plan.interval,
       status: "pending_payment" as const,
+      txHash: null,
+      chainId: null,
+      activatedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
       createdAt: new Date().toISOString()
     };
     store.subscriptions.push(subscription);
     return subscription;
   });
+}
+
+export async function activatePlan(input: {operatorAddress: string; plan: string; txHash: string; chainId?: number | null}) {
+  const plan = requirePlatformPlan(input.plan);
+  return updateStore((store) => {
+    if (store.subscriptions.some((subscription) => subscription.txHash?.toLowerCase() === input.txHash.toLowerCase())) {
+      throw new Error("subscription payment transaction already recorded");
+    }
+
+    const now = new Date();
+    const periodEnd = new Date(now);
+    if (plan.interval === "month") periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
+
+    const subscription = {
+      id: crypto.randomUUID(),
+      operatorAddress: input.operatorAddress,
+      plan: plan.id,
+      planName: plan.name,
+      amountUsdc: plan.amountUsdc,
+      interval: plan.interval,
+      status: "active" as const,
+      txHash: input.txHash,
+      chainId: input.chainId ?? null,
+      activatedAt: now.toISOString(),
+      currentPeriodStart: now.toISOString(),
+      currentPeriodEnd: plan.interval === "month" ? periodEnd.toISOString() : null,
+      createdAt: now.toISOString()
+    };
+    store.subscriptions.push(subscription);
+    pushNotification(store, {
+      operatorAddress: input.operatorAddress,
+      title: "Plan activated",
+      detail: `${plan.name} · ${plan.amountUsdc} USDC/${plan.interval === "month" ? "month" : "one-time"}`,
+      kind: "system",
+      txHash: input.txHash
+    });
+    return subscription;
+  });
+}
+
+export async function activePlanFor(operatorAddress: string, planId: string) {
+  const now = Date.now();
+  const store = await readStore();
+  return store.subscriptions
+    .filter((subscription) => subscription.operatorAddress.toLowerCase() === operatorAddress.toLowerCase())
+    .filter((subscription) => subscription.plan === planId && subscription.status === "active")
+    .filter((subscription) => !subscription.currentPeriodEnd || Date.parse(subscription.currentPeriodEnd) > now)
+    .sort((a, b) => Date.parse(b.activatedAt ?? b.createdAt) - Date.parse(a.activatedAt ?? a.createdAt))[0] ?? null;
+}
+
+export function requirePlatformPlan(planId: string) {
+  const match = PLATFORM_PLANS.find((item) => item.id === planId);
+  if (!match) throw new Error("plan not found");
+  return match;
 }
 
 export async function executeMarketplaceService(input: {
@@ -123,7 +211,8 @@ export async function executeMarketplaceService(input: {
 }) {
   const service = await getService(input.serviceId);
   if (!service) throw new Error("service not found");
-  if (input.authorizationId) await assertSettledAuthorization(input.authorizationId, service.id, input.payer);
+  if (!input.authorizationId) throw new Error("settled payment authorization is required before execution");
+  await assertSettledAuthorization(input.authorizationId, service.id, input.payer);
 
   const args = input.args ?? {};
   const kind = service.manifest.kind;
@@ -388,7 +477,7 @@ function clampFeeBps(value: number) {
 }
 
 async function analyzeWebsite(inputUrl: string) {
-  const url = normalizeHttpUrl(inputUrl);
+  const url = safeHttpUrl(inputUrl, "url");
   const response = await fetch(url, {
     headers: {
       "user-agent": "NexoraWebsiteAnalyzer/1.0"
@@ -405,7 +494,12 @@ async function analyzeWebsite(inputUrl: string) {
   }
 
   const contentType = response.headers.get("content-type") ?? "";
+  const contentLength = Number(response.headers.get("content-length") ?? 0);
+  if (contentLength > 1_000_000) {
+    throw new Error("website response is too large");
+  }
   const html = await response.text();
+  if (html.length > 1_000_000) throw new Error("website response is too large");
   const title = extractTagContent(html, "title");
   const description = extractMeta(html, "description") ?? extractMeta(html, "og:description");
   const ogTitle = extractMeta(html, "og:title");
@@ -501,6 +595,7 @@ async function analyzeXAccount(handle: string) {
   }
 
   const username = handle.replace(/^@/, "");
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(username)) throw new Error("handle is invalid");
   const response = await fetch(
     `https://api.x.com/2/users/by/username/${encodeURIComponent(username)}?user.fields=public_metrics,verified,created_at,description`,
     {
@@ -567,16 +662,11 @@ async function analyzeXAccount(handle: string) {
   };
 }
 
-function requiredString(value: unknown, label: string) {
+function requiredString(value: unknown, label: string, max = 4_000) {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${label} is required`);
-  return value.trim();
-}
-
-function normalizeHttpUrl(value: string) {
-  const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
-  const parsed = new URL(withProtocol);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("url must use http or https");
-  return parsed.toString();
+  const trimmed = value.trim();
+  if (trimmed.length > max) throw new Error(`${label} is too long`);
+  return trimmed;
 }
 
 function extractTagContent(html: string, tag: string) {
@@ -651,6 +741,9 @@ function parseGitHubRepo(input: string) {
   const owner = urlMatch?.[1] ?? slashMatch?.[1];
   const name = (urlMatch?.[2] ?? slashMatch?.[2])?.replace(/\.git$/, "");
   if (!owner || !name) throw new Error("repo must be a GitHub URL or owner/repo");
+  if (!/^[A-Za-z0-9_.-]{1,100}$/.test(owner) || !/^[A-Za-z0-9_.-]{1,100}$/.test(name)) {
+    throw new Error("repo contains invalid characters");
+  }
   return {owner, name};
 }
 

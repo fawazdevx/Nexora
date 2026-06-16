@@ -2,6 +2,25 @@ import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
 import {Pool, type PoolClient} from "pg";
 import {config} from "./config.js";
+import {normalizePolicyV2} from "./policies/engine.js";
+
+export type AgentPolicy = {
+  dailyLimitUsdc: number;
+  transactionCapUsdc: number;
+  contractAllowlist: string[];
+  recipientAllowlist: string[];
+  active: boolean;
+  txHash?: string | null;
+  v2?: {
+    weeklyLimitUsdc: number;
+    monthlyLimitUsdc: number;
+    maxUnitsPerRequest: number;
+    cooldownSeconds: number;
+    expiresAt: string | null;
+    serviceAllowlist: string[];
+    requireOnchainPolicy: boolean;
+  };
+};
 
 export type AgentWalletRecord = {
   id: string;
@@ -12,14 +31,7 @@ export type AgentWalletRecord = {
   circleWalletSetId?: string | null;
   circleWalletId?: string | null;
   createdAt: string;
-  policy: {
-    dailyLimitUsdc: number;
-    transactionCapUsdc: number;
-    contractAllowlist: string[];
-    recipientAllowlist: string[];
-    active: boolean;
-    txHash?: string | null;
-  };
+  policy: AgentPolicy;
 };
 
 export type ServiceRecord = {
@@ -82,8 +94,15 @@ export type SubscriptionRecord = {
   id: string;
   operatorAddress: string;
   plan: string;
+  planName?: string;
   amountUsdc: number;
+  interval?: "month" | "one_time";
   status: "active" | "pending_payment";
+  txHash?: string | null;
+  chainId?: number | null;
+  activatedAt?: string | null;
+  currentPeriodStart?: string | null;
+  currentPeriodEnd?: string | null;
   createdAt: string;
 };
 
@@ -136,6 +155,32 @@ export type FacilitatorEventRecord = {
   createdAt: string;
 };
 
+export type IndexedChainEventRecord = {
+  id: string;
+  chainId: number;
+  contract: "x402Ledger" | "nexoraEscrow" | "saveEarnVault" | "yieldRouter" | "policyRegistry";
+  event: string;
+  address: string;
+  blockNumber: number;
+  transactionHash: string;
+  logIndex: number;
+  args: Record<string, string | number | boolean | null>;
+  amountUsdc?: number;
+  feeUsdc?: number;
+  actor?: string | null;
+  counterparty?: string | null;
+  createdAt: string;
+};
+
+export type IndexerCursorRecord = {
+  id: string;
+  chainId: number;
+  contract: IndexedChainEventRecord["contract"];
+  address: string;
+  lastBlock: number;
+  updatedAt: string;
+};
+
 type StoreShape = {
   agents: AgentWalletRecord[];
   services: ServiceRecord[];
@@ -145,6 +190,8 @@ type StoreShape = {
   escrows: EscrowRecord[];
   notifications: NotificationRecord[];
   facilitatorEvents: FacilitatorEventRecord[];
+  indexedEvents: IndexedChainEventRecord[];
+  indexerCursors: IndexerCursorRecord[];
 };
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
@@ -221,6 +268,8 @@ export async function appSnapshot(operatorAddress?: string) {
   const completedTasks = store.earnActivations.filter((activation) => !operator || activation.operatorAddress.toLowerCase() === operator).length;
   const ecosystemContributions = store.services.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
   const successfulPayments = settledPayments.length;
+  const indexedStats = summarizeIndexedEvents(store.indexedEvents);
+  const indexedAvailable = indexedStats.indexedEvents > 0;
 
   return {
     agents,
@@ -239,15 +288,50 @@ export async function appSnapshot(operatorAddress?: string) {
     },
     stats: {
       agentWallets: agents.length,
-      usdcSettled: settledPayments.reduce((sum, payment) => sum + payment.amountUsdc, 0),
-      earnRoutes: store.earnActivations.length,
-      policySaves: agents.filter((agent) => agent.policy.txHash).length
+      usdcSettled: indexedAvailable ? indexedStats.marketplaceGrossUsdc : settledPayments.reduce((sum, payment) => sum + payment.amountUsdc, 0),
+      earnRoutes: indexedAvailable ? indexedStats.saveEarnDeposits : store.earnActivations.length,
+      policySaves: indexedStats.policySaves > 0 ? indexedStats.policySaves : agents.filter((agent) => agent.policy.txHash).length,
+      analyticsSource: indexedAvailable ? "indexed" : "local",
+      indexedEvents: indexedStats.indexedEvents,
+      saveEarnDepositVolumeUsdc: indexedStats.saveEarnDepositVolumeUsdc,
+      saveEarnWithdrawalVolumeUsdc: indexedStats.saveEarnWithdrawalVolumeUsdc
+    },
+    access: {
+      developerAnalytics: hasActivePlan(subscriptions, "developer_analytics"),
+      premiumAgentAutomation: hasActivePlan(subscriptions, "premium_agent_automation"),
+      enterprisePolicy: hasActivePlan(subscriptions, "enterprise_policy")
     },
     readiness: {
       apiConfigured: true,
       onchainConfigured: Boolean(config.contracts.usdc && config.contracts.x402Ledger && config.contracts.policyRegistry),
       circleConfigured: Boolean(config.circle.apiKey)
     }
+  };
+}
+
+function hasActivePlan(subscriptions: SubscriptionRecord[], plan: string) {
+  const now = Date.now();
+  return subscriptions.some((subscription) => (
+    subscription.plan === plan
+    && subscription.status === "active"
+    && (!subscription.currentPeriodEnd || Date.parse(subscription.currentPeriodEnd) > now)
+  ));
+}
+
+function summarizeIndexedEvents(events: IndexedChainEventRecord[]) {
+  const marketplaceSettlements = events.filter((event) => event.contract === "x402Ledger" && (event.event === "RequestSettled" || event.event === "AgentRequestSettled"));
+  const saveDeposits = events.filter((event) => event.contract === "saveEarnVault" && event.event === "Deposited");
+  const saveWithdrawals = events.filter((event) => event.contract === "saveEarnVault" && event.event === "Withdrawn");
+  const policySaves = events.filter((event) => event.contract === "policyRegistry" && event.event === "PolicyUpdated");
+
+  return {
+    indexedEvents: events.length,
+    marketplaceGrossUsdc: roundUsdc(marketplaceSettlements.reduce((sum, event) => sum + (event.amountUsdc ?? 0), 0)),
+    saveEarnDeposits: saveDeposits.length,
+    saveEarnDepositVolumeUsdc: roundUsdc(saveDeposits.reduce((sum, event) => sum + (event.amountUsdc ?? 0), 0)),
+    saveEarnWithdrawals: saveWithdrawals.length,
+    saveEarnWithdrawalVolumeUsdc: roundUsdc(saveWithdrawals.reduce((sum, event) => sum + (event.amountUsdc ?? 0), 0)),
+    policySaves: policySaves.length
   };
 }
 
@@ -283,16 +367,24 @@ function emptyStore(): StoreShape {
     subscriptions: [],
     escrows: [],
     notifications: [],
-    facilitatorEvents: []
+    facilitatorEvents: [],
+    indexedEvents: [],
+    indexerCursors: []
   };
 }
 
 function normalizeStore(value: unknown): StoreShape {
   const store = {...emptyStore(), ...(value && typeof value === "object" ? value : {})} as StoreShape;
   store.facilitatorEvents = Array.isArray(store.facilitatorEvents) ? store.facilitatorEvents : [];
+  store.indexedEvents = Array.isArray(store.indexedEvents) ? store.indexedEvents : [];
+  store.indexerCursors = Array.isArray(store.indexerCursors) ? store.indexerCursors : [];
   store.services = store.services.map((service) => ({
     ...service,
     manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash)
+  }));
+  store.agents = store.agents.map((agent) => ({
+    ...agent,
+    policy: normalizeAgentPolicy(agent.policy)
   }));
   store.payments = store.payments.map((payment) => {
     const grossAmountUsdc = payment.grossAmountUsdc ?? payment.amountUsdc;
@@ -305,7 +397,38 @@ function normalizeStore(value: unknown): StoreShape {
       publisherNetUsdc: payment.publisherNetUsdc ?? roundUsdc(grossAmountUsdc - platformFeeUsdc)
     };
   });
+  store.subscriptions = store.subscriptions.map((subscription) => ({
+    ...subscription,
+    planName: subscription.planName ?? titleFromPlanId(subscription.plan),
+    amountUsdc: Number(subscription.amountUsdc || 0),
+    interval: subscription.interval ?? "month",
+    txHash: subscription.txHash ?? null,
+    chainId: subscription.chainId ?? null,
+    activatedAt: subscription.activatedAt ?? (subscription.status === "active" ? subscription.createdAt : null),
+    currentPeriodStart: subscription.currentPeriodStart ?? (subscription.status === "active" ? subscription.createdAt : null),
+    currentPeriodEnd: subscription.currentPeriodEnd ?? null
+  }));
   return store;
+}
+
+function titleFromPlanId(planId: string) {
+  return planId
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeAgentPolicy(policy: AgentPolicy): AgentPolicy {
+  return {
+    dailyLimitUsdc: Number(policy.dailyLimitUsdc || 0),
+    transactionCapUsdc: Number(policy.transactionCapUsdc || 0),
+    contractAllowlist: Array.isArray(policy.contractAllowlist) ? policy.contractAllowlist : [],
+    recipientAllowlist: Array.isArray(policy.recipientAllowlist) ? policy.recipientAllowlist : [],
+    active: policy.active !== false,
+    txHash: policy.txHash ?? null,
+    v2: normalizePolicyV2(policy.v2)
+  };
 }
 
 function defaultManifestForService(name: string, endpointHash: string): ServiceManifest {
@@ -471,7 +594,7 @@ function database() {
   if (!pool) {
     pool = new Pool({
       connectionString: config.databaseUrl,
-      ssl: isLocalDatabase(config.databaseUrl) ? undefined : {rejectUnauthorized: false}
+      ssl: isLocalDatabase(config.databaseUrl) ? undefined : {rejectUnauthorized: config.databaseSslRejectUnauthorized}
     });
   }
   return pool;

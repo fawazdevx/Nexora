@@ -18,12 +18,27 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         bool active;
     }
 
+    struct PolicyV2 {
+        uint256 weeklyLimit;
+        uint256 monthlyLimit;
+        uint256 maxUnitsPerRequest;
+        uint256 cooldownSeconds;
+        uint64 expiresAt;
+        bool requireServiceAllowlist;
+        bool requireOnchainPolicy;
+    }
+
     mapping(address => AgentProfile) public agentProfiles;
     mapping(address => SpendingPolicy) public policies;
     mapping(address => mapping(address => bool)) public allowedContracts;
     mapping(address => mapping(address => bool)) public allowedRecipients;
     mapping(address => mapping(uint256 => uint256)) public dailySpend;
     mapping(address => bool) public facilitators;
+    mapping(address => PolicyV2) public policyV2;
+    mapping(address => mapping(bytes32 => bool)) public allowedServiceIds;
+    mapping(address => mapping(uint256 => uint256)) public weeklySpend;
+    mapping(address => mapping(uint256 => uint256)) public monthlySpend;
+    mapping(address => uint256) public lastSpendAt;
 
     event FacilitatorSet(address indexed facilitator, bool enabled);
     event AgentRegistered(address indexed agentWallet, address indexed operator, bytes32 arcNameHash);
@@ -38,6 +53,17 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     event ContractAllowlistUpdated(address indexed agentWallet, address indexed target, bool allowed);
     event RecipientAllowlistUpdated(address indexed agentWallet, address indexed recipient, bool allowed);
     event SpendRecorded(address indexed agentWallet, address indexed target, address indexed recipient, uint256 amount);
+    event PolicyV2Updated(
+        address indexed agentWallet,
+        uint256 weeklyLimit,
+        uint256 monthlyLimit,
+        uint256 maxUnitsPerRequest,
+        uint256 cooldownSeconds,
+        uint64 expiresAt,
+        bool requireServiceAllowlist,
+        bool requireOnchainPolicy
+    );
+    event ServiceAllowlistUpdated(address indexed agentWallet, bytes32 indexed serviceId, bool allowed);
 
     error NotOperatorOrOwner();
     error NotFacilitator();
@@ -47,6 +73,12 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     error DailyLimitExceeded();
     error ContractNotAllowed();
     error RecipientNotAllowed();
+    error WeeklyLimitExceeded();
+    error MonthlyLimitExceeded();
+    error ServiceNotAllowed();
+    error UnitsExceeded();
+    error CooldownActive();
+    error PolicyExpired();
 
     function initialize(address initialOwner) external {
         __Nexora_init(initialOwner);
@@ -175,6 +207,45 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         emit RecipientAllowlistUpdated(agentWallet, recipient, allowed);
     }
 
+    function setPolicyV2(
+        address agentWallet,
+        uint256 weeklyLimit,
+        uint256 monthlyLimit,
+        uint256 maxUnitsPerRequest,
+        uint256 cooldownSeconds,
+        uint64 expiresAt,
+        bool requireServiceAllowlist,
+        bool requireOnchainPolicy
+    ) external onlyOperatorOrOwner(agentWallet) {
+        policyV2[agentWallet] = PolicyV2({
+            weeklyLimit: weeklyLimit,
+            monthlyLimit: monthlyLimit,
+            maxUnitsPerRequest: maxUnitsPerRequest,
+            cooldownSeconds: cooldownSeconds,
+            expiresAt: expiresAt,
+            requireServiceAllowlist: requireServiceAllowlist,
+            requireOnchainPolicy: requireOnchainPolicy
+        });
+        emit PolicyV2Updated(
+            agentWallet,
+            weeklyLimit,
+            monthlyLimit,
+            maxUnitsPerRequest,
+            cooldownSeconds,
+            expiresAt,
+            requireServiceAllowlist,
+            requireOnchainPolicy
+        );
+    }
+
+    function setAllowedService(address agentWallet, bytes32 serviceId, bool allowed)
+        external
+        onlyOperatorOrOwner(agentWallet)
+    {
+        allowedServiceIds[agentWallet][serviceId] = allowed;
+        emit ServiceAllowlistUpdated(agentWallet, serviceId, allowed);
+    }
+
     function canSpend(address agentWallet, address targetContract, address recipient, uint256 amount)
         public
         view
@@ -191,6 +262,17 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         if (policy.recipientAllowlistEnabled && !allowedRecipients[agentWallet][recipient]) return false;
 
         return true;
+    }
+
+    function canSpendV2(
+        address agentWallet,
+        address targetContract,
+        address recipient,
+        uint256 amount,
+        bytes32 serviceId,
+        uint256 units
+    ) public view returns (bool) {
+        return _canSpend(agentWallet, targetContract, recipient, amount, serviceId, units);
     }
 
     function isAgentActive(address agentWallet) external view returns (bool) {
@@ -217,5 +299,99 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
 
         dailySpend[agentWallet][day] += amount;
         emit SpendRecorded(agentWallet, targetContract, recipient, amount);
+    }
+
+    function recordSpendV2(
+        address agentWallet,
+        address targetContract,
+        address recipient,
+        uint256 amount,
+        bytes32 serviceId,
+        uint256 units
+    ) external {
+        _recordSpend(agentWallet, targetContract, recipient, amount, serviceId, units);
+    }
+
+    function _recordSpend(
+        address agentWallet,
+        address targetContract,
+        address recipient,
+        uint256 amount,
+        bytes32 serviceId,
+        uint256 units
+    ) internal {
+        if (!facilitators[msg.sender]) revert NotFacilitator();
+
+        AgentProfile memory profile = agentProfiles[agentWallet];
+        SpendingPolicy memory policy = policies[agentWallet];
+        PolicyV2 memory advanced = policyV2[agentWallet];
+        if (!profile.active) revert AgentNotActive();
+        if (!policy.active) revert PolicyNotActive();
+        if (amount == 0 || amount > policy.transactionCap) revert TransactionCapExceeded();
+        if (advanced.expiresAt != 0 && block.timestamp > advanced.expiresAt) revert PolicyExpired();
+        if (advanced.maxUnitsPerRequest != 0 && units > advanced.maxUnitsPerRequest) revert UnitsExceeded();
+        if (advanced.requireServiceAllowlist && !allowedServiceIds[agentWallet][serviceId]) revert ServiceNotAllowed();
+        if (advanced.cooldownSeconds != 0 && lastSpendAt[agentWallet] != 0) {
+            if (block.timestamp < lastSpendAt[agentWallet] + advanced.cooldownSeconds) revert CooldownActive();
+        }
+
+        uint256 day = block.timestamp / 1 days;
+        if (dailySpend[agentWallet][day] + amount > policy.dailyLimit) revert DailyLimitExceeded();
+        uint256 week = block.timestamp / 1 weeks;
+        if (advanced.weeklyLimit != 0 && weeklySpend[agentWallet][week] + amount > advanced.weeklyLimit) {
+            revert WeeklyLimitExceeded();
+        }
+        uint256 month = _monthIndex(block.timestamp);
+        if (advanced.monthlyLimit != 0 && monthlySpend[agentWallet][month] + amount > advanced.monthlyLimit) {
+            revert MonthlyLimitExceeded();
+        }
+        if (policy.contractAllowlistEnabled && !allowedContracts[agentWallet][targetContract]) {
+            revert ContractNotAllowed();
+        }
+        if (policy.recipientAllowlistEnabled && !allowedRecipients[agentWallet][recipient]) {
+            revert RecipientNotAllowed();
+        }
+
+        dailySpend[agentWallet][day] += amount;
+        weeklySpend[agentWallet][week] += amount;
+        monthlySpend[agentWallet][month] += amount;
+        lastSpendAt[agentWallet] = block.timestamp;
+        emit SpendRecorded(agentWallet, targetContract, recipient, amount);
+    }
+
+    function _canSpend(
+        address agentWallet,
+        address targetContract,
+        address recipient,
+        uint256 amount,
+        bytes32 serviceId,
+        uint256 units
+    ) internal view returns (bool) {
+        AgentProfile memory profile = agentProfiles[agentWallet];
+        SpendingPolicy memory policy = policies[agentWallet];
+        PolicyV2 memory advanced = policyV2[agentWallet];
+        uint256 day = block.timestamp / 1 days;
+
+        if (!profile.active || !policy.active) return false;
+        if (amount == 0 || amount > policy.transactionCap) return false;
+        if (advanced.expiresAt != 0 && block.timestamp > advanced.expiresAt) return false;
+        if (advanced.maxUnitsPerRequest != 0 && units > advanced.maxUnitsPerRequest) return false;
+        if (advanced.requireServiceAllowlist && !allowedServiceIds[agentWallet][serviceId]) return false;
+        if (advanced.cooldownSeconds != 0 && lastSpendAt[agentWallet] != 0) {
+            if (block.timestamp < lastSpendAt[agentWallet] + advanced.cooldownSeconds) return false;
+        }
+        if (dailySpend[agentWallet][day] + amount > policy.dailyLimit) return false;
+        uint256 week = block.timestamp / 1 weeks;
+        if (advanced.weeklyLimit != 0 && weeklySpend[agentWallet][week] + amount > advanced.weeklyLimit) return false;
+        uint256 month = _monthIndex(block.timestamp);
+        if (advanced.monthlyLimit != 0 && monthlySpend[agentWallet][month] + amount > advanced.monthlyLimit) return false;
+        if (policy.contractAllowlistEnabled && !allowedContracts[agentWallet][targetContract]) return false;
+        if (policy.recipientAllowlistEnabled && !allowedRecipients[agentWallet][recipient]) return false;
+
+        return true;
+    }
+
+    function _monthIndex(uint256 timestamp) internal pure returns (uint256) {
+        return timestamp / 30 days;
     }
 }

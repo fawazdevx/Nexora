@@ -1,12 +1,14 @@
 import {useEffect, useState} from "react";
-import {Activity, RadioTower, ShieldCheck, Sparkles} from "lucide-react";
+import {Activity, RadioTower, Search, ShieldCheck, Sparkles} from "lucide-react";
 import {useAccount} from "wagmi";
 import {ArcNameLabel} from "@/components/ArcNameLabel";
-import {navItems} from "@/lib/data";
+import {findNav} from "@/lib/data";
 import {currentPath, navigateTo, NAVIGATE_EVENT, readNavigationPath} from "@/lib/router";
 import {WalletConnect} from "@/components/WalletConnect";
 import {Footer} from "@/components/Footer";
 import {NotificationsButton} from "@/components/Notifications";
+import {HeaderNav, MobileNav} from "@/components/HeaderNav";
+import {CommandPalette} from "@/components/CommandPalette";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
@@ -14,15 +16,14 @@ function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   navigateTo(href);
 }
 
-function isActive(pathname: string, href: string) {
-  return pathname === href || (href !== "/" && pathname.startsWith(href));
-}
-
 export function Shell({children}: {children: React.ReactNode}) {
   const [pathname, setPathname] = useState(() => currentPath());
-  const {address, isConnected} = useAccount();
+  const [scrolled, setScrolled] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const {address} = useAccount();
   const snapshot = useAppSnapshot();
   const publicPage = pathname === "/" || pathname === "/maintenance";
+  const activeNav = findNav(pathname);
 
   useEffect(() => {
     const handleLocation = (event: Event) => setPathname(readNavigationPath(event));
@@ -32,6 +33,24 @@ export function Shell({children}: {children: React.ReactNode}) {
       window.removeEventListener("popstate", handleLocation);
       window.removeEventListener(NAVIGATE_EVENT, handleLocation);
     };
+  }, []);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, {passive: true});
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   if (publicPage) {
@@ -48,35 +67,47 @@ export function Shell({children}: {children: React.ReactNode}) {
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(155,92,246,0.22),transparent_38rem),radial-gradient(circle_at_85%_45%,rgba(110,231,183,0.08),transparent_28rem),linear-gradient(180deg,rgba(255,255,255,0.04),transparent_28%)]" />
       <div className="pointer-events-none fixed inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjAyKSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-40" />
 
-      <header className="sticky top-0 z-30 border-b border-white/[0.1] bg-gradient-to-b from-void/95 to-void/90 px-3 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:px-4 md:px-6 md:py-4">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 sm:gap-4">
-          <a href="/app" onClick={(event) => navigate(event, "/app")} className="group flex shrink-0 flex-col gap-1 transition-all duration-200 hover:opacity-90">
-            <img src="/nexora-wordmark-tight.png" alt="Nexora" className="h-6 w-auto sm:h-7" />
-            <div className="hidden text-sm font-medium text-slate-400 sm:block">
-              {isConnected ? <ArcNameLabel address={address} fallback="Financial control for AI agents" /> : "Financial control for AI agents"}
-            </div>
+      <header className={`sticky top-0 z-30 border-b border-white/[0.1] bg-gradient-to-b from-void/95 to-void/90 px-3 backdrop-blur-2xl transition-all duration-300 sm:px-4 md:px-6 ${scrolled ? "py-2 shadow-[0_8px_32px_rgba(0,0,0,0.4)]" : "py-3 md:py-4"}`}>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-plasma/40 to-transparent" />
+        <div className="mx-auto flex max-w-[1440px] items-center gap-3 sm:gap-4">
+          <a href="/app" onClick={(event) => navigate(event, "/app")} className="group flex shrink-0 items-center gap-2.5">
+            <span className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-plasma to-violet text-sm font-bold text-white shadow-[0_0_18px_rgba(155,92,246,0.3)] transition-transform duration-200 group-hover:scale-105">
+              N
+              <span className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-inset ring-white/20" />
+            </span>
+            <img src="/nexora-wordmark-tight.png" alt="Nexora" className={`w-auto transition-all duration-300 ${scrolled ? "h-5" : "h-6 sm:h-7"}`} />
           </a>
 
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3">
-            <div className="hidden sm:block">
-              <NotificationsButton items={snapshot.data?.notifications ?? []} />
+          <HeaderNav pathname={pathname} />
+
+          {activeNav ? (
+            <div className="flex min-w-0 items-center gap-2 lg:hidden">
+              <span className="h-4 w-px bg-white/[0.14]" />
+              {activeNav.group ? <span className="hidden text-sm font-medium text-slate-500 sm:inline">{activeNav.group} ·</span> : null}
+              <span className="truncate text-sm font-semibold text-white">{activeNav.item.label}</span>
             </div>
+          ) : null}
+
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="hidden items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.04] px-3 py-2 text-sm text-slate-400 transition hover:border-plasma/30 hover:text-white md:flex"
+            >
+              <Search size={15} />
+              <span>Search</span>
+              <kbd className="rounded-md border border-white/[0.12] bg-white/[0.04] px-1.5 py-0.5 text-[11px] font-medium text-slate-500">⌘K</kbd>
+            </button>
+            <button type="button" onClick={() => setPaletteOpen(true)} className="secondary-button min-h-11 px-3 md:hidden" aria-label="Search">
+              <Search size={16} />
+            </button>
+            <NotificationsButton items={snapshot.data?.notifications ?? []} />
             <WalletConnect />
+            <MobileNav pathname={pathname} />
           </div>
         </div>
 
-        <nav className="mx-auto mt-4 flex max-w-[1440px] gap-2 overflow-x-auto pb-1 scrollbar-hide">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(pathname, item.href);
-            return (
-              <a key={item.href} href={item.href} onClick={(event) => navigate(event, item.href)} className={active ? "nav-chip nav-chip-active" : "nav-chip"}>
-                <Icon size={16} />
-                {item.label}
-              </a>
-            );
-          })}
-        </nav>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </header>
 
       <main className="relative px-4 py-8 md:px-6">

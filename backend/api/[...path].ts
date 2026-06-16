@@ -1,10 +1,15 @@
-import {corsHeaders, handleAppRequest} from "../src/router";
+import {corsHeaders, handleAppRequest} from "../src/router.js";
 
 type VercelRequestLike = {
   method?: string;
   url?: string;
   headers: {
     host?: string;
+    origin?: string;
+    authorization?: string;
+    "x-admin-secret"?: string;
+    "x-webhook-secret"?: string;
+    "x-indexer-secret"?: string;
   };
   body?: unknown;
 };
@@ -22,11 +27,12 @@ export default async function handler(req: VercelRequestLike, res: VercelRespons
     method: req.method ?? "GET",
     url: req.url ?? "/",
     host: req.headers.host,
+    headers: req.headers,
     body: typeof req.body === "object" && req.body !== null ? (req.body as Record<string, unknown>) : {}
   });
 
-  for (const [key, value] of Object.entries({...corsHeaders(), ...result.headers})) {
-    res.setHeader(key, value);
+  for (const [key, value] of Object.entries({...corsHeaders(req.headers.origin), ...result.headers})) {
+    if (typeof value === "string") res.setHeader(key, value);
   }
 
   if (result.body === undefined) {

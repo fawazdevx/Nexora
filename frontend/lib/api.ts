@@ -76,6 +76,15 @@ export type AppSnapshot = {
       recipientAllowlist: string[];
       active: boolean;
       txHash?: string | null;
+      v2?: {
+        weeklyLimitUsdc: number;
+        monthlyLimitUsdc: number;
+        maxUnitsPerRequest: number;
+        cooldownSeconds: number;
+        expiresAt: string | null;
+        serviceAllowlist: string[];
+        requireOnchainPolicy: boolean;
+      };
     };
   }>;
   services: Array<{
@@ -120,7 +129,21 @@ export type AppSnapshot = {
     txHash?: string | null;
     createdAt: string;
   }>;
-  subscriptions: Array<{id: string; operatorAddress: string; plan: string; amountUsdc: number; status: string}>;
+  subscriptions: Array<{
+    id: string;
+    operatorAddress: string;
+    plan: string;
+    planName?: string;
+    amountUsdc: number;
+    interval?: "month" | "one_time";
+    status: string;
+    txHash?: string | null;
+    chainId?: number | null;
+    activatedAt?: string | null;
+    currentPeriodStart?: string | null;
+    currentPeriodEnd?: string | null;
+    createdAt: string;
+  }>;
   escrows: Array<{
     id: string;
     chainEscrowId?: number | null;
@@ -166,6 +189,15 @@ export type AppSnapshot = {
     usdcSettled: number;
     earnRoutes: number;
     policySaves: number;
+    analyticsSource?: "indexed" | "local";
+    indexedEvents?: number;
+    saveEarnDepositVolumeUsdc?: number;
+    saveEarnWithdrawalVolumeUsdc?: number;
+  };
+  access: {
+    developerAnalytics: boolean;
+    premiumAgentAutomation: boolean;
+    enterprisePolicy: boolean;
   };
   readiness: {
     apiConfigured: boolean;
@@ -187,6 +219,10 @@ function buildApiUrl(path: string) {
   const base = API_URL.trim().replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${base}${normalizedPath}`;
+}
+
+export function apiUrlFor(path: string) {
+  return buildApiUrl(path);
 }
 
 function tryParseJson(raw: string) {

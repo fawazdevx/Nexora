@@ -1,38 +1,95 @@
-import {useState} from "react";
-import {ExternalLink, GitFork, Plus, ShieldCheck, Star} from "lucide-react";
+import {useMemo, useState} from "react";
+import {ArrowUpRight, ExternalLink, GitFork, Globe, Plus, Search, ShieldCheck, Sparkles, Star, Store, Twitter, Wallet, Loader2} from "lucide-react";
 import {useAccount} from "wagmi";
+import toast from "react-hot-toast";
 import {PageHeader} from "@/components/PageHeader";
+import {StatMetric} from "@/components/StatMetric";
+import {EmptyState} from "@/components/EmptyState";
+import {AgentPicker} from "@/components/AgentPicker";
+import {AgentAvatar} from "@/components/AgentAvatar";
 import {apiPost} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
-import {shortAddress} from "@/lib/arc";
+import {arcTestnet, shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {settleX402Request} from "@/lib/contracts";
+
+type Service = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["services"][number];
+type SortKey = "featured" | "priceAsc" | "priceDesc" | "name";
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
   navigateTo(href);
 }
 
+function kindIcon(kind: string) {
+  if (kind.includes("website")) return Globe;
+  if (kind.includes("github")) return GitFork;
+  if (kind.includes("x_account") || kind.includes("twitter")) return Twitter;
+  return ShieldCheck;
+}
+
+function txToast(title: string, hash: string) {
+  const href = `${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${hash}`;
+  return (
+    <span>
+      {title} ·{" "}
+      <a href={href} target="_blank" rel="noreferrer" className="font-semibold text-mint underline-offset-2 hover:underline">
+        View tx
+      </a>
+    </span>
+  );
+}
+
 export default function MarketplacePage() {
   const {address, isConnected} = useAccount();
-  const [status, setStatus] = useState("");
   const [serviceInputs, setServiceInputs] = useState<Record<string, string>>({});
   const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [query, setQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState("all");
+  const [sort, setSort] = useState<SortKey>("featured");
   const snapshot = useAppSnapshot();
   const agents = snapshot.data?.agents ?? [];
+  const services = snapshot.data?.services ?? [];
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
 
-  async function purchase(service: NonNullable<typeof snapshot.data>["services"][number]) {
+  const kinds = useMemo(() => Array.from(new Set(services.map((service) => service.manifest.kind))), [services]);
+  const avgPrice = services.length > 0 ? services.reduce((total, service) => total + Number(service.pricePerUnitUsdc || 0), 0) / services.length : 0;
+  const settledVolume = snapshot.data?.stats.usdcSettled ?? 0;
+
+  const visibleServices = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = services.filter((service) => {
+      if (kindFilter !== "all" && service.manifest.kind !== kindFilter) return false;
+      if (!q) return true;
+      return (
+        service.name.toLowerCase().includes(q) ||
+        service.manifest.description.toLowerCase().includes(q) ||
+        service.manifest.kind.toLowerCase().includes(q)
+      );
+    });
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      if (sort === "priceAsc") return Number(a.pricePerUnitUsdc) - Number(b.pricePerUnitUsdc);
+      if (sort === "priceDesc") return Number(b.pricePerUnitUsdc) - Number(a.pricePerUnitUsdc);
+      if (sort === "name") return a.name.localeCompare(b.name);
+      return Number(Boolean(b.featured)) - Number(Boolean(a.featured));
+    });
+    return sorted;
+  }, [services, query, kindFilter, sort]);
+
+  async function purchase(service: Service) {
     if (!isConnected || !address) {
-      setStatus("Connect your wallet before purchasing an x402 service.");
+      toast.error("Connect your wallet before purchasing an x402 service.");
       return;
     }
     if (!selectedAgent) {
-      setStatus("Create an agent wallet before purchasing an API.");
+      toast.error("Create an agent wallet before purchasing an API.");
       return;
     }
-    setStatus(`Authorizing x402 payment for ${service.name}...`);
+    setBusyId(service.id);
+    const toastId = toast.loading(`Authorizing x402 payment for ${service.name}…`);
     try {
       const requestHash = `0x${crypto.randomUUID().replaceAll("-", "").padEnd(64, "0")}` as `0x${string}`;
       const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number}}>("/api/x402/authorize", {
@@ -45,7 +102,7 @@ export default function MarketplacePage() {
       if (!service.chainServiceId) {
         throw new Error("This service is not published on-chain yet.");
       }
-      setStatus(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement for ${service.name}...`);
+      toast.loading(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement…`, {id: toastId});
       const walletSettlement = await settleX402Request({
         chainServiceId: service.chainServiceId,
         requestHash,
@@ -57,6 +114,7 @@ export default function MarketplacePage() {
         authorizationId: result.authorizationId,
         txHash: walletSettlement.settleHash
       });
+      toast.loading(`Executing ${service.name}…`, {id: toastId});
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
         payer: address,
         authorizationId: result.authorizationId,
@@ -64,13 +122,15 @@ export default function MarketplacePage() {
       });
       await snapshot.refetch();
       setServiceResults((current) => ({...current, [service.id]: execution.result}));
-      setStatus(
-        settlement.txHash
-          ? `Purchased ${service.name} for ${shortAddress(address)}. Settlement: ${settlement.txHash}`
-          : `Purchased ${service.name} with agent policy enforced.`
-      );
+      if (settlement.txHash) {
+        toast.success(txToast(`Purchased ${service.name}`, settlement.txHash), {id: toastId});
+      } else {
+        toast.success(`Purchased ${service.name} with agent policy enforced.`, {id: toastId});
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Service purchase failed");
+      toast.error(error instanceof Error ? error.message : "Service purchase failed", {id: toastId});
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -82,75 +142,202 @@ export default function MarketplacePage() {
         description="Discover monetized tools that agents can purchase per request under operator-defined policy limits."
         action={<a href="/marketplace/new" onClick={(event) => navigate(event, "/marketplace/new")} className="action-button"><Plus size={17} /> Publish API</a>}
       />
-      {status ? <p className="break-all rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.08] to-white/[0.04] p-4 text-sm font-medium text-slate-300 shadow-inner backdrop-blur-sm">{status}</p> : null}
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatMetric variant="panel" icon={Store} label="Services" value={services.length} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={Sparkles} label="Avg price" value={avgPrice} prefix="$" decimals={2} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={ShieldCheck} label="Settled volume" value={settledVolume} prefix="$" decimals={2} loading={snapshot.isLoading} accent />
+      </div>
+
       {snapshot.error ? <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta shadow-[0_0_20px_rgba(236,72,153,0.15)]">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace API unavailable"}</p> : null}
+
       <div className="panel flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2.5 text-sm font-bold text-white">
           <ShieldCheck size={18} className="text-mint drop-shadow-[0_0_12px_rgba(110,231,183,0.5)]" />
           Agent used for purchases
         </div>
-        <select className="field min-w-[260px]" value={selectedAgent?.id ?? selectedAgentId} onChange={(event) => setSelectedAgentId(event.target.value)}>
-          {agents.length === 0 ? <option value="">No agent wallet yet</option> : null}
-          {agents.map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.arcName ?? shortAddress(agent.operatorAddress)} - {agent.address ? shortAddress(agent.address) : "pending"}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="grid gap-5 lg:grid-cols-2">
-        {(snapshot.data?.services ?? []).map((service) => (
-          <article key={service.id} className="group panel relative overflow-hidden transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.15] to-transparent" />
-            <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-plasma/[0.06] blur-3xl transition-all duration-500 group-hover:bg-plasma/[0.12]" />
-            <div className="relative flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-bold text-white">{service.name}</h3>
-                <p className="mt-1 text-sm font-medium text-slate-400">Published by {shortAddress(service.publisherAddress)}</p>
-              </div>
-              <span className="status-pill border-plasma/25 bg-gradient-to-br from-plasma/15 to-plasma/10 font-semibold text-orchid shadow-[0_0_16px_rgba(155,92,246,0.2)]">x402</span>
-            </div>
-            <div className="relative mt-5 grid gap-2.5 text-sm sm:grid-cols-3">
-              <span className="surface px-3 py-2.5 font-medium">Price <b className="font-bold text-white">${service.pricePerUnitUsdc}</b></span>
-              <span className="surface px-3 py-2.5 font-medium">Ledger <b className="font-bold text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
-              <span className="surface px-3 py-2.5 font-medium">Fee <b className="font-bold text-white">{(service.manifest.platformFeeBps / 100).toFixed(2)}%</b></span>
-            </div>
-            <div className="relative mt-5 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
-              <p className="text-sm font-semibold leading-6 text-white">{service.manifest.description}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <span className="status-pill">{formatKind(service.manifest.kind)}</span>
-                <span className="status-pill">v{service.manifest.version}</span>
-                {service.manifest.outputSchema.slice(0, 4).map((item) => <span key={item} className="status-pill">{item}</span>)}
-              </div>
-            </div>
-            {serviceInputLabel(service) ? (
-              <label className="relative mt-5 grid gap-2.5 text-sm font-semibold text-slate-300">
-                {serviceInputLabel(service)}
-                <input
-                  className="field"
-                  value={serviceInputs[service.id] ?? ""}
-                  onChange={(event) => setServiceInputs((current) => ({...current, [service.id]: event.target.value}))}
-                  placeholder={serviceInputPlaceholder(service)}
-                />
-              </label>
-            ) : null}
-            <button onClick={() => void purchase(service)} className="action-button relative mt-5 w-full" disabled={!isConnected || !selectedAgent}>
-              {service.chainServiceId ? "Purchase per execution" : "Test purchase"}
-            </button>
-            <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button relative mt-3 w-full justify-center">
-              Public service page
-            </button>
-            <ServiceResult result={serviceResults[service.id]} />
-          </article>
-        ))}
-        {!snapshot.isLoading && (snapshot.data?.services.length ?? 0) === 0 ? (
-          <div className="panel lg:col-span-2">
-            <p className="text-sm font-medium text-slate-300">No APIs have been published yet. Publish the first x402 service from the developer console.</p>
-          </div>
-        ) : null}
+        <AgentPicker agents={agents} value={selectedAgent} onChange={setSelectedAgentId} />
       </div>
 
+      {/* Search + filter + sort */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.04] px-3">
+          <Search size={16} className="shrink-0 text-slate-500" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search services…"
+            className="w-full bg-transparent py-2.5 text-sm text-white outline-none placeholder:text-slate-500"
+          />
+        </div>
+        <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)} className="field max-w-[180px] bg-slate-950 text-sm text-white">
+          <option value="featured">Featured first</option>
+          <option value="priceAsc">Price: low to high</option>
+          <option value="priceDesc">Price: high to low</option>
+          <option value="name">Name: A–Z</option>
+        </select>
+      </div>
+      {kinds.length > 1 ? (
+        <div className="flex flex-wrap gap-2">
+          <FilterChip label="All" active={kindFilter === "all"} onClick={() => setKindFilter("all")} />
+          {kinds.map((kind) => (
+            <FilterChip key={kind} label={formatKind(kind)} active={kindFilter === kind} onClick={() => setKindFilter(kind)} />
+          ))}
+        </div>
+      ) : null}
+
+      {snapshot.isLoading ? (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {[0, 1].map((index) => (
+            <div key={index} className="panel space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="shimmer h-12 w-12 rounded-xl" />
+                <div className="flex-1 space-y-2">
+                  <div className="shimmer h-4 w-40 rounded" />
+                  <div className="shimmer h-3 w-24 rounded" />
+                </div>
+              </div>
+              <div className="shimmer h-16 w-full rounded-xl" />
+              <div className="shimmer h-11 w-full rounded-xl" />
+            </div>
+          ))}
+        </div>
+      ) : services.length === 0 ? (
+        !isConnected ? (
+          <EmptyState icon={<Wallet size={26} />} title="Connect your wallet" copy="Connect a wallet to browse and purchase x402 services, or publish your own." />
+        ) : (
+          <EmptyState
+            icon={<Store size={26} />}
+            title="No APIs published yet"
+            copy="Be the first to publish an x402 service priced per request in USDC."
+            action={<a href="/marketplace/new" onClick={(event) => navigate(event, "/marketplace/new")} className="action-button"><Plus size={16} /> Publish API</a>}
+          />
+        )
+      ) : visibleServices.length === 0 ? (
+        <EmptyState icon={<Search size={26} />} title="No matches" copy="No services match your search or filter. Try a different term or clear the filter." />
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {visibleServices.map((service) => (
+            <ServiceCard
+              key={service.id}
+              service={service}
+              busy={busyId === service.id}
+              disabled={!isConnected || !selectedAgent || Boolean(busyId)}
+              input={serviceInputs[service.id] ?? ""}
+              onInput={(value) => setServiceInputs((current) => ({...current, [service.id]: value}))}
+              onPurchase={() => void purchase(service)}
+              result={serviceResults[service.id]}
+            />
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function FilterChip({label, active, onClick}: {label: string; active: boolean; onClick: () => void}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg border px-3 py-1.5 text-sm font-semibold capitalize transition ${active ? "border-plasma/40 bg-gradient-to-br from-plasma/[0.2] to-plasma/[0.08] text-white" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-plasma/30 hover:text-white"}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ServiceCard({
+  service,
+  busy,
+  disabled,
+  input,
+  onInput,
+  onPurchase,
+  result
+}: {
+  service: Service;
+  busy: boolean;
+  disabled: boolean;
+  input: string;
+  onInput: (value: string) => void;
+  onPurchase: () => void;
+  result: unknown;
+}) {
+  const Icon = kindIcon(service.manifest.kind);
+  const inputLabel = serviceInputLabel(service);
+  return (
+    <article className="group panel relative overflow-hidden transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+      <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-plasma/[0.06] blur-3xl transition-all duration-500 group-hover:bg-plasma/[0.12]" />
+
+      <div className="relative flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/[0.1] bg-gradient-to-br from-plasma/15 to-plasma/5 text-orchid">
+            <Icon size={22} />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-lg font-bold text-white">{service.name}</h3>
+              {service.featured ? (
+                <span className="flex items-center gap-1 rounded-full border border-amber/30 bg-amber/10 px-2 py-0.5 text-[11px] font-bold text-amber">
+                  <Star size={11} />
+                  Featured
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-400">
+              <AgentAvatar seed={service.publisherAddress} size={16} />
+              {shortAddress(service.publisherAddress)}
+              <a href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/address/${service.publisherAddress}`} target="_blank" rel="noreferrer" className="text-slate-500 transition hover:text-orchid" aria-label="View publisher on explorer">
+                <ExternalLink size={12} />
+              </a>
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 rounded-xl border border-mint/25 bg-mint/10 px-3 py-1.5 text-right">
+          <p className="text-lg font-bold text-mint">${service.pricePerUnitUsdc}</p>
+          <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">/ request</p>
+        </div>
+      </div>
+
+      <div className="relative mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
+        <span className="surface px-3 py-2.5 font-medium">Ledger <b className="font-bold text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
+        <span className="surface px-3 py-2.5 font-medium">Platform fee <b className="font-bold text-white">{(service.manifest.platformFeeBps / 100).toFixed(2)}%</b></span>
+      </div>
+
+      <div className="relative mt-4 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
+        <p className="text-sm font-semibold leading-6 text-white">{service.manifest.description}</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <span className="status-pill">{formatKind(service.manifest.kind)}</span>
+          <span className="status-pill">v{service.manifest.version}</span>
+          {service.manifest.outputSchema.slice(0, 4).map((item) => <span key={item} className="status-pill">{item}</span>)}
+        </div>
+      </div>
+
+      {inputLabel ? (
+        <label className="relative mt-4 grid gap-2.5 text-sm font-semibold text-slate-300">
+          {inputLabel}
+          <input
+            className="field"
+            value={input}
+            onChange={(event) => onInput(event.target.value)}
+            placeholder={serviceInputPlaceholder(service)}
+          />
+        </label>
+      ) : null}
+
+      <div className="relative mt-4 flex items-center gap-3">
+        <button onClick={onPurchase} className="action-button flex-1" disabled={disabled}>
+          {busy ? <Loader2 size={16} className="animate-spin" /> : null}
+          {busy ? "Processing…" : service.chainServiceId ? "Purchase per execution" : "Test purchase"}
+        </button>
+        <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button px-3" aria-label="Public service page">
+          <ArrowUpRight size={16} />
+        </button>
+      </div>
+
+      {busy ? <div className="shimmer mt-4 h-20 w-full rounded-xl" /> : <ServiceResult result={result} />}
+    </article>
   );
 }
 
@@ -188,7 +375,7 @@ function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
   const gaps = arrayValue(data.gaps);
   const strengths = arrayValue(data.strengths);
   return (
-    <div className="mt-4 rounded-md border border-white/[0.08] bg-white/[0.035] p-4">
+    <div className="surface mt-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-orchid">Service result</p>
@@ -211,7 +398,7 @@ function WebsiteResult({data}: {data: Record<string, unknown>}) {
   const headings = arrayValue(data.headings).slice(0, 5);
   const url = stringValue(data.url);
   return (
-    <div className="mt-4 rounded-md border border-white/[0.08] bg-white/[0.035] p-4">
+    <div className="surface mt-4 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-orchid">Website analysis</p>
@@ -245,7 +432,7 @@ function WebsiteResult({data}: {data: Record<string, unknown>}) {
 function GitHubResult({data}: {data: Record<string, unknown>}) {
   const url = stringValue(data.url);
   return (
-    <div className="mt-4 rounded-md border border-white/[0.08] bg-white/[0.035] p-4">
+    <div className="surface mt-4 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-orchid">GitHub analysis</p>
@@ -278,7 +465,7 @@ function XResult({data}: {data: Record<string, unknown>}) {
   const account = objectValue(data.account);
   const metrics = objectValue(data.metrics);
   return (
-    <div className="mt-4 rounded-md border border-white/[0.08] bg-white/[0.035] p-4">
+    <div className="surface mt-4 p-4">
       <p className="text-xs uppercase tracking-[0.16em] text-orchid">X account analysis</p>
       <div className="mt-3 flex items-start justify-between gap-3">
         <div>

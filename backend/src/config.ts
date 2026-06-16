@@ -6,6 +6,7 @@ loadLocalEnv();
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   databaseUrl: process.env.DATABASE_URL ?? "",
+  databaseSslRejectUnauthorized: (process.env.PGSSL_REJECT_UNAUTHORIZED ?? "true").toLowerCase() !== "false",
   redisUrl: process.env.REDIS_URL ?? "",
   arc: {
     rpcUrl: process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.network",
@@ -42,8 +43,7 @@ export const config = {
   },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
-    entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? "",
-    kitKey: process.env.CIRCLE_KIT_KEY ?? process.env.KIT_KEY ?? process.env.VITE_CIRCLE_KIT_KEY ?? ""
+    entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? ""
   },
   contracts: {
     usdc: process.env.USDC_ADDRESS ?? "",
@@ -58,6 +58,17 @@ export const config = {
   facilitator: {
     signingMode: process.env.FACILITATOR_SIGNING_MODE ?? "wallet",
     privateKey: process.env.FACILITATOR_PRIVATE_KEY ?? ""
+  },
+  gateway: {
+    apiUrl: process.env.GATEWAY_API_URL ?? "https://gateway-api-testnet.circle.com/v1",
+    token: process.env.GATEWAY_TOKEN ?? "USDC"
+  },
+  security: {
+    authSecret: process.env.NEXORA_AUTH_SECRET ?? process.env.AUTH_SECRET ?? "nexora-local-dev-secret",
+    requireSignedAuth: (process.env.NEXORA_REQUIRE_SIGNED_AUTH ?? "false").toLowerCase() === "true",
+    adminSecret: process.env.NEXORA_ADMIN_SECRET ?? "",
+    webhookSecret: process.env.CIRCLE_WEBHOOK_SECRET ?? process.env.NEXORA_WEBHOOK_SECRET ?? "",
+    indexerSecret: process.env.NEXORA_INDEXER_SECRET ?? ""
   },
   integrations: {
     xBearerToken: process.env.X_BEARER_TOKEN ?? "",

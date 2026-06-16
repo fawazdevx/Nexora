@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react";
-import {ExternalLink, Landmark, ReceiptText, ShieldCheck, WalletCards} from "lucide-react";
+import {BarChart3, Bot, ExternalLink, Landmark, ReceiptText, ShieldCheck, WalletCards} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
 import {apiGet} from "@/lib/api";
 import {arcTestnet, shortAddress} from "@/lib/arc";
@@ -15,18 +15,27 @@ type RevenueDashboard = {
   };
   summary: {
     totalPlatformRevenueUsdc: number;
+    analyticsSource?: "indexed" | "local";
+    indexedEvents?: number;
     marketplaceGrossUsdc: number;
     facilitatorVolumeUsdc?: number;
     marketplaceFeesUsdc: number;
     escrowFeesUsdc: number;
+    saveEarnFeesUsdc?: number;
+    saveEarnDepositVolumeUsdc?: number;
+    saveEarnWithdrawalVolumeUsdc?: number;
     subscriptionRevenueUsdc: number;
     bookedPlanVolumeUsdc?: number;
+    developerAnalyticsRevenueUsdc?: number;
+    premiumAutomationRevenueUsdc?: number;
     settledPayments: number;
+    onchainMarketplaceSettlements?: number;
+    onchainEscrowReleases?: number;
     publishedServices: number;
     activeAgents: number;
     policySaves: number;
   };
-  bySource: Array<{source: string; revenueUsdc: number; amountUsdc?: number; kind?: "revenue" | "volume"; count: number}>;
+  bySource: Array<{source: string; revenueUsdc: number; amountUsdc?: number; kind?: "revenue" | "volume" | "usage"; count: number}>;
   feeReceipts: Array<{
     id: string;
     source: string;
@@ -69,6 +78,8 @@ export default function RevenuePage() {
         <RevenueMetric icon={<WalletCards size={18} />} label="Treasury balance" value={dashboard?.treasuryBalance?.available ? usd(dashboard.treasuryBalance.balanceUsdc) : "Unavailable"} detail="on-chain USDC balance" />
         <RevenueMetric icon={<ReceiptText size={18} />} label="Marketplace fees" value={usd(summary?.marketplaceFeesUsdc)} detail={`${summary?.settledPayments ?? 0} settled payments`} />
         <RevenueMetric icon={<ShieldCheck size={18} />} label="Escrow fees" value={usd(summary?.escrowFeesUsdc)} detail="released work agreements" />
+        <RevenueMetric icon={<BarChart3 size={18} />} label="Analytics plans" value={usd(summary?.developerAnalyticsRevenueUsdc)} detail="monthly developer analytics" />
+        <RevenueMetric icon={<Bot size={18} />} label="Automation plans" value={usd(summary?.premiumAutomationRevenueUsdc)} detail="monthly premium agents" />
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
@@ -84,7 +95,9 @@ export default function RevenuePage() {
             <p className="text-sm text-slate-400">Configured treasury</p>
             <p className="mt-2 break-all font-mono text-base text-white">{dashboard?.treasury || "Treasury address not configured"}</p>
             <p className="mt-3 text-xs leading-5 text-slate-500">
-              This dashboard separates app-recorded fees from gross volume. The on-chain treasury balance is the source of truth for USDC actually received.
+              {summary?.analyticsSource === "indexed"
+                ? `Using ${summary.indexedEvents ?? 0} indexed Arc events for contract activity. The treasury balance remains the source of truth for USDC actually received.`
+                : "Using local app records until the Arc indexer syncs contract activity. The treasury balance remains the source of truth for USDC actually received."}
             </p>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -95,6 +108,14 @@ export default function RevenuePage() {
             <div className="surface px-4 py-3">
               <p className="text-xs text-slate-500">Facilitator volume</p>
               <p className="mt-2 text-lg font-semibold text-white">{usd(summary?.facilitatorVolumeUsdc)}</p>
+            </div>
+            <div className="surface px-4 py-3">
+              <p className="text-xs text-slate-500">Save/Earn deposits</p>
+              <p className="mt-2 text-lg font-semibold text-white">{usd(summary?.saveEarnDepositVolumeUsdc)}</p>
+            </div>
+            <div className="surface px-4 py-3">
+              <p className="text-xs text-slate-500">Save/Earn withdrawals</p>
+              <p className="mt-2 text-lg font-semibold text-white">{usd(summary?.saveEarnWithdrawalVolumeUsdc)}</p>
             </div>
           </div>
           <div className="mt-4 grid gap-3">

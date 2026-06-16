@@ -1,4 +1,7 @@
-import {createPublicClient, createWalletClient, custom, formatUnits, http, keccak256, parseUnits, stringToHex, type Address, type Hash} from "viem";
+import {createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, keccak256, parseUnits, stringToHex, type Address, type Hash} from "viem";
+import {CurrencyAmount, Percent, Token, TradeType} from "@synthra-swap/sdk/core";
+import {Pool, Route} from "@synthra-swap/sdk/v3";
+import {SwapRouter as SynthraUniversalSwapRouter, Trade as SynthraUniversalTrade, UniswapTrade} from "@synthra-swap/sdk/universal-router";
 import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, baseSepoliaWagmiChain, supportedChains} from "@/lib/arc";
 import {apiPost} from "@/lib/api";
 
@@ -85,6 +88,33 @@ export const policyRegistryAbi = [
       {name: "allowed", type: "bool"}
     ],
     outputs: []
+  },
+  {
+    type: "function",
+    name: "setPolicyV2",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "agentWallet", type: "address"},
+      {name: "weeklyLimit", type: "uint256"},
+      {name: "monthlyLimit", type: "uint256"},
+      {name: "maxUnitsPerRequest", type: "uint256"},
+      {name: "cooldownSeconds", type: "uint256"},
+      {name: "expiresAt", type: "uint64"},
+      {name: "requireServiceAllowlist", type: "bool"},
+      {name: "requireOnchainPolicy", type: "bool"}
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "setAllowedService",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "agentWallet", type: "address"},
+      {name: "serviceId", type: "bytes32"},
+      {name: "allowed", type: "bool"}
+    ],
+    outputs: []
   }
 ] as const;
 
@@ -130,6 +160,16 @@ export const erc20Abi = [
   },
   {
     type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      {name: "owner", type: "address"},
+      {name: "spender", type: "address"}
+    ],
+    outputs: [{type: "uint256"}]
+  },
+  {
+    type: "function",
     name: "approve",
     stateMutability: "nonpayable",
     inputs: [
@@ -137,6 +177,65 @@ export const erc20Abi = [
       {name: "amount", type: "uint256"}
     ],
     outputs: [{type: "bool"}]
+  },
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "to", type: "address"},
+      {name: "amount", type: "uint256"}
+    ],
+    outputs: [{type: "bool"}]
+  }
+] as const;
+
+export const gatewayWalletTestnetAddress = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" as Address;
+export const gatewayMinterTestnetAddress = "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B" as Address;
+
+export const gatewayWalletAbi = [
+  {
+    type: "function",
+    name: "deposit",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "token", type: "address"},
+      {name: "value", type: "uint256"}
+    ],
+    outputs: []
+  }
+] as const;
+
+const permit2Address = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as Address;
+const maxUint160 = (1n << 160n) - 1n;
+
+const permit2Abi = [
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      {name: "owner", type: "address"},
+      {name: "token", type: "address"},
+      {name: "spender", type: "address"}
+    ],
+    outputs: [
+      {name: "amount", type: "uint160"},
+      {name: "expiration", type: "uint48"},
+      {name: "nonce", type: "uint48"}
+    ]
+  },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "token", type: "address"},
+      {name: "spender", type: "address"},
+      {name: "amount", type: "uint160"},
+      {name: "expiration", type: "uint48"}
+    ],
+    outputs: []
   }
 ] as const;
 
@@ -523,6 +622,10 @@ function chainById(chainId?: number) {
   return supportedChains.find((chain) => chain.id === chainId) ?? supportedChains[0];
 }
 
+export function isGatewayTestnetChain(chainId?: number) {
+  return chainId === arcTestnet.id || chainId === arbitrumSepoliaWagmiChain.id || chainId === baseSepoliaWagmiChain.id;
+}
+
 async function connectedChainId() {
   if (!window.ethereum) return arcTestnet.id;
   const value = await window.ethereum.request<string>({method: "eth_chainId"});
@@ -558,8 +661,12 @@ async function publicClient(chainId?: number) {
 }
 
 function xylonetRoute(tokenIn: XyloNetSwapToken, tokenOut: XyloNetSwapToken): Address | null {
-  if (tokenIn === "USDC" && tokenOut === "EURC") return xylonet.usdcEurcPool as Address;
-  if (tokenIn === "USDC" && tokenOut === "USYC") return xylonet.usdcUsycPool as Address;
+  if ((tokenIn === "USDC" && tokenOut === "EURC") || (tokenIn === "EURC" && tokenOut === "USDC")) {
+    return xylonet.usdcEurcPool as Address;
+  }
+  if ((tokenIn === "USDC" && tokenOut === "USYC") || (tokenIn === "USYC" && tokenOut === "USDC")) {
+    return xylonet.usdcUsycPool as Address;
+  }
   return null;
 }
 
@@ -589,6 +696,9 @@ export async function quoteXyloNetSwap(input: {tokenIn: XyloNetSwapToken; tokenO
     functionName: "getAmountOut",
     args: [pool, tokenIn.address, tokenOut.address, amountInRaw]
   });
+  if (amountOutRaw <= 0n) {
+    throw new Error("XyloNet returned zero output for this route.");
+  }
 
   return {
     venue: "XyloNet",
@@ -700,6 +810,7 @@ export async function executeXyloNetSwap(input: {
     functionName: "approve",
     args: [input.quote.router, input.quote.amountInRaw]
   });
+  await waitForSuccessfulReceipt(chainId, approveHash, "Token approval");
 
   const swapHash = await client.writeContract({
     address: input.quote.router,
@@ -730,33 +841,28 @@ export async function executeSynthraSwap(input: {
 
   const tokenIn = xylonetSwapTokens[input.quote.tokenIn];
   const tokenOut = xylonetSwapTokens[input.quote.tokenOut];
-  const baseBody = {
+  await ensureTokenAllowance({
     chainId,
-    tokenIn: tokenIn.address,
-    tokenOut: tokenOut.address,
-    amount: input.quote.amountInRaw.toString()
-  };
-
-  const approval = await apiPost<SynthraApiResponse>("/api/synthra/approval", {
-    ...baseBody,
-    owner: account
+    client,
+    owner: account,
+    token: tokenIn.address,
+    spender: permit2Address,
+    amount: input.quote.amountInRaw,
+    label: "Synthra Permit2 token approval"
   });
-  const approvalTx = extractTransaction(approval);
-  const approveHash = approvalTx ? await sendSynthraTransaction(client, approvalTx) : undefined;
-
-  const swap = await apiPost<SynthraApiResponse>("/api/synthra/swap", {
-    ...baseBody,
-    recipient: account,
-    sender: account,
-    slippageBps: input.slippageBps
+  const permit2Hash = await ensurePermit2Allowance({
+    chainId,
+    client,
+    owner: account,
+    token: tokenIn.address,
+    spender: input.quote.router,
+    amount: input.quote.amountInRaw
   });
-  const swapTx = extractTransaction(swap);
-  if (!swapTx) {
-    throw new Error("Synthra did not return an executable swap transaction.");
-  }
-  const swapHash = await sendSynthraTransaction(client, swapTx);
 
-  return {approveHash, swapHash};
+  const tx = synthraUniversalRouterTransaction({quote: input.quote, account, slippageBps: input.slippageBps});
+  const swapHash = await client.sendTransaction(tx);
+
+  return {approveHash: permit2Hash, swapHash};
 }
 
 function extractTransaction(value: unknown): SynthraApiTransaction | null {
@@ -788,11 +894,50 @@ function extractTransaction(value: unknown): SynthraApiTransaction | null {
   return visit(value);
 }
 
+function synthraUniversalRouterTransaction(input: {
+  quote: SynthraSwapQuote;
+  account: Address;
+  slippageBps: number;
+}): {to: Address; data: `0x${string}`; value?: bigint} {
+  const tokenIn = xylonetSwapTokens[input.quote.tokenIn];
+  const tokenOut = xylonetSwapTokens[input.quote.tokenOut];
+  const inputToken = new Token(arcTestnet.id, tokenIn.address, tokenIn.decimals, tokenIn.symbol, tokenIn.symbol, true);
+  const outputToken = new Token(arcTestnet.id, tokenOut.address, tokenOut.decimals, tokenOut.symbol, tokenOut.symbol, true);
+  const pool = new Pool(
+    inputToken,
+    outputToken,
+    input.quote.feeTier,
+    "79228162514264337593543950336",
+    "1",
+    0
+  );
+  const route = new Route([pool], inputToken, outputToken);
+  const trade = new SynthraUniversalTrade({
+    v3Routes: [{
+      routev3: route,
+      inputAmount: CurrencyAmount.fromRawAmount(inputToken, input.quote.amountInRaw.toString()),
+      outputAmount: CurrencyAmount.fromRawAmount(outputToken, input.quote.amountOutRaw.toString())
+    }],
+    tradeType: TradeType.EXACT_INPUT
+  });
+  const command = new UniswapTrade(trade, {
+    slippageTolerance: new Percent(input.slippageBps, 10_000),
+    recipient: input.account,
+    safeMode: true
+  });
+  const deadline = Math.floor(Date.now() / 1000) + 1_200;
+  const parameters = SynthraUniversalSwapRouter.swapCallParameters(command, {deadline});
+  const value = optionalBigInt(parameters.value);
+
+  return {
+    to: input.quote.router,
+    data: parameters.calldata as `0x${string}`,
+    ...(value === undefined ? {} : {value})
+  };
+}
+
 async function sendSynthraTransaction(client: SynthraTransactionClient, tx: SynthraApiTransaction): Promise<Hash> {
-  const to = tx.to ?? tx.target;
-  if (!isHexString(to)) {
-    throw new Error("Synthra transaction target is missing.");
-  }
+  const to = transactionTarget(tx);
 
   const data = tx.data ?? tx.calldata ?? "0x";
   if (!isHexString(data)) {
@@ -810,6 +955,86 @@ async function sendSynthraTransaction(client: SynthraTransactionClient, tx: Synt
   });
 }
 
+function transactionTarget(tx: SynthraApiTransaction): Address {
+  const to = tx.to ?? tx.target;
+  if (!isHexString(to)) {
+    throw new Error("Synthra transaction target is missing.");
+  }
+  return to as Address;
+}
+
+async function ensureTokenAllowance(input: {
+  chainId: number;
+  client: SynthraTransactionClient;
+  owner: Address;
+  token: Address;
+  spender: Address;
+  amount: bigint;
+  label: string;
+}) {
+  const reader = await publicClient(input.chainId);
+  const allowance = await reader.readContract({
+    address: input.token,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [input.owner, input.spender]
+  });
+  if (allowance >= input.amount) return undefined;
+
+  const approveHash = await input.client.sendTransaction({
+    to: input.token,
+    data: encodeApprove(input.spender, input.amount)
+  });
+  await waitForSuccessfulReceipt(input.chainId, approveHash, input.label);
+  return approveHash;
+}
+
+async function ensurePermit2Allowance(input: {
+  chainId: number;
+  client: SynthraTransactionClient;
+  owner: Address;
+  token: Address;
+  spender: Address;
+  amount: bigint;
+}) {
+  if (input.amount > maxUint160) {
+    throw new Error("Synthra amount exceeds Permit2 uint160 limit.");
+  }
+  const reader = await publicClient(input.chainId);
+  const [allowance, expiration] = await reader.readContract({
+    address: permit2Address,
+    abi: permit2Abi,
+    functionName: "allowance",
+    args: [input.owner, input.token, input.spender]
+  });
+  const minExpiration = BigInt(Math.floor(Date.now() / 1000) + 600);
+  if (allowance >= input.amount && BigInt(expiration) > minExpiration) return undefined;
+
+  const approveHash = await input.client.sendTransaction({
+    to: permit2Address,
+    data: encodeFunctionData({
+      abi: permit2Abi,
+      functionName: "approve",
+      args: [
+        input.token,
+        input.spender,
+        input.amount,
+        Math.floor(Date.now() / 1000) + 3_600
+      ]
+    })
+  });
+  await waitForSuccessfulReceipt(input.chainId, approveHash, "Synthra Permit2 allowance");
+  return approveHash;
+}
+
+async function waitForSuccessfulReceipt(chainId: number, hash: Hash, label: string) {
+  const receipt = await (await publicClient(chainId)).waitForTransactionReceipt({hash});
+  if (receipt.status !== "success") {
+    throw new Error(`${label} transaction reverted.`);
+  }
+  return receipt;
+}
+
 function optionalBigInt(value: unknown): bigint | undefined {
   if (typeof value === "bigint") return value;
   if (typeof value === "number" && Number.isFinite(value)) return BigInt(Math.trunc(value));
@@ -825,6 +1050,13 @@ function isHexString(value: unknown): value is `0x${string}` {
   return typeof value === "string" && value.startsWith("0x");
 }
 
+function encodeApprove(spender: Address, amount: bigint): `0x${string}` {
+  const selector = "0x095ea7b3";
+  const spenderWord = spender.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  const amountWord = amount.toString(16).padStart(64, "0");
+  return `${selector}${spenderWord}${amountWord}` as `0x${string}`;
+}
+
 export async function writeAgentPolicy(input: {
   agentWallet: string;
   operatorAddress: string;
@@ -834,6 +1066,16 @@ export async function writeAgentPolicy(input: {
   contractAllowlist?: string[];
   recipientAllowlist?: string[];
   active: boolean;
+  policyV2?: {
+    weeklyLimitUsdc?: string | number;
+    monthlyLimitUsdc?: string | number;
+    maxUnitsPerRequest?: string | number;
+    cooldownSeconds?: string | number;
+    expiresAt?: string | null;
+    serviceAllowlist?: string[];
+    previousServiceAllowlist?: string[];
+    requireOnchainPolicy?: boolean;
+  };
 }): Promise<Hash> {
   const {client, chainId, contracts} = await walletClient();
   const address = requireAddress(contracts.policyRegistry, "Policy registry address");
@@ -860,7 +1102,64 @@ export async function writeAgentPolicy(input: {
   });
   await reader.waitForTransactionReceipt({hash: policyHash});
 
+  if (input.policyV2) {
+    const serviceAllowlist = (input.policyV2.serviceAllowlist ?? []).map(serviceIdHash);
+    const previousServiceAllowlist = (input.policyV2.previousServiceAllowlist ?? []).map(serviceIdHash);
+    const v2Hash = await client.writeContract({
+      address,
+      abi: policyRegistryAbi,
+      functionName: "setPolicyV2",
+      args: [
+        input.agentWallet as Address,
+        parseUnits(String(input.policyV2.weeklyLimitUsdc || "0"), 6),
+        parseUnits(String(input.policyV2.monthlyLimitUsdc || "0"), 6),
+        BigInt(Number(input.policyV2.maxUnitsPerRequest || "0")),
+        BigInt(Number(input.policyV2.cooldownSeconds || "0")),
+        BigInt(expiryTimestamp(input.policyV2.expiresAt)),
+        serviceAllowlist.length > 0,
+        Boolean(input.policyV2.requireOnchainPolicy)
+      ]
+    });
+    await reader.waitForTransactionReceipt({hash: v2Hash});
+
+    const current = new Set(serviceAllowlist);
+    const staleServiceIds = previousServiceAllowlist.filter((serviceId) => !current.has(serviceId));
+    for (const serviceId of staleServiceIds) {
+      const serviceHash = await client.writeContract({
+        address,
+        abi: policyRegistryAbi,
+        functionName: "setAllowedService",
+        args: [input.agentWallet as Address, serviceId, false]
+      });
+      await reader.waitForTransactionReceipt({hash: serviceHash});
+    }
+
+    for (const serviceId of serviceAllowlist) {
+      const serviceHash = await client.writeContract({
+        address,
+        abi: policyRegistryAbi,
+        functionName: "setAllowedService",
+        args: [input.agentWallet as Address, serviceId, true]
+      });
+      await reader.waitForTransactionReceipt({hash: serviceHash});
+    }
+  }
+
   return policyHash;
+}
+
+function serviceIdHash(value: string): `0x${string}` {
+  const normalized = value.trim().toLowerCase();
+  if (/^\d+$/.test(normalized)) {
+    return `0x${BigInt(normalized).toString(16).padStart(64, "0")}` as `0x${string}`;
+  }
+  return keccak256(stringToHex(normalized));
+}
+
+function expiryTimestamp(value?: string | null) {
+  if (!value) return 0;
+  const timestamp = Math.floor(Date.parse(value) / 1000);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
 }
 
 export async function publishX402Service(input: {endpointHash: string; pricePerUnitUsdc: string}): Promise<{txHash: Hash; chainServiceId: number}> {
@@ -1052,6 +1351,57 @@ export async function depositSaveEarn(amountUsdc: string): Promise<{approveHash:
   return {approveHash, depositHash};
 }
 
+export async function depositGatewayUsdc(amountUsdc: string): Promise<{approveHash?: Hash; depositHash: Hash}> {
+  const {client, account, chainId, contracts} = await walletClient();
+  if (!isGatewayTestnetChain(chainId)) {
+    throw new Error("Switch to Arc Testnet, Arbitrum Sepolia, or Base Sepolia before depositing to Gateway.");
+  }
+
+  const usdc = requireAddress(contracts.usdc, "USDC address");
+  const amount = parseUnits(amountUsdc || "0", 6);
+  if (amount <= 0n) throw new Error("Amount must be greater than zero.");
+
+  const approveHash = await ensureTokenAllowance({
+    chainId,
+    client,
+    owner: account,
+    token: usdc,
+    spender: gatewayWalletTestnetAddress,
+    amount,
+    label: "Gateway USDC approval"
+  });
+
+  const depositHash = await client.writeContract({
+    address: gatewayWalletTestnetAddress,
+    abi: gatewayWalletAbi,
+    functionName: "deposit",
+    args: [usdc, amount]
+  });
+
+  await waitForSuccessfulReceipt(chainId, depositHash, "Gateway deposit");
+  return {approveHash, depositHash};
+}
+
+export async function payTreasuryUsdc(input: {treasury: string; amountUsdc: string}): Promise<{txHash: Hash; chainId: number}> {
+  const {client, chainId, contracts} = await walletClient();
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Switch to Arc Testnet to activate Nexora monthly plans.");
+  }
+  const usdc = requireAddress(contracts.usdc, "USDC token address");
+  const treasury = requireAddress(input.treasury || import.meta.env.VITE_TREASURY_ADDRESS, "Treasury address");
+  const amount = parseUnits(input.amountUsdc || "0", 6);
+  if (amount <= 0n) throw new Error("Plan amount must be greater than zero.");
+
+  const txHash = await client.writeContract({
+    address: usdc,
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [treasury, amount]
+  });
+  await waitForSuccessfulReceipt(chainId, txHash, "Plan payment");
+  return {txHash, chainId};
+}
+
 export async function withdrawSaveEarn(amountUsdc: string): Promise<Hash> {
   const {client, contracts} = await walletClient();
   const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
@@ -1116,6 +1466,20 @@ export async function readSaveEarnPosition(account: string) {
     totalAssets: formatUnits(totalAssets, 6),
     totalShares: formatUnits(totalShares, 6)
   };
+}
+
+export async function readUsdcBalance(account: string) {
+  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  const contracts = contractAddressesForChain(chainId);
+  const usdc = requireAddress(contracts.usdc, "USDC token address");
+  const client = await publicClient(chainId);
+  const balance = await client.readContract({
+    address: usdc,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [account as Address]
+  });
+  return formatUnits(balance, 6);
 }
 
 async function readSaveEarnEventTotals(account: string, vault: Address, fromBlock: bigint) {

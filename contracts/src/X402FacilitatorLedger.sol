@@ -129,8 +129,11 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
         grossAmount = service.pricePerUnit * units;
 
         if (policyRegistry.isAgentActive(payer)) {
-            if (!policyRegistry.canSpend(payer, address(this), service.publisher, grossAmount)) revert PolicyRejected();
-            policyRegistry.recordSpend(payer, address(this), service.publisher, grossAmount);
+            bytes32 serviceKey = bytes32(serviceId);
+            if (!policyRegistry.canSpendV2(payer, address(this), service.publisher, grossAmount, serviceKey, units)) {
+                revert PolicyRejected();
+            }
+            policyRegistry.recordSpendV2(payer, address(this), service.publisher, grossAmount, serviceKey, units);
         }
 
         settledRequests[requestHash] = true;
@@ -160,8 +163,11 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
 
         address agentWallet = msg.sender;
         grossAmount = service.pricePerUnit * units;
-        if (!policyRegistry.canSpend(agentWallet, address(this), service.publisher, grossAmount)) revert PolicyRejected();
-        policyRegistry.recordSpend(agentWallet, address(this), service.publisher, grossAmount);
+        bytes32 serviceKey = bytes32(serviceId);
+        if (!policyRegistry.canSpendV2(agentWallet, address(this), service.publisher, grossAmount, serviceKey, units)) {
+            revert PolicyRejected();
+        }
+        policyRegistry.recordSpendV2(agentWallet, address(this), service.publisher, grossAmount, serviceKey, units);
 
         settledRequests[requestHash] = true;
         uint256 platformFee = (grossAmount * feeBps) / 10_000;
