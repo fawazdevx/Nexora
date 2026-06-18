@@ -3,14 +3,7 @@ import {corsHeaders, handleAppRequest} from "./src/router.js";
 import {assertBodySize} from "./src/security.js";
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
-  const body = await readJson(req);
-  const result = await handleAppRequest({
-    method: req.method ?? "GET",
-    url: req.url ?? "/",
-    host: req.headers.host,
-    headers: normalizedHeaders(req.headers),
-    body
-  });
+  const result = await safeHandle(req);
 
   for (const [key, value] of Object.entries({...corsHeaders(headerValue(req.headers.origin)), ...result.headers})) {
     res.setHeader(key, value);
@@ -18,6 +11,26 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   res.writeHead(result.status, result.body === undefined ? undefined : {"content-type": "application/json"});
   res.end(result.body === undefined ? undefined : JSON.stringify(result.body));
+}
+
+async function safeHandle(req: IncomingMessage) {
+  try {
+    const body = await readJson(req);
+    return await handleAppRequest({
+      method: req.method ?? "GET",
+      url: req.url ?? "/",
+      host: req.headers.host,
+      headers: normalizedHeaders(req.headers),
+      body
+    });
+  } catch (error) {
+    return {
+      status: 500,
+      body: {
+        error: error instanceof Error ? error.message : "backend request failed"
+      }
+    };
+  }
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {

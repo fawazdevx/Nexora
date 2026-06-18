@@ -29,7 +29,12 @@ export default async function handler(req: VercelRequestLike, res: VercelRespons
     host: req.headers.host,
     headers: req.headers,
     body: typeof req.body === "object" && req.body !== null ? (req.body as Record<string, unknown>) : {}
-  });
+  }).catch((error) => ({
+    status: 500,
+    body: {
+      error: error instanceof Error ? error.message : "backend request failed"
+    }
+  }));
 
   for (const [key, value] of Object.entries({...corsHeaders(req.headers.origin), ...result.headers})) {
     if (typeof value === "string") res.setHeader(key, value);

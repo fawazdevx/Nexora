@@ -95,7 +95,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path === "/api/app") {
       const operator = optionalLimitedString(url.searchParams.get("operator"), "operator", 80);
-      await refreshPendingCircleWallets(operator);
+      await refreshPendingCircleWallets(operator).catch(() => undefined);
       return ok(await appSnapshot(operator));
     }
 
