@@ -1,7 +1,7 @@
 import {useEffect, useState} from "react";
-import {ExternalLink, Landmark, Network, ReceiptText, ShieldCheck} from "lucide-react";
+import {ExternalLink, KeyRound, Landmark, Network, ReceiptText, ShieldCheck} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
-import {apiGet} from "@/lib/api";
+import {apiGetWithHeaders} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 
 type DeploymentDashboard = {
@@ -36,14 +36,35 @@ type DeploymentDashboard = {
 export default function DeploymentDashboardPage() {
   const [dashboard, setDashboard] = useState<DeploymentDashboard | null>(null);
   const [error, setError] = useState("");
+  const [adminSecret, setAdminSecret] = useState(() => sessionStorage.getItem("nexora-admin-secret") ?? "");
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    void apiGet<DeploymentDashboard>("/api/admin/deployments")
+  function loadDashboard(secret = adminSecret) {
+    const trimmedSecret = secret.trim();
+    if (!trimmedSecret) {
+      setError("Enter the admin secret to view deployments.");
+      setDashboard(null);
+      return;
+    }
+
+    sessionStorage.setItem("nexora-admin-secret", trimmedSecret);
+    setLoading(true);
+    void apiGetWithHeaders<DeploymentDashboard>("/api/admin/deployments", {"x-admin-secret": trimmedSecret})
       .then((data) => {
         setDashboard(data);
         setError("");
       })
-      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : "Deployment dashboard unavailable"));
+      .catch((requestError) => {
+        setDashboard(null);
+        setError(requestError instanceof Error ? requestError.message : "Deployment dashboard unavailable");
+      })
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    if (adminSecret) loadDashboard(adminSecret);
+    // Run once on mount; the submit handler owns later reloads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -53,6 +74,33 @@ export default function DeploymentDashboardPage() {
         title="Chain deployments and treasury controls"
         description="Review Nexora deployments, enabled features, fee routing, and collected treasury controls."
       />
+
+      <section className="panel">
+        <form
+          className="flex flex-col gap-3 md:flex-row md:items-end"
+          onSubmit={(event) => {
+            event.preventDefault();
+            loadDashboard();
+          }}
+        >
+          <label className="flex-1">
+            <span className="text-sm text-slate-400">Admin secret</span>
+            <input
+              className="mt-2 w-full rounded-md border border-white/[0.08] bg-black/30 px-3 py-2 text-sm text-white outline-none transition focus:border-mint/50"
+              type="password"
+              value={adminSecret}
+              onChange={(event) => setAdminSecret(event.target.value)}
+              placeholder="Enter backend admin secret"
+              autoComplete="off"
+            />
+          </label>
+          <button className="inline-flex items-center justify-center gap-2 rounded-md bg-mint px-4 py-2 text-sm font-semibold text-black transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={loading}>
+            <KeyRound size={16} />
+            {loading ? "Loading..." : "Unlock dashboard"}
+          </button>
+        </form>
+        <p className="mt-3 text-xs leading-5 text-slate-500">The secret is sent as an admin header and kept only in this browser session.</p>
+      </section>
 
       {error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{error}</p> : null}
 

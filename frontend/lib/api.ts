@@ -29,6 +29,17 @@ export async function apiGet<T>(path: string): Promise<T> {
   return parseResponse<T>(response);
 }
 
+export async function apiGetWithHeaders<T>(path: string, headers: Record<string, string>): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(buildApiUrl(path), {headers});
+  } catch {
+    throw new Error(apiConnectionHint(path));
+  }
+
+  return parseResponse<T>(response);
+}
+
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   let response: Response;
   try {
