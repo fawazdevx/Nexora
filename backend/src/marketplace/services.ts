@@ -256,6 +256,38 @@ export async function executeBuiltInService(kind: ServiceManifest["kind"], args:
     return reviewGrantApplication(requiredString(args.application ?? args.summary, "application"));
   }
 
+  if (kind === "meeting_brief") {
+    return createMeetingBrief(requiredString(args.brief ?? args.goal ?? args.topic, "brief"));
+  }
+
+  if (kind === "arc_builder_research") {
+    return researchArcBuilder(requiredString(args.target ?? args.project ?? args.builder, "target"));
+  }
+
+  if (kind === "domain_name_research") {
+    return reviewDomainName(requiredString(args.domain ?? args.name, "domain"));
+  }
+
+  if (kind === "social_content_audit") {
+    return auditSocialContent(requiredString(args.content ?? args.post, "content"));
+  }
+
+  if (kind === "stablecoin_route_report") {
+    return analyzeStablecoinRoute(requiredString(args.route ?? args.flow, "route"));
+  }
+
+  if (kind === "policy_risk_review") {
+    return reviewPolicyRisk(requiredString(args.policy ?? args.details, "policy"));
+  }
+
+  if (kind === "launch_readiness_check") {
+    return reviewLaunchReadiness(requiredString(args.launch ?? args.plan, "launch"));
+  }
+
+  if (kind === "x402_integration_planner") {
+    return planX402Integration(requiredString(args.api ?? args.endpoint, "api"));
+  }
+
   return {
     summary: "Service executed",
     note: "Define a backend execution handler for this endpointHash to return structured output."
@@ -290,6 +322,14 @@ export function inferServiceKind(service: Pick<ServiceRecord, "name" | "endpoint
   if (marker.includes("wallet activity") || marker.includes("wallet summary") || marker.includes("wallet risk")) return "wallet_activity_summary";
   if (marker.includes("landing page") || marker.includes("copy reviewer") || marker.includes("conversion copy")) return "landing_page_copy_reviewer";
   if (marker.includes("grant") || marker.includes("application reviewer")) return "grant_application_reviewer";
+  if (marker.includes("meeting") || marker.includes("brief")) return "meeting_brief";
+  if (marker.includes("arc builder") || marker.includes("builder research")) return "arc_builder_research";
+  if (marker.includes("domain") || marker.includes("name research")) return "domain_name_research";
+  if (marker.includes("social") || marker.includes("content audit")) return "social_content_audit";
+  if (marker.includes("stablecoin route") || marker.includes("route report")) return "stablecoin_route_report";
+  if (marker.includes("policy risk") || marker.includes("agent policy review")) return "policy_risk_review";
+  if (marker.includes("launch readiness") || marker.includes("launch check")) return "launch_readiness_check";
+  if (marker.includes("x402 integration") || marker.includes("integration planner")) return "x402_integration_planner";
   return "generic";
 }
 
@@ -367,6 +407,94 @@ function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
       description: "Reviews a grant application summary for infrastructure clarity, revenue proof, and ecosystem fit.",
       inputSchema: [{name: "application", label: "Application summary", type: "text", required: true, placeholder: "Paste your grant application summary"}],
       outputSchema: ["score", "strengths", "gaps", "recommendations"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "meeting_brief") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Turns a meeting goal into a concise prep brief with agenda, context, questions, and follow-up actions.",
+      inputSchema: [{name: "brief", label: "Meeting goal", type: "text", required: true, placeholder: "Discuss Arc x402 integration with a wallet team"}],
+      outputSchema: ["summary", "agenda", "questions", "followUps"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "arc_builder_research") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Researches an Arc builder, project, or integration idea and returns fit, proof points, and collaboration angles.",
+      inputSchema: [{name: "target", label: "Builder or project", type: "text", required: true, placeholder: "Project name, URL, or wallet"}],
+      outputSchema: ["summary", "arcFit", "questions", "integrationIdeas"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "domain_name_research") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a domain or product name for positioning, trust, and launch-readiness signals.",
+      inputSchema: [{name: "domain", label: "Domain or name", type: "text", required: true, placeholder: "nexora.finance"}],
+      outputSchema: ["domain", "score", "risks", "suggestions", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "social_content_audit") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a post, thread draft, or announcement and returns clarity, audience fit, and CTA improvements.",
+      inputSchema: [{name: "content", label: "Post or thread draft", type: "text", required: true, placeholder: "Paste post copy or announcement"}],
+      outputSchema: ["score", "issues", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "stablecoin_route_report") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Summarizes a stablecoin route, swap, bridge, or Save/Earn flow for cost, risk, and integration readiness.",
+      inputSchema: [{name: "route", label: "Route or flow", type: "text", required: true, placeholder: "USDC on Arc to EURC using Synthra"}],
+      outputSchema: ["route", "riskLevel", "checks", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "policy_risk_review") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews agent policy settings and returns risk notes, suggested caps, and approval recommendations.",
+      inputSchema: [{name: "policy", label: "Policy details", type: "text", required: true, placeholder: "Daily 100 USDC, tx cap 20, allow x402 ledger"}],
+      outputSchema: ["riskLevel", "checks", "recommendedPolicy", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "launch_readiness_check") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Checks a product launch plan for docs, demo, contracts, receipts, security notes, and community-readiness.",
+      inputSchema: [{name: "launch", label: "Launch plan", type: "text", required: true, placeholder: "Paste launch plan, website, or demo checklist"}],
+      outputSchema: ["score", "strengths", "gaps", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "x402_integration_planner") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Creates a practical x402 integration checklist for a paid API, including requirements, SDK wiring, and settlement flow.",
+      inputSchema: [{name: "api", label: "API description", type: "text", required: true, placeholder: "Paid repo analyzer endpoint in Next.js"}],
+      outputSchema: ["summary", "steps", "requirements", "securityNotes"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };
@@ -459,6 +587,185 @@ function reviewGrantApplication(application: string) {
       "Explain why Arc-native USDC settlement improves the agent commerce workflow."
     ],
     summary: `Grant readiness score: ${score}/100. Improve by adding proof, revenue routing, and ecosystem-specific traction.`
+  };
+}
+
+function createMeetingBrief(brief: string) {
+  return {
+    status: "ok",
+    summary: `Brief prepared for: ${clip(brief, 120)}.`,
+    agenda: [
+      "Clarify the exact integration or business outcome.",
+      "Review current payment, wallet, or API flow.",
+      "Agree on the smallest test transaction or demo path.",
+      "Define follow-up owner, timeline, and success metric."
+    ],
+    questions: [
+      "Which wallet or backend owns the payment authorization?",
+      "What USDC amount should the first test use?",
+      "Which contract, endpoint, or SDK path should be integrated first?",
+      "What proof should be shared after the meeting?"
+    ],
+    followUps: [
+      "Send a short technical summary with links.",
+      "Share one receipt or transaction hash when available.",
+      "Create a narrow integration checklist before the next call."
+    ]
+  };
+}
+
+function researchArcBuilder(target: string) {
+  const hasUrl = /^https?:\/\//i.test(target);
+  return {
+    status: "ok",
+    target,
+    arcFit: /payment|usdc|agent|x402|defi|vault|swap|escrow/i.test(target) ? "high" : "medium",
+    summary: hasUrl
+      ? "Review the project website, docs, and transaction proof before outreach. Prioritize a concrete Arc-native USDC workflow."
+      : "Use this as a starting point for builder research. Look for live product proof, Arc-specific value, and a narrow integration ask.",
+    questions: [
+      "What Arc-specific user flow can both teams demo quickly?",
+      "Does the project need payments, escrow, agent policies, Save/Earn, or x402 monetization?",
+      "Which testnet contract or API endpoint is ready for integration?"
+    ],
+    integrationIdeas: [
+      "x402-paid endpoint protected by Nexora middleware.",
+      "Policy-controlled agent wallet for recurring API usage.",
+      "Public receipt link for each successful paid action.",
+      "Escrow workflow for service delivery or contributor tasks."
+    ]
+  };
+}
+
+function reviewDomainName(domain: string) {
+  const normalized = domain.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
+  const score = Math.max(45, Math.min(92, 70 + (normalized.includes(".") ? 8 : -5) + (normalized.length <= 18 ? 8 : -6) + (/finance|pay|agent|api|arc|vault/.test(normalized) ? 6 : 0)));
+  return {
+    status: "ok",
+    domain: normalized,
+    score,
+    risks: [
+      normalized.length > 22 ? "Long names are harder to remember and type." : "Name length is acceptable.",
+      normalized.includes("-") ? "Hyphens can reduce trust for finance products." : "No obvious hyphen trust issue.",
+      "Check trademark conflicts before using the name publicly."
+    ],
+    suggestions: [
+      "Keep the first landing-page headline literal and product-specific.",
+      "Reserve matching social handles before public launch.",
+      "Use clear security and testnet disclaimers for finance flows."
+    ],
+    summary: `Name readiness score: ${score}/100. The domain is usable if trust, handle availability, and brand clarity check out.`
+  };
+}
+
+function auditSocialContent(content: string) {
+  const score = Math.min(92, Math.max(40, 55 + (content.length > 180 ? 10 : 0) + (/built|demo|live|sdk|arc|usdc/i.test(content) ? 15 : 0) + (/\?/.test(content) ? 5 : 0)));
+  return {
+    status: "ok",
+    score,
+    issues: [
+      content.length > 1200 ? "The post may be too long for users to finish." : "Length is reasonable.",
+      /soon|revolutionary|game.?changer/i.test(content) ? "Replace hype terms with proof or a concrete workflow." : "Tone is mostly practical.",
+      /https?:\/\//i.test(content) ? "Link is present. Make sure it points to a working product or docs page." : "Add one clear link if the post is a launch announcement."
+    ],
+    recommendations: [
+      "Lead with what users can do today.",
+      "Mention the exact chain, asset, or SDK only where it helps action.",
+      "End with one specific question to drive replies."
+    ],
+    summary: `Content audit score: ${score}/100. Improve by adding proof, a tighter CTA, and concrete product flow.`
+  };
+}
+
+function analyzeStablecoinRoute(route: string) {
+  return {
+    status: "ok",
+    route,
+    riskLevel: /mainnet|large|production/i.test(route) ? "medium" : "low",
+    checks: [
+      "Confirm token decimals before quoting or approving.",
+      "Use a fresh quote immediately before transaction submission.",
+      "Set slippage bounds and display the minimum output.",
+      "For Arc, remember native gas is USDC but ERC-20 USDC still uses 6 decimals.",
+      "For Save/Earn, disclose strategy source, fee, and withdrawal assumptions."
+    ],
+    recommendations: [
+      "Start with a small test amount.",
+      "Show route provider, expected output, fee, and transaction receipt.",
+      "Keep fallback routes visible if a pool has no live quote."
+    ],
+    summary: "The route can be tested safely if quote freshness, decimals, slippage, and receipt proof are handled in the UI."
+  };
+}
+
+function reviewPolicyRisk(policy: string) {
+  const daily = numericHint(policy, /daily[^0-9]*(\d+(\.\d+)?)/i);
+  const txCap = numericHint(policy, /(tx|transaction)[^0-9]*(\d+(\.\d+)?)/i);
+  const riskLevel = daily > 500 || txCap > 100 || /no allow|empty allow|any contract/i.test(policy) ? "high" : daily > 100 || txCap > 25 ? "medium" : "low";
+  return {
+    status: "ok",
+    riskLevel,
+    checks: [
+      daily > 0 ? `Daily limit detected: ${daily} USDC.` : "No clear daily limit detected.",
+      txCap > 0 ? `Transaction cap detected: ${txCap} USDC.` : "No clear transaction cap detected.",
+      /allow/i.test(policy) ? "Allowlist language detected." : "No allowlist language detected.",
+      /cooldown|expiry|expire|weekly|monthly/i.test(policy) ? "Advanced V2 control language detected." : "Consider adding cooldown, expiry, weekly, or monthly controls."
+    ],
+    recommendedPolicy: {
+      dailyLimitUsdc: daily > 0 ? Math.min(daily, 100) : 50,
+      transactionCapUsdc: txCap > 0 ? Math.min(txCap, 25) : 10,
+      requireOnchainPolicy: true
+    },
+    summary: `Policy risk is ${riskLevel}. Keep early agent wallets conservative until the service has a clean payment history.`
+  };
+}
+
+function reviewLaunchReadiness(launch: string) {
+  const score = Math.min(100, 35 + (/docs|readme/i.test(launch) ? 12 : 0) + (/demo|video/i.test(launch) ? 12 : 0) + (/contract|address|tx|receipt/i.test(launch) ? 15 : 0) + (/security|audit|risk/i.test(launch) ? 10 : 0) + (/revenue|fee|analytics/i.test(launch) ? 8 : 0));
+  return {
+    status: "ok",
+    score,
+    strengths: [
+      /demo|video/i.test(launch) ? "Demo proof is included." : "Add a short demo video.",
+      /contract|address|tx|receipt/i.test(launch) ? "On-chain proof is referenced." : "Add contract addresses or receipt links.",
+      /docs|readme/i.test(launch) ? "Documentation is referenced." : "Add docs or README links."
+    ],
+    gaps: [
+      /security|audit|risk/i.test(launch) ? "Security notes are present." : "Add security status and known limitations.",
+      /revenue|fee|analytics/i.test(launch) ? "Revenue/analytics proof is present." : "Add how the product earns or measures usage."
+    ],
+    recommendations: [
+      "Keep the launch post focused on what users can do today.",
+      "Include one quickstart path and one transaction or receipt proof.",
+      "List testnet limitations clearly."
+    ],
+    summary: `Launch readiness score: ${score}/100. Ship when demo, docs, proof, security notes, and feedback questions are all clear.`
+  };
+}
+
+function planX402Integration(api: string) {
+  return {
+    status: "ok",
+    summary: `Integration plan prepared for: ${clip(api, 120)}.`,
+    steps: [
+      "Install @nexorafi/x402 in the API project.",
+      "Wrap the paid route with Nexora x402 middleware or the Next.js helper.",
+      "Set payTo, asset, network, price, resource, and facilitator URL.",
+      "Return structured JSON only after verify and settlement succeed.",
+      "Log the receipt id or transaction hash for support."
+    ],
+    requirements: [
+      "Publisher wallet address.",
+      "Arc USDC asset address.",
+      "Backend URL for the Nexora facilitator.",
+      "Input schema and expected output shape.",
+      "A small test amount for first settlement."
+    ],
+    securityNotes: [
+      "Do not expose private keys in frontend code.",
+      "Reject replayed nonces and stale authorization windows.",
+      "Set conservative pricing and rate limits while testing."
+    ]
   };
 }
 
@@ -667,6 +974,16 @@ function requiredString(value: unknown, label: string, max = 4_000) {
   const trimmed = value.trim();
   if (trimmed.length > max) throw new Error(`${label} is too long`);
   return trimmed;
+}
+
+function clip(value: string, max: number) {
+  return value.length > max ? `${value.slice(0, max - 1)}...` : value;
+}
+
+function numericHint(value: string, pattern: RegExp) {
+  const match = value.match(pattern);
+  const numeric = Number(match?.[1] ?? match?.[2] ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 function extractTagContent(html: string, tag: string) {

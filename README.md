@@ -2,38 +2,67 @@
 
 **The financial control layer for AI agents.**
 
-Nexora is an Arc-first, USDC-native infrastructure app for AI agents, developers, and service operators. It combines agent wallets, onchain spending policies, x402 facilitation, paid API publishing, escrow, swap routing, Save/Earn routing, reputation, and treasury tracking in one stack.
+Nexora is an Arc-first, USDC-native application for controlled agent commerce. It combines agent wallets, spending policies, x402 payment facilitation, paid API publishing, escrow, swap routing, Save/Earn routing, public receipts, risk alerts, and revenue analytics in one stack.
 
-Arc is the primary deployment because USDC is native gas on Arc, which makes agent payments and x402 settlement simpler to build and test.
+Arc is the primary deployment because USDC is native gas on Arc. That makes agent payments, stablecoin settlement, and x402 testing simpler: users do not need a separate gas token for Arc transactions.
 
-## What Nexora Does
+> Network status: Swap and Save/Earn currently work only on Arc. Arbitrum Sepolia and Base Sepolia are secondary test deployments for policy, x402, escrow, and contract-interaction coverage.
 
-- **Agent wallets:** create and manage Circle agent wallets for autonomous USDC activity.
-- **Onchain policies:** configure daily spend limits, transaction caps, contract allowlists, and recipient allowlists.
-- **x402 facilitator:** expose `/x402/supported`, `/x402/verify`, and `/x402/settle` endpoints for external paid APIs.
-- **Paid API marketplace:** publish API/service manifests with per-execution USDC pricing.
-- **USDC settlement:** record and settle paid requests through the Nexora facilitator ledger.
-- **Escrow:** create USDC work agreements with fund, submit, verify, release, and cancel flows.
-- **Save/Earn:** deposit USDC into the Nexora vault and route toward approved Arc strategies.
-- **Swap:** compare Arc liquidity routes for stablecoin swaps.
-- **Reputation and revenue:** track settled payments, service activity, treasury fees, and operator reputation.
+## Product Surface
 
-> Current network note: Swap and Save/Earn currently work only on Arc. Arbitrum Sepolia and Base Sepolia are secondary test deployments for contract interactions.
+- **Agent wallets:** create and manage Circle agent wallets for USDC activity.
+- **Policy engine:** daily limits, transaction caps, contract allowlists, recipient allowlists, service allowlists, cooldowns, policy expiry, weekly/monthly limits, and on-chain enforcement requirements.
+- **Policy simulation:** test an agent payment before it happens.
+- **Agent approval queue:** stage risky or manual agent payments for operator approval.
+- **Risk alerts:** detect missing allowlists, policy expiry, limit usage, repeated blocked payments, and approval-window issues.
+- **x402 facilitator:** expose `/x402/supported`, `/x402/verify`, and `/x402/settle` for external paid APIs.
+- **Developer SDK:** publish paid endpoints with `@nexorafi/x402`.
+- **Marketplace:** sell and buy per-request APIs priced in USDC.
+- **Escrow:** fund, submit, verify, and release USDC work agreements.
+- **Public receipts:** share safe payment, escrow, plan, and indexed on-chain receipt links.
+- **Save/Earn:** deposit USDC into Nexora Save/Earn routes on Arc.
+- **Swap:** compare Arc stablecoin routes and execute supported swaps.
+- **Revenue analytics:** separate treasury fees from marketplace volume, plan revenue, facilitator volume, Save/Earn activity, and escrow fees.
+- **On-chain indexer:** sync Arc contract events into analytics.
 
 ## Repository Layout
 
 ```text
-contracts/   Foundry smart contracts, tests, deployment scripts, upgrade scripts
+contracts/   Foundry contracts, tests, deployment scripts, upgrade scripts
 backend/     Node/TypeScript API, x402 facilitator, Circle wallet integration, marketplace execution
-frontend/    Vite/React app, RainbowKit wallet connect, operator console, landing page
-sdk/x402/    Developer SDK and middleware for integrating Nexora x402 payments
+frontend/    Vite/React app, RainbowKit wallet connect, operator console, marketplace UI
+sdk/x402/    Published x402 SDK and middleware package
 ```
+
+## Marketplace Services
+
+Nexora includes built-in x402 service templates so the marketplace has practical services available before external publishers join.
+
+Current service categories:
+
+- Website Growth Analyzer
+- GitHub Repo Analyzer
+- X Account Analyzer
+- Contract Safety Check
+- Wallet Activity Summary
+- Landing Page Copy Reviewer
+- Grant Application Reviewer
+- Meeting Brief Agent
+- Arc Builder Research
+- Domain Name Research
+- Social Content Audit
+- Stablecoin Route Report
+- Agent Policy Risk Review
+- Launch Readiness Check
+- x402 Integration Planner
+
+Services can be published on-chain through the x402 ledger when a chain service id is available. Built-in off-chain services can also be tested through the marketplace flow for demos and development.
 
 ## Smart Contracts
 
 Core contracts:
 
-- `NexoraPolicyRegistry`: agent registration, spending policy, allowlists, facilitator checks.
+- `NexoraPolicyRegistry`: agent registration, spending policies, allowlists, facilitator checks.
 - `X402FacilitatorLedger`: paid service publishing and USDC request settlement.
 - `OperatorReputation`: reputation signal storage.
 - `NexoraYieldRouter`: routes Save/Earn deposits to active strategies.
@@ -41,7 +70,7 @@ Core contracts:
 - `NexoraEscrow`: USDC work agreement escrow.
 - `NexoraProxy` / `NexoraUpgradeable`: upgradeable proxy pattern.
 
-Integrations should use proxy addresses, not implementation addresses.
+Use proxy addresses in frontend/backend runtime env. Keep implementation addresses only for deployment records and verification.
 
 ## x402 Facilitator
 
@@ -57,27 +86,25 @@ The facilitator validates:
 
 - x402 version and scheme
 - supported network and asset
-- payment recipient
-- max amount
-- authorization time window
+- recipient and max amount
+- authorization validity window
 - EIP-712 `TransferWithAuthorization` signature
-- replay protection through nonce/request hash tracking
+- nonce/request replay protection
 
 Settlement uses USDC `transferWithAuthorization(...)` on Arc.
 
-### Developer SDK
+## Developer SDK
 
-The local SDK lives in `sdk/x402` and provides:
+The SDK package is published as:
 
-- `NexoraX402Client`
-- `nexoraX402(...)` Express-style middleware
-- `withNexoraX402(...)` Next.js route helper
-- payment requirement builders
+```bash
+npm install @nexorafi/x402
+```
 
-Example:
+Example Express integration:
 
 ```ts
-import {nexoraX402} from "@nexora/x402";
+import {nexoraX402} from "@nexorafi/x402";
 
 app.get(
   "/paid-report",
@@ -86,7 +113,9 @@ app.get(
     payTo: "0xPublisherWallet",
     asset: "0x3600000000000000000000000000000000000000",
     price: "0.05",
-    network: "arc-testnet"
+    network: "arc-testnet",
+    resource: "paid-report",
+    description: "Paid report"
   }),
   (_req, res) => {
     res.json({report: "paid result"});
@@ -94,16 +123,14 @@ app.get(
 );
 ```
 
-See `sdk/x402/README.md` for Express and Next.js examples.
+The SDK includes:
 
-Backend-only facilitator env:
+- `NexoraX402Client`
+- `nexoraX402(...)` Express-style middleware
+- `withNexoraX402(...)` Next.js route helper
+- payment requirement builders
 
-```env
-FACILITATOR_SIGNING_MODE=server
-FACILITATOR_PRIVATE_KEY=0x...
-```
-
-Use a dedicated facilitator wallet. Do not use your owner/deployer key, and never expose this key to the frontend.
+See [`sdk/x402/README.md`](sdk/x402/README.md) for full SDK examples.
 
 ## Local Development
 
@@ -134,24 +161,22 @@ cd frontend
 npm run dev
 ```
 
-Run contract tests:
-
-```bash
-cd contracts
-forge test -vvv
-```
-
-Typecheck:
+Run checks:
 
 ```bash
 cd backend
 npm run typecheck
+npm run build
 
 cd ../frontend
 npm run typecheck
+npm run build
+
+cd ../contracts
+forge test -vvv
 ```
 
-## Environment Variables
+## Environment
 
 ### Backend
 
@@ -177,7 +202,7 @@ CIRCLE_API_KEY=
 CIRCLE_ENTITY_SECRET=
 
 NEXORA_AUTH_SECRET=
-NEXORA_REQUIRE_SIGNED_AUTH=false
+NEXORA_REQUIRE_SIGNED_AUTH=true
 NEXORA_ADMIN_SECRET=
 NEXORA_WEBHOOK_SECRET=
 NEXORA_INDEXER_SECRET=
@@ -192,7 +217,11 @@ FACILITATOR_PRIVATE_KEY=
 
 SYNTHRA_API_KEY=
 SYNTHRA_API_URL=https://trading-api.synthra.org
+
+NEXORA_MARKETPLACE_PUBLISHER_ADDRESS=
 ```
+
+Use a dedicated facilitator wallet for `FACILITATOR_PRIVATE_KEY`. Do not use an owner/deployer wallet, and never expose this key to frontend code.
 
 Optional multi-chain testnet env:
 
@@ -238,9 +267,11 @@ VITE_NEXORA_ESCROW_ADDRESS=
 
 VITE_ENABLE_ARBITRUM_SEPOLIA=true
 VITE_ENABLE_BASE_SEPOLIA=true
+VITE_MAINTENANCE_MODE=false
+NEXT_PUBLIC_MAINTENANCE_MODE=false
 ```
 
-## Deploy Contracts
+## Contract Deployment
 
 From `contracts/`:
 
@@ -258,10 +289,10 @@ forge script script/DeployNexora.s.sol:DeployNexora \
   -vvv
 ```
 
-For upgrades, keep app env pointed at the same proxy addresses and run the relevant script:
+Upgrade scripts keep proxy addresses stable:
 
 ```bash
-forge script script/UpgradeNexora.s.sol:UpgradePolicyRegistry \
+forge script script/UpgradeNexora.s.sol:UpgradeX402Ledger \
   --rpc-url $ARC_RPC_URL \
   --chain-id $ARC_CHAIN_ID \
   --account deploytestKey \
@@ -279,34 +310,44 @@ Available upgrade entrypoints:
 - `UpgradeSaveEarnVault`
 - `UpgradeNexoraEscrow`
 
-## Example Product Flows
+## Common Flows
 
-### Save an Agent Policy
+### Save An Agent Policy
 
 1. Connect wallet.
 2. Create or select an agent wallet.
-3. Set daily limit and transaction cap.
-4. Optionally choose contract and recipient allowlists.
-5. Save policy onchain.
+3. Set daily limit, transaction cap, and optional V2 controls.
+4. Add contract, recipient, and service allowlists where needed.
+5. Simulate a payment before saving.
+6. Save policy on-chain.
 
-### Publish a Paid API
+### Publish A Paid API
 
 1. Open Marketplace publish flow.
-2. Choose a service template such as Website Analyzer or GitHub Repo Analyzer.
-3. Set endpoint manifest and USDC price.
-4. Publish onchain through the x402 ledger.
+2. Choose a service template or define a custom manifest.
+3. Set endpoint hash and per-request USDC price.
+4. Publish through the x402 ledger if on-chain publishing is configured.
+5. Integrate the route with `@nexorafi/x402`.
 
-### Use x402 Facilitator
+### Use The x402 Facilitator
 
-1. Your API returns x402 payment requirements.
+1. API returns x402 payment requirements.
 2. User or agent signs a USDC authorization.
-3. Your API calls `POST /x402/verify`.
-4. Your API calls `POST /x402/settle`.
-5. Nexora settles the payment on Arc and records it.
+3. API calls `POST /x402/verify`.
+4. API calls `POST /x402/settle`.
+5. Nexora settles the payment on Arc and records a receipt.
 
-### Index Onchain Analytics
+### Share A Public Receipt
 
-The backend can index Arc contract events into the app store so revenue, policy, escrow, Save/Earn, and marketplace analytics are backed by chain events instead of only local app records.
+Receipt pages use:
+
+```text
+/receipts/<receipt-id>
+```
+
+Receipts expose safe payment metadata only: amount, fee, net, parties, status, timestamps, transaction hash, and explorer URL. They do not expose private escrow deliverables or paid API execution output.
+
+### Index On-chain Analytics
 
 ```bash
 curl -X POST https://your-backend.example/api/indexer/arc/sync \
@@ -315,21 +356,31 @@ curl -X POST https://your-backend.example/api/indexer/arc/sync \
 curl https://your-backend.example/api/indexer/arc/status
 ```
 
-Set `ARC_INDEXER_FROM_BLOCK` to the earliest Nexora deployment block for the current Arc proxy deployment. Keep `ARC_INDEXER_MAX_BLOCKS` modest on serverless deployments so each sync scans a bounded block range. Run the sync endpoint from a cron job until cursors reach the current safe block.
+Set `ARC_INDEXER_FROM_BLOCK` to the earliest block for the current Arc proxy deployment. Keep `ARC_INDEXER_MAX_BLOCKS` modest on serverless deployments and call the sync endpoint from a cron job until cursors reach the current safe block.
 
-### Escrow
+## Revenue Model
 
-1. Creator creates a work agreement.
-2. Creator funds escrow.
-3. Counterparty submits work.
-4. Creator verifies and releases USDC.
+Implemented revenue surfaces:
+
+- x402 marketplace platform fees
+- escrow release fees
+- Save/Earn withdrawal fees, when indexed from contract events
+- developer analytics monthly plan
+- premium agent automation monthly plan
+- other paid plan revenue
+- verified builder one-time plan
+
+Volume and revenue are intentionally separated in the dashboards. Gross marketplace volume and booked plan volume are not counted as treasury revenue unless the fee or payment is actually collected.
 
 ## Security Notes
 
 - Contracts are upgradeable; production deployments should use multisig/timelock admin controls.
-- The facilitator private key must be backend-only and dedicated to settlement.
-- Serverless deployments should use durable storage through `DATABASE_URL`; `/tmp` storage is not persistent.
-- External vault, DEX, and strategy integrations should be reviewed separately before mainnet usage.
+- Use proxy addresses in app env.
+- Keep facilitator keys backend-only.
+- Set `NEXORA_REQUIRE_SIGNED_AUTH=true` outside local development.
+- Use durable storage through `DATABASE_URL`; serverless `/tmp` storage is not persistent.
+- Restrict CORS with `CORS_ALLOWED_ORIGINS` in production.
+- Review external vault, DEX, route, and strategy integrations separately before mainnet usage.
 - Nexora is currently testnet software.
 
 ## Status

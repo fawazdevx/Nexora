@@ -1,15 +1,23 @@
-import {useState} from "react";
-import {Bot, ExternalLink, Gauge, ShieldCheck, Wallet} from "lucide-react";
+import {useMemo, useState} from "react";
+import {Bot, ClipboardCheck, ExternalLink, Gauge, ShieldCheck, Wallet} from "lucide-react";
 import {useAccount} from "wagmi";
 import {PolicyForm} from "@/components/PolicyForm";
 import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
 import {AgentAvatar} from "@/components/AgentAvatar";
 import {EmptyState} from "@/components/EmptyState";
+import {PolicySimulationPanel} from "@/components/PolicySimulationPanel";
+import {RiskAlertsPanel} from "@/components/RiskAlertsPanel";
 import {arcTestnet, shortAddress} from "@/lib/arc";
+import {timeAgo} from "@/lib/time";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
 type Agent = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["agents"][number];
+
+function startOfToday() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+}
 
 export default function PoliciesPage() {
   const {isConnected} = useAccount();
@@ -17,8 +25,21 @@ export default function PoliciesPage() {
   const agents = snapshot.data?.agents ?? [];
   const activePolicies = agents.filter((agent) => agent.policy.active);
   const onchainPolicies = agents.filter((agent) => agent.policy.txHash);
-  const v2Policies = agents.filter((agent) => hasPolicyV2(agent));
+  const pendingApprovals = (snapshot.data?.approvalRequests ?? []).filter((request) => request.status === "pending");
+  const riskAlerts = snapshot.data?.riskAlerts ?? [];
   const [selectedAgentId, setSelectedAgentId] = useState("");
+
+  // Derive each agent's USD spend today from settled payments it made.
+  const spentByAgent = useMemo(() => {
+    const cutoff = startOfToday();
+    const map: Record<string, number> = {};
+    for (const payment of snapshot.data?.payments ?? []) {
+      if (payment.status !== "settled" || !payment.agentId) continue;
+      if (Date.parse(payment.createdAt) < cutoff) continue;
+      map[payment.agentId] = (map[payment.agentId] ?? 0) + Number(payment.amountUsdc || 0);
+    }
+    return map;
+  }, [snapshot.data?.payments]);
 
   function selectAgent(id: string) {
     setSelectedAgentId(id);
@@ -37,8 +58,12 @@ export default function PoliciesPage() {
         <StatMetric variant="panel" icon={ShieldCheck} label="Active policies" value={activePolicies.length} loading={snapshot.isLoading} accent />
         <StatMetric variant="panel" icon={Gauge} label="On-chain saves" value={onchainPolicies.length} loading={snapshot.isLoading} />
         <StatMetric variant="panel" icon={Bot} label="Managed agents" value={agents.length} loading={snapshot.isLoading} />
-        <StatMetric variant="panel" icon={Gauge} label="V2 controls" value={v2Policies.length} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={ClipboardCheck} label="Open actions" value={pendingApprovals.length + riskAlerts.length} loading={snapshot.isLoading} />
       </div>
+
+      <RiskAlertsPanel />
+
+      <PolicySimulationPanel />
 
       <section className="panel">
         <p className="section-kicker">Configure policy</p>
@@ -70,9 +95,9 @@ export default function PoliciesPage() {
                 <thead className="border-b border-white/[0.08] text-xs uppercase tracking-wider text-slate-500">
                   <tr>
                     <th className="py-3 font-semibold">Agent</th>
-                    <th className="font-semibold">Limits</th>
-                    <th className="font-semibold">Contracts</th>
-                    <th className="font-semibold">Recipients</th>
+                    <th className="font-semibold">Spent today</th>
+                    <th className="font-semibold">Allowlists</th>
+                    <th className="font-semibold">Expiry</th>
                     <th className="font-semibold">V2</th>
                     <th className="font-semibold">Status</th>
                   </tr>
@@ -89,15 +114,18 @@ export default function PoliciesPage() {
                           <AgentAvatar seed={agent.address ?? agent.id} label={agent.arcName ?? agent.address} size={34} />
                           <div className="min-w-0">
                             <p className="font-medium text-white">{agent.arcName ?? shortAddress(agent.operatorAddress)}</p>
-                            <p className="mt-0.5 font-mono text-xs text-slate-500">{agent.address ? shortAddress(agent.address) : "Circle pending"}</p>
+                            <p className="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-slate-500">
+                              {agent.address ? shortAddress(agent.address) : "Circle pending"}
+                              {agent.createdAt ? <span className="text-slate-600">· {timeAgo(agent.createdAt)}</span> : null}
+                            </p>
                           </div>
                         </div>
                       </td>
                       <td>
-                        <LimitBar daily={Number(agent.policy.dailyLimitUsdc)} cap={Number(agent.policy.transactionCapUsdc)} />
+                        <SpendBar daily={Number(agent.policy.dailyLimitUsdc)} spent={spentByAgent[agent.id] ?? 0} />
                       </td>
-                      <td className="text-white">{agent.policy.contractAllowlist.length}</td>
-                      <td className="text-white">{agent.policy.recipientAllowlist.length}</td>
+                      <td className="text-xs text-slate-400">{agent.policy.contractAllowlist.length}c · {agent.policy.recipientAllowlist.length}r</td>
+                      <td><ExpiryCell agent={agent} /></td>
                       <td><V2Badge agent={agent} /></td>
                       <td><StatusPill agent={agent} /></td>
                     </tr>
@@ -121,9 +149,12 @@ export default function PoliciesPage() {
                     <StatusPill agent={agent} />
                   </div>
                   <div className="mt-3">
-                    <LimitBar daily={Number(agent.policy.dailyLimitUsdc)} cap={Number(agent.policy.transactionCapUsdc)} />
+                    <SpendBar daily={Number(agent.policy.dailyLimitUsdc)} spent={spentByAgent[agent.id] ?? 0} />
                   </div>
-                  <p className="mt-2 text-xs text-slate-500">{agent.policy.contractAllowlist.length} contracts · {agent.policy.recipientAllowlist.length} recipients · {agent.policy.v2?.serviceAllowlist.length ?? 0} services</p>
+                  <p className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+                    <span>{agent.policy.contractAllowlist.length} contracts · {agent.policy.recipientAllowlist.length} recipients</span>
+                    <ExpiryCell agent={agent} />
+                  </p>
                 </button>
               ))}
             </div>
@@ -157,18 +188,56 @@ function V2Badge({agent}: {agent: Agent}) {
   );
 }
 
-function LimitBar({daily, cap}: {daily: number; cap: number}) {
-  const ratio = daily > 0 ? Math.min(100, (cap / daily) * 100) : 0;
+function SpendBar({daily, spent}: {daily: number; spent: number}) {
+  const ratio = daily > 0 ? Math.min(100, (spent / daily) * 100) : 0;
+  const near = ratio >= 80;
   return (
     <div className="min-w-[140px]">
       <div className="flex items-center justify-between text-xs">
-        <span className="font-semibold text-white">${cap} <span className="font-normal text-slate-500">/ ${daily}</span></span>
+        <span className="font-semibold text-white">${spent.toFixed(2)} <span className="font-normal text-slate-500">/ ${daily}</span></span>
+        <span className={near ? "text-amber" : "text-slate-500"}>{ratio.toFixed(0)}%</span>
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-        <div className="h-full rounded-full bg-gradient-to-r from-plasma to-mint" style={{width: `${ratio}%`}} />
+        <div className={`h-full rounded-full ${near ? "bg-amber" : "bg-gradient-to-r from-plasma to-mint"}`} style={{width: `${ratio}%`}} />
       </div>
     </div>
   );
+}
+
+function ExpiryCell({agent}: {agent: Agent}) {
+  const v2 = agent.policy.v2;
+  const cooldown = v2?.cooldownSeconds ?? 0;
+  const expiresAt = v2?.expiresAt ? Date.parse(v2.expiresAt) : null;
+  const expired = expiresAt !== null && Number.isFinite(expiresAt) && expiresAt <= Date.now();
+  if (!expiresAt && cooldown <= 0) return <span className="text-slate-600">—</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-1.5 text-xs">
+      {expiresAt ? (
+        expired ? (
+          <span className="rounded-full border border-magenta/25 bg-magenta/10 px-2 py-0.5 font-semibold text-magenta">Expired</span>
+        ) : (
+          <span className="text-slate-300">{relativeExpiry(expiresAt)}</span>
+        )
+      ) : null}
+      {cooldown > 0 ? <span className="text-slate-500">{formatCooldown(cooldown)} cd</span> : null}
+    </span>
+  );
+}
+
+function relativeExpiry(target: number) {
+  const diff = target - Date.now();
+  const days = Math.floor(diff / 86_400_000);
+  if (days >= 1) return `in ${days}d`;
+  const hours = Math.floor(diff / 3_600_000);
+  if (hours >= 1) return `in ${hours}h`;
+  return `in ${Math.max(1, Math.floor(diff / 60_000))}m`;
+}
+
+function formatCooldown(seconds: number) {
+  if (seconds % 86400 === 0) return `${seconds / 86400}d`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
 }
 
 function StatusPill({agent}: {agent: Agent}) {

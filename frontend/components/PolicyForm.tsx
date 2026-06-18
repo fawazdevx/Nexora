@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from "react";
-import {AlertTriangle, CalendarClock, Clock, Database, Gauge, Loader2, ShieldCheck, SlidersHorizontal, Timer, Users, Wallet, X} from "lucide-react";
+import {AlertTriangle, CalendarClock, Clock, Copy, Database, Gauge, Loader2, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Timer, Users, Wallet, X} from "lucide-react";
 import toast from "react-hot-toast";
 import {useAccount} from "wagmi";
 import {chainLabel, contractAddressesForChain, writeAgentPolicy} from "@/lib/contracts";
@@ -11,6 +11,12 @@ import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {PlanSubscriptionCard} from "@/components/PlanSubscriptionCard";
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+const POLICY_PRESETS: Array<{key: string; name: string; hint: string; icon: typeof ShieldCheck; daily: string; tx: string; weekly: string; monthly: string; cooldown: string; requireOnchain: boolean}> = [
+  {key: "conservative", name: "Conservative", hint: "$100/day · $10/tx · 1h cooldown", icon: ShieldCheck, daily: "100", tx: "10", weekly: "0", monthly: "0", cooldown: "3600", requireOnchain: true},
+  {key: "standard", name: "Standard", hint: "$400/day · $45/tx", icon: Gauge, daily: "400", tx: "45", weekly: "0", monthly: "0", cooldown: "0", requireOnchain: false},
+  {key: "high", name: "High volume", hint: "$2k/day · $5k/wk caps", icon: Sparkles, daily: "2000", tx: "200", weekly: "5000", monthly: "15000", cooldown: "0", requireOnchain: false}
+];
 
 export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: string; onSelectAgent?: (id: string) => void} = {}) {
   const {address, chain, isConnected} = useAccount();
@@ -41,6 +47,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   const [recipientAllowlist, setRecipientAllowlist] = useState("");
   const [serviceAllowlist, setServiceAllowlist] = useState("");
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
 
   const selectedAgent = agents.find((agent) => agent.id === agentId);
   const contractItems = splitAddresses(contractAllowlist);
@@ -115,6 +122,86 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   }
   function removeService(value: string) {
     setServiceAllowlist(withRemoved(serviceItems, value).join("\n"));
+  }
+
+  function applyPreset(preset: (typeof POLICY_PRESETS)[number]) {
+    setDailyLimit(preset.daily);
+    setTransactionCap(preset.tx);
+    if (hasPremiumAutomation) {
+      setWeeklyLimit(preset.weekly);
+      setMonthlyLimit(preset.monthly);
+      setCooldownSeconds(preset.cooldown);
+      setRequireOnchainPolicy(preset.requireOnchain);
+    }
+    toast.success(`${preset.name} preset applied — review and save`);
+  }
+
+  function resetForm() {
+    if (!selectedAgent) return;
+    setDailyLimit(String(selectedAgent.policy.dailyLimitUsdc));
+    setTransactionCap(String(selectedAgent.policy.transactionCapUsdc));
+    setWeeklyLimit(String(selectedAgent.policy.v2?.weeklyLimitUsdc ?? 0));
+    setMonthlyLimit(String(selectedAgent.policy.v2?.monthlyLimitUsdc ?? 0));
+    setMaxUnitsPerRequest(String(selectedAgent.policy.v2?.maxUnitsPerRequest ?? 0));
+    setCooldownSeconds(String(selectedAgent.policy.v2?.cooldownSeconds ?? 0));
+    setExpiresAt(toDateTimeLocal(selectedAgent.policy.v2?.expiresAt));
+    setRequireOnchainPolicy(Boolean(selectedAgent.policy.v2?.requireOnchainPolicy));
+    setContractAllowlist(selectedAgent.policy.contractAllowlist.join("\n"));
+    setRecipientAllowlist(selectedAgent.policy.recipientAllowlist.join("\n"));
+    setServiceAllowlist((selectedAgent.policy.v2?.serviceAllowlist ?? []).join("\n"));
+  }
+
+  const changes = useMemo(() => {
+    if (!selectedAgent) return [] as string[];
+    const p = selectedAgent.policy;
+    const out: string[] = [];
+    if (dailyLimit !== String(p.dailyLimitUsdc)) out.push(`Daily $${p.dailyLimitUsdc} → $${dailyLimit || 0}`);
+    if (transactionCap !== String(p.transactionCapUsdc)) out.push(`Tx $${p.transactionCapUsdc} → $${transactionCap || 0}`);
+    if (weeklyLimit !== String(p.v2?.weeklyLimitUsdc ?? 0)) out.push(`Weekly $${p.v2?.weeklyLimitUsdc ?? 0} → $${weeklyLimit || 0}`);
+    if (monthlyLimit !== String(p.v2?.monthlyLimitUsdc ?? 0)) out.push(`Monthly $${p.v2?.monthlyLimitUsdc ?? 0} → $${monthlyLimit || 0}`);
+    if (maxUnitsPerRequest !== String(p.v2?.maxUnitsPerRequest ?? 0)) out.push(`Max units ${p.v2?.maxUnitsPerRequest ?? 0} → ${maxUnitsPerRequest || 0}`);
+    if (cooldownSeconds !== String(p.v2?.cooldownSeconds ?? 0)) out.push(`Cooldown ${formatDuration(Number(p.v2?.cooldownSeconds ?? 0))} → ${formatDuration(Number(cooldownSeconds || 0))}`);
+    if (expiresAt !== toDateTimeLocal(p.v2?.expiresAt)) out.push(`Expiry → ${expiresAt ? expiryLabel(expiresAt) : "none"}`);
+    if (requireOnchainPolicy !== Boolean(p.v2?.requireOnchainPolicy)) out.push(requireOnchainPolicy ? "now requires on-chain" : "on-chain no longer required");
+    if (listKey(contractAllowlist) !== listKey(p.contractAllowlist.join("\n"))) out.push(`Contracts ${p.contractAllowlist.length} → ${contractItems.length}`);
+    if (listKey(recipientAllowlist) !== listKey(p.recipientAllowlist.join("\n"))) out.push(`Recipients ${p.recipientAllowlist.length} → ${recipientItems.length}`);
+    if (listKey(serviceAllowlist) !== listKey((p.v2?.serviceAllowlist ?? []).join("\n"))) out.push(`Services ${(p.v2?.serviceAllowlist ?? []).length} → ${serviceItems.length}`);
+    return out;
+  }, [selectedAgent, dailyLimit, transactionCap, weeklyLimit, monthlyLimit, maxUnitsPerRequest, cooldownSeconds, expiresAt, requireOnchainPolicy, contractAllowlist, recipientAllowlist, serviceAllowlist, contractItems.length, recipientItems.length, serviceItems.length]);
+
+  const onchainFootgun = requireOnchainPolicy && Boolean(selectedAgent) && !selectedAgent?.address;
+
+  async function copyToOtherAgents() {
+    if (!address || !selectedAgent) return;
+    const targets = agents.filter((agent) => agent.id !== selectedAgent.id);
+    if (targets.length === 0) {
+      toast.error("No other agents to copy to.");
+      return;
+    }
+    const v2 = policyV2Payload({weeklyLimit, monthlyLimit, maxUnitsPerRequest, cooldownSeconds, expiresAt, serviceAllowlist: serviceItems, requireOnchainPolicy});
+    setCopying(true);
+    const toastId = toast.loading(`Copying policy to ${targets.length} agent${targets.length > 1 ? "s" : ""}…`);
+    try {
+      await Promise.all(
+        targets.map((agent) =>
+          apiPost(`/api/agents/${agent.id}/policies`, {
+            operatorAddress: address,
+            dailyLimitUsdc: Number(dailyLimit),
+            transactionCapUsdc: Number(transactionCap),
+            contractAllowlist: contractItems,
+            recipientAllowlist: recipientItems,
+            policyV2: v2,
+            txHash: null
+          })
+        )
+      );
+      await snapshot.refetch();
+      toast.success(`Copied policy to ${targets.length} agent${targets.length > 1 ? "s" : ""} (off-chain).`, {id: toastId});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Copy failed", {id: toastId});
+    } finally {
+      setCopying(false);
+    }
   }
 
   async function savePolicy() {
@@ -192,6 +279,17 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
     }
   }
 
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (!saving && canSave) void savePolicy();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   return (
     <div className="mt-6 space-y-5">
       {/* Agent context */}
@@ -214,6 +312,12 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
               {selectedAgent.policy.txHash ? "On-chain" : "Saved"}
             </span>
           ) : null}
+          {selectedAgent && agents.length > 1 ? (
+            <button type="button" onClick={() => void copyToOtherAgents()} disabled={copying} className="secondary-button min-h-9 px-3 py-1.5 text-xs">
+              {copying ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
+              Copy to others
+            </button>
+          ) : null}
           {dirty ? <span className="rounded-full border border-plasma/30 bg-plasma/10 px-2.5 py-1 text-xs font-semibold text-orchid">Unsaved changes</span> : null}
         </div>
       </div>
@@ -225,6 +329,22 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
         {agents.length === 0 ? (
           <p className="mt-2 text-xs leading-5 text-slate-500">No agent is available yet. Create an agent wallet first; once Circle returns the wallet, it will appear here.</p>
         ) : null}
+      </div>
+
+      {/* Quick presets */}
+      <div>
+        <p className="mb-2 text-sm font-medium text-slate-300">Quick presets</p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {POLICY_PRESETS.map((preset) => {
+            const Icon = preset.icon;
+            return (
+              <button key={preset.key} type="button" onClick={() => applyPreset(preset)} className="surface p-3 text-left transition hover:border-plasma/30">
+                <p className="flex items-center gap-2 text-sm font-semibold text-white"><Icon size={14} className="text-orchid" /> {preset.name}</p>
+                <p className="mt-1 text-xs text-slate-500">{preset.hint}</p>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -346,6 +466,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             <div className="mt-4 grid gap-3">
               {weeklyBelowDaily ? <PolicyWarning icon={AlertTriangle} text="Weekly limit is below the daily limit. The weekly budget will become the effective cap." /> : null}
               {monthlyBelowWeekly ? <PolicyWarning icon={AlertTriangle} text="Monthly limit is below the weekly limit. The monthly budget will become the effective cap." /> : null}
+              {onchainFootgun ? <PolicyWarning icon={AlertTriangle} text="Require on-chain policy is on, but this agent has no wallet address yet — the policy cannot be committed on-chain until Circle returns the wallet." /> : null}
               <div className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-3">
                 <span>
                   <span className="flex items-center gap-2 text-sm font-medium text-white"><Database size={15} className="text-orchid" /> Require on-chain policy</span>
@@ -381,25 +502,42 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
 
       {/* Sticky save bar */}
       <div className="sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.12] bg-[#0c0f18]/90 p-4 shadow-[0_18px_50px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-          <span>Daily <b className="text-white">${dailyLimit || "0"}</b></span>
-          <Dot />
-          <span>Tx <b className="text-white">${transactionCap || "0"}</b></span>
-          {Number(weeklyLimit) > 0 ? <><Dot /><span>Wk <b className="text-white">${weeklyLimit}</b></span></> : null}
-          {Number(monthlyLimit) > 0 ? <><Dot /><span>Mo <b className="text-white">${monthlyLimit}</b></span></> : null}
-          {Number(cooldownSeconds) > 0 ? <><Dot /><span><b className="text-white">{formatDuration(Number(cooldownSeconds))}</b> cooldown</span></> : null}
-          <Dot />
-          <span><b className="text-white">{contractItems.length}</b> contracts</span>
-          <Dot />
-          <span><b className="text-white">{recipientItems.length}</b> recipients</span>
-          {serviceItems.length > 0 ? <><Dot /><span><b className="text-white">{serviceItems.length}</b> services</span></> : null}
-          {expiresAt ? <><Dot /><span>expires {expiryLabel(expiresAt)}</span></> : null}
-          {requireOnchainPolicy ? <><Dot /><span className="text-orchid">on-chain required</span></> : null}
+        <div className="min-w-0 flex-1">
+          {changes.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="font-semibold text-orchid">Changes:</span>
+              {changes.map((change) => (
+                <span key={change} className="rounded-md border border-plasma/20 bg-plasma/10 px-2 py-0.5 font-medium text-slate-200">{change}</span>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+              <span>Daily <b className="text-white">${dailyLimit || "0"}</b></span>
+              <Dot />
+              <span>Tx <b className="text-white">${transactionCap || "0"}</b></span>
+              {Number(weeklyLimit) > 0 ? <><Dot /><span>Wk <b className="text-white">${weeklyLimit}</b></span></> : null}
+              {Number(cooldownSeconds) > 0 ? <><Dot /><span><b className="text-white">{formatDuration(Number(cooldownSeconds))}</b> cooldown</span></> : null}
+              <Dot />
+              <span><b className="text-white">{contractItems.length}</b> contracts</span>
+              <Dot />
+              <span><b className="text-white">{recipientItems.length}</b> recipients</span>
+              {serviceItems.length > 0 ? <><Dot /><span><b className="text-white">{serviceItems.length}</b> services</span></> : null}
+              {expiresAt ? <><Dot /><span>expires {expiryLabel(expiresAt)}</span></> : null}
+              {requireOnchainPolicy ? <><Dot /><span className="text-orchid">on-chain required</span></> : null}
+            </div>
+          )}
         </div>
-        <button onClick={savePolicy} className="action-button shrink-0" disabled={!isConnected || !selectedAgent || saving || !canSave}>
-          {saving ? <Loader2 size={16} className="animate-spin" /> : null}
-          {saving ? "Saving policy…" : selectedAgent?.address ? `Save on ${chainLabel(chain?.id)}` : "Save pending policy"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {dirty ? (
+            <button type="button" onClick={resetForm} className="secondary-button" disabled={saving} aria-label="Discard changes">
+              <RotateCcw size={15} /> Reset
+            </button>
+          ) : null}
+          <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent || saving || !canSave}>
+            {saving ? <Loader2 size={16} className="animate-spin" /> : null}
+            {saving ? "Saving policy…" : selectedAgent?.address ? `Save on ${chainLabel(chain?.id)}` : "Save pending policy"}
+          </button>
+        </div>
       </div>
     </div>
   );

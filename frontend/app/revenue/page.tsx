@@ -1,5 +1,6 @@
 import {useEffect, useState} from "react";
-import {BarChart3, Bot, ExternalLink, Landmark, ReceiptText, ShieldCheck, WalletCards} from "lucide-react";
+import toast from "react-hot-toast";
+import {BarChart3, Bot, Copy, ExternalLink, Landmark, ReceiptText, ShieldCheck, WalletCards} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
 import {apiGet} from "@/lib/api";
 import {arcTestnet, shortAddress} from "@/lib/arc";
@@ -145,6 +146,7 @@ export default function RevenuePage() {
                   <th>Fee</th>
                   <th>Net</th>
                   <th>Tx</th>
+                  <th>Receipt</th>
                 </tr>
               </thead>
               <tbody>
@@ -167,6 +169,7 @@ export default function RevenuePage() {
                         <span className="text-slate-500">recorded</span>
                       )}
                     </td>
+                    <td><ReceiptActions receiptId={receipt.id} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -178,6 +181,25 @@ export default function RevenuePage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function ReceiptActions({receiptId}: {receiptId: string}) {
+  const href = `/receipts/${encodeURIComponent(receiptId)}`;
+  async function copy() {
+    await navigator.clipboard.writeText(`${window.location.origin}${href}`);
+    toast.success("Receipt link copied");
+  }
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button type="button" className="secondary-button min-h-9 px-2.5 py-1.5 text-xs" onClick={() => void copy()} aria-label="Copy receipt link">
+        <Copy size={13} />
+      </button>
+      <a className="secondary-button min-h-9 px-2.5 py-1.5 text-xs" href={href} aria-label="Open receipt">
+        <ExternalLink size={13} />
+      </a>
+    </span>
   );
 }
 

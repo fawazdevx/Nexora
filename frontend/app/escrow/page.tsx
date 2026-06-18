@@ -1,7 +1,7 @@
 import {Fragment, useState} from "react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
-import {ArrowRight, Check, Circle, ExternalLink, FileText, Landmark, Loader2, ShieldCheck, Trash2, Wallet} from "lucide-react";
+import {ArrowRight, Check, Circle, Copy, ExternalLink, FileText, Landmark, Loader2, ShieldCheck, Trash2, Wallet} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
 import {EmptyState} from "@/components/EmptyState";
@@ -305,6 +305,7 @@ function EscrowCard({escrow, address, busyAction, onAdvance, onRemove}: {escrow:
             <span className="text-xs text-slate-500">#{escrow.chainEscrowId} on Arc</span>
           )
         ) : null}
+        <ReceiptActions receiptId={escrow.id} />
       </div>
 
       {["cancelled", "disputed"].includes(escrow.status) ? (
@@ -340,6 +341,25 @@ function EscrowCard({escrow, address, busyAction, onAdvance, onRemove}: {escrow:
         ) : null}
       </div>
     </article>
+  );
+}
+
+function ReceiptActions({receiptId}: {receiptId: string}) {
+  const href = `/receipts/${encodeURIComponent(receiptId)}`;
+  async function copy() {
+    await navigator.clipboard.writeText(`${window.location.origin}${href}`);
+    toast.success("Receipt link copied");
+  }
+
+  return (
+    <span className="ml-auto inline-flex items-center gap-1.5">
+      <button type="button" className="secondary-button min-h-8 px-2 py-1 text-xs" onClick={() => void copy()} aria-label="Copy receipt link">
+        <Copy size={12} />
+      </button>
+      <a className="secondary-button min-h-8 px-2 py-1 text-xs" href={href} aria-label="Open receipt">
+        <ExternalLink size={12} />
+      </a>
+    </span>
   );
 }
 

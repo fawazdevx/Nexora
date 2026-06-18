@@ -16,6 +16,7 @@ import GatewayPage from "@/app/gateway/page";
 import DeploymentDashboardPage from "@/app/admin/deployments/page";
 import EscrowPage from "@/app/escrow/page";
 import PaymentsPage from "@/app/payments/page";
+import ReceiptPage from "@/app/receipts/page";
 import IdentityPage from "@/app/identity/page";
 import ReputationPage from "@/app/reputation/page";
 import PoliciesPage from "@/app/settings/policies/page";
@@ -64,6 +65,9 @@ export default function App() {
 
   const serviceMatch = pathname.match(/^\/marketplace\/services\/([^/]+)$/);
   if (serviceMatch) return <MarketplaceServicePage serviceId={decodeURIComponent(serviceMatch[1])} />;
+
+  const receiptMatch = pathname.match(/^\/receipts\/([^/]+)$/);
+  if (receiptMatch) return <ReceiptPage receiptId={decodeURIComponent(receiptMatch[1])} />;
 
   return <LandingPage />;
 }

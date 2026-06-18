@@ -1,5 +1,5 @@
 import {useMemo, useState} from "react";
-import {ArrowUpRight, ExternalLink, GitFork, Globe, Plus, Search, ShieldCheck, Sparkles, Star, Store, Twitter, Wallet, Loader2} from "lucide-react";
+import {ArrowUpRight, BadgeCheck, CalendarCheck, ExternalLink, FileSearch, GitFork, Globe, MessageSquareText, Plus, Route, Search, ShieldCheck, Sparkles, Star, Store, Twitter, Wallet, Loader2} from "lucide-react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
 import {PageHeader} from "@/components/PageHeader";
@@ -25,6 +25,11 @@ function kindIcon(kind: string) {
   if (kind.includes("website")) return Globe;
   if (kind.includes("github")) return GitFork;
   if (kind.includes("x_account") || kind.includes("twitter")) return Twitter;
+  if (kind.includes("meeting")) return CalendarCheck;
+  if (kind.includes("domain")) return BadgeCheck;
+  if (kind.includes("social")) return MessageSquareText;
+  if (kind.includes("route")) return Route;
+  if (kind.includes("launch") || kind.includes("integration") || kind.includes("builder")) return FileSearch;
   return ShieldCheck;
 }
 
@@ -99,20 +104,23 @@ export default function MarketplacePage() {
         requestHash,
         units: 1
       });
-      if (!service.chainServiceId) {
-        throw new Error("This service is not published on-chain yet.");
+      let txHash: string | null = null;
+      if (service.chainServiceId) {
+        toast.loading(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement…`, {id: toastId});
+        const walletSettlement = await settleX402Request({
+          chainServiceId: service.chainServiceId,
+          requestHash,
+          payer: address,
+          units: 1,
+          amountUsdc: String(result.settlement.amountUsdc)
+        });
+        txHash = walletSettlement.settleHash;
+      } else {
+        toast.loading(`Recording test x402 settlement for ${service.name}…`, {id: toastId});
       }
-      toast.loading(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement…`, {id: toastId});
-      const walletSettlement = await settleX402Request({
-        chainServiceId: service.chainServiceId,
-        requestHash,
-        payer: address,
-        units: 1,
-        amountUsdc: String(result.settlement.amountUsdc)
-      });
       const settlement = await apiPost<{status: string; txHash?: string | null}>("/api/x402/settle", {
         authorizationId: result.authorizationId,
-        txHash: walletSettlement.settleHash
+        txHash
       });
       toast.loading(`Executing ${service.name}…`, {id: toastId});
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
@@ -358,7 +366,7 @@ function ServiceResult({result}: {result: unknown}) {
   if ("headings" in data || "wordCount" in data || "canonical" in data) return <WebsiteResult data={data} />;
   if ("stars" in data || "forks" in data || "readmeSummary" in data) return <GitHubResult data={data} />;
   if ("account" in data || "score" in data) return <XResult data={data} />;
-  if ("checks" in data || "recommendations" in data || "recommendedPolicy" in data || "gaps" in data) return <StructuredServiceResult data={data} />;
+  if ("agenda" in data || "questions" in data || "followUps" in data || "integrationIdeas" in data || "steps" in data || "requirements" in data || "securityNotes" in data || "checks" in data || "recommendations" in data || "recommendedPolicy" in data || "gaps" in data || "risks" in data || "suggestions" in data) return <StructuredServiceResult data={data} />;
 
   return (
     <div className="relative mt-5 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
@@ -374,6 +382,15 @@ function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
   const recommendations = arrayValue(data.recommendations);
   const gaps = arrayValue(data.gaps);
   const strengths = arrayValue(data.strengths);
+  const agenda = arrayValue(data.agenda);
+  const questions = arrayValue(data.questions);
+  const followUps = arrayValue(data.followUps);
+  const integrationIdeas = arrayValue(data.integrationIdeas);
+  const steps = arrayValue(data.steps);
+  const requirements = arrayValue(data.requirements);
+  const securityNotes = arrayValue(data.securityNotes);
+  const risks = arrayValue(data.risks);
+  const suggestions = arrayValue(data.suggestions);
   return (
     <div className="surface mt-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -386,9 +403,18 @@ function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
       {stringValue(data.summary) ? <p className="mt-3 text-sm leading-6 text-slate-300">{stringValue(data.summary)}</p> : null}
       <ResultList title="Checks" items={checks} />
       <ResultList title="Issues" items={issues} />
+      <ResultList title="Risks" items={risks} />
       <ResultList title="Strengths" items={strengths} />
       <ResultList title="Gaps" items={gaps} />
+      <ResultList title="Agenda" items={agenda} />
+      <ResultList title="Questions" items={questions} />
+      <ResultList title="Follow-ups" items={followUps} />
+      <ResultList title="Integration ideas" items={integrationIdeas} />
+      <ResultList title="Steps" items={steps} />
+      <ResultList title="Requirements" items={requirements} />
+      <ResultList title="Security notes" items={securityNotes} />
       <ResultList title="Recommendations" items={recommendations} />
+      <ResultList title="Suggestions" items={suggestions} />
     </div>
   );
 }

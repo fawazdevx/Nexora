@@ -32,6 +32,8 @@ import {
 } from "./security.js";
 import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
 import {settleFacilitatorPayment, supportedX402, verifyFacilitatorPayment} from "./x402/protocol-facilitator.js";
+import {evaluateAgentPolicy} from "./policies/engine.js";
+import type {AgentApprovalRequestRecord, EscrowRecord, IndexedChainEventRecord, PaymentRecord, SubscriptionRecord} from "./store.js";
 
 const erc20BalanceAbi = parseAbi(["function balanceOf(address account) view returns (uint256)"]);
 
@@ -142,12 +144,54 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       }));
     }
 
+    if (req.method === "POST" && path === "/api/policies/simulate") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await simulateAgentPolicy({
+        operatorAddress,
+        agentId: requiredLimitedString(body.agentId, "agentId", 120),
+        serviceId: requiredLimitedString(body.serviceId, "serviceId", 120),
+        units: requiredPositiveInteger(body.units ?? 1, "units", 1_000)
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/agent-approvals") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return response(201, await createAgentApprovalRequest({
+        operatorAddress,
+        agentId: requiredLimitedString(body.agentId, "agentId", 120),
+        serviceId: requiredLimitedString(body.serviceId, "serviceId", 120),
+        units: requiredPositiveInteger(body.units ?? 1, "units", 1_000),
+        note: optionalLimitedString(body.note, "note", 500)
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/agent-approvals/") && path.endsWith("/approve")) {
+      const requestId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await decideAgentApprovalRequest(requestId, operatorAddress, "approved", optionalLimitedString(body.note, "note", 500)));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/agent-approvals/") && path.endsWith("/reject")) {
+      const requestId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await decideAgentApprovalRequest(requestId, operatorAddress, "rejected", optionalLimitedString(body.note, "note", 500)));
+    }
+
     if (req.method === "GET" && path === "/api/marketplace/services") {
       return ok({services: await listServices()});
     }
 
     if (req.method === "GET" && path === "/api/public/builders") {
       return ok(await publicBuilderDirectory());
+    }
+
+    if (req.method === "GET" && path.startsWith("/api/public/receipts/")) {
+      const receiptId = decodeURIComponent(path.replace("/api/public/receipts/", ""));
+      return ok({receipt: await publicReceipt(receiptId)});
     }
 
     if (req.method === "GET" && path === "/api/x402/analytics") {
@@ -603,6 +647,124 @@ function tryJson<T>(raw: string): T {
   }
 }
 
+async function simulateAgentPolicy(input: {operatorAddress: string; agentId: string; serviceId: string; units: number}) {
+  const store = await readStore();
+  const agent = store.agents.find((item) => item.id === input.agentId || item.address?.toLowerCase() === input.agentId.toLowerCase());
+  if (!agent) throw new Error("agent wallet not found");
+  if (agent.operatorAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) throw new Error("agent operator wallet required");
+  const service = store.services.find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
+  if (!service) throw new Error("service not found");
+  const evaluation = evaluateAgentPolicy({
+    agent,
+    service,
+    units: input.units,
+    payments: store.payments
+  });
+  const amountUsdc = roundUsdc(service.pricePerUnitUsdc * input.units);
+  return {
+    allowed: evaluation.allowed,
+    reason: evaluation.reason ?? null,
+    agent: {
+      id: agent.id,
+      address: agent.address,
+      arcName: agent.arcName,
+      dailyLimitUsdc: agent.policy.dailyLimitUsdc,
+      transactionCapUsdc: agent.policy.transactionCapUsdc
+    },
+    service: {
+      id: service.id,
+      chainServiceId: service.chainServiceId,
+      name: service.name,
+      publisherAddress: service.publisherAddress,
+      pricePerUnitUsdc: service.pricePerUnitUsdc
+    },
+    units: input.units,
+    amountUsdc,
+    dailySpentUsdc: evaluation.v2?.dailySpentUsdc ?? 0,
+    weeklySpentUsdc: evaluation.v2?.weeklySpentUsdc ?? 0,
+    monthlySpentUsdc: evaluation.v2?.monthlySpentUsdc ?? 0,
+    remainingDailyUsdc: roundUsdc(Math.max(0, agent.policy.dailyLimitUsdc - (evaluation.v2?.dailySpentUsdc ?? 0))),
+    requestHash: requestHashForSimulation(agent.id, service.id, input.units)
+  };
+}
+
+async function createAgentApprovalRequest(input: {operatorAddress: string; agentId: string; serviceId: string; units: number; note?: string}) {
+  const simulation = await simulateAgentPolicy(input);
+  return updateStore((store) => {
+    const agent = store.agents.find((item) => item.id === input.agentId || item.address?.toLowerCase() === input.agentId.toLowerCase());
+    const service = store.services.find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
+    if (!agent || !service) throw new Error("approval request target not found");
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const record: AgentApprovalRequestRecord = {
+      id: crypto.randomUUID(),
+      operatorAddress: input.operatorAddress,
+      agentId: agent.id,
+      agentWallet: agent.address,
+      serviceId: service.id,
+      serviceName: service.name,
+      publisherAddress: service.publisherAddress,
+      amountUsdc: simulation.amountUsdc,
+      units: input.units,
+      requestHash: simulation.requestHash,
+      simulation: {
+        allowed: simulation.allowed,
+        reason: simulation.reason,
+        dailySpentUsdc: simulation.dailySpentUsdc,
+        weeklySpentUsdc: simulation.weeklySpentUsdc,
+        monthlySpentUsdc: simulation.monthlySpentUsdc
+      },
+      status: "pending",
+      note: input.note ?? null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      decidedAt: null,
+      expiresAt
+    };
+    store.approvalRequests.unshift(record);
+    store.approvalRequests = store.approvalRequests.slice(0, 300);
+    pushNotification(store, {
+      operatorAddress: input.operatorAddress,
+      title: "Agent approval requested",
+      detail: `${service.name} · ${simulation.amountUsdc} USDC`,
+      kind: "policy"
+    });
+    return record;
+  });
+}
+
+async function decideAgentApprovalRequest(id: string, operatorAddress: string, status: "approved" | "rejected", note?: string) {
+  return updateStore((store) => {
+    const request = store.approvalRequests.find((item) => item.id === id);
+    if (!request) throw new Error("approval request not found");
+    if (request.operatorAddress.toLowerCase() !== operatorAddress.toLowerCase()) throw new Error("approval request operator wallet required");
+    if (request.status !== "pending") throw new Error("approval request is already decided");
+    const now = new Date();
+    if (request.expiresAt && Date.parse(request.expiresAt) <= now.getTime()) {
+      request.status = "expired";
+      request.updatedAt = now.toISOString();
+      throw new Error("approval request has expired");
+    }
+    request.status = status;
+    request.note = note ?? request.note ?? null;
+    request.updatedAt = now.toISOString();
+    request.decidedAt = now.toISOString();
+    pushNotification(store, {
+      operatorAddress,
+      title: status === "approved" ? "Agent payment approved" : "Agent payment rejected",
+      detail: `${request.serviceName} · ${request.amountUsdc} USDC`,
+      kind: "policy"
+    });
+    return request;
+  });
+}
+
+function requestHashForSimulation(agentId: string, serviceId: string, units: number) {
+  const source = `${agentId}:${serviceId}:${units}:${Date.now()}:${crypto.randomUUID()}`;
+  const encoded = Buffer.from(source).toString("hex").slice(0, 64).padEnd(64, "0");
+  return `0x${encoded}`;
+}
+
 async function developerDashboard(address: string) {
   const store = await readStore();
   const lower = address.toLowerCase();
@@ -934,6 +1096,176 @@ async function publicBuilderDirectory() {
 
   builders.sort((a, b) => Number(b.featured) - Number(a.featured) || b.settledPayments - a.settledPayments || b.serviceCount - a.serviceCount);
   return {builders};
+}
+
+async function publicReceipt(id: string) {
+  const normalized = id.trim();
+  if (!normalized) {
+    const error = new Error("receipt id is required");
+    (error as Error & {status?: number}).status = 400;
+    throw error;
+  }
+
+  const store = await readStore();
+  const payment = store.payments.find((item) => matchesReceiptId(normalized, [
+    item.id,
+    item.authorizationId,
+    item.txHash,
+    item.requestHash
+  ]));
+  if (payment) return paymentReceipt(payment);
+
+  const escrow = store.escrows.find((item) => matchesReceiptId(normalized, [
+    item.id,
+    item.txHash,
+    item.chainEscrowId === undefined || item.chainEscrowId === null ? null : String(item.chainEscrowId)
+  ]));
+  if (escrow) return escrowReceipt(escrow);
+
+  const subscription = store.subscriptions.find((item) => matchesReceiptId(normalized, [item.id, item.txHash]));
+  if (subscription) return subscriptionReceipt(subscription);
+
+  const indexed = store.indexedEvents.find((event) => matchesReceiptId(normalized, [
+    event.id,
+    event.transactionHash,
+    `${event.chainId}:${event.transactionHash}:${event.logIndex}`
+  ]));
+  if (indexed) return indexedEventReceipt(indexed);
+
+  const error = new Error("receipt not found");
+  (error as Error & {status?: number}).status = 404;
+  throw error;
+}
+
+function paymentReceipt(payment: PaymentRecord) {
+  const status = payment.status;
+  return {
+    id: payment.id,
+    kind: "x402_payment",
+    title: payment.serviceName,
+    description: receiptDescription(status, "x402 marketplace payment"),
+    status,
+    amountUsdc: roundUsdc(payment.grossAmountUsdc ?? payment.amountUsdc),
+    feeUsdc: roundUsdc(payment.platformFeeUsdc ?? 0),
+    netUsdc: roundUsdc(payment.publisherNetUsdc ?? Math.max(0, payment.amountUsdc - (payment.platformFeeUsdc ?? 0))),
+    units: payment.units,
+    payer: payment.payer,
+    publisherAddress: payment.publisherAddress,
+    agentWallet: payment.agentWallet ?? null,
+    serviceId: payment.serviceId,
+    requestHash: payment.requestHash,
+    txHash: payment.txHash ?? null,
+    chainId: config.arc.chainId,
+    network: "Arc Testnet",
+    explorerUrl: explorerTxUrl(config.arc.explorerUrl, payment.txHash),
+    createdAt: payment.createdAt,
+    settledAt: payment.settledAt ?? null,
+    publicNote: payment.policyReason ?? null
+  };
+}
+
+function escrowReceipt(escrow: EscrowRecord) {
+  return {
+    id: escrow.id,
+    kind: "escrow",
+    title: escrow.title,
+    description: receiptDescription(escrow.status, "USDC work escrow"),
+    status: escrow.status,
+    amountUsdc: roundUsdc(escrow.amountUsdc),
+    feeUsdc: roundUsdc(escrow.platformFeeUsdc),
+    netUsdc: roundUsdc(escrow.counterpartyNetUsdc),
+    creatorAddress: escrow.creatorAddress,
+    counterpartyAddress: escrow.counterpartyAddress,
+    chainEscrowId: escrow.chainEscrowId ?? null,
+    txHash: escrow.txHash ?? null,
+    chainId: config.arc.chainId,
+    network: "Arc Testnet",
+    explorerUrl: explorerTxUrl(config.arc.explorerUrl, escrow.txHash),
+    createdAt: escrow.createdAt,
+    fundedAt: escrow.fundedAt ?? null,
+    submittedAt: escrow.submittedAt ?? null,
+    verifiedAt: escrow.verifiedAt ?? null,
+    releasedAt: escrow.releasedAt ?? null
+  };
+}
+
+function subscriptionReceipt(subscription: SubscriptionRecord) {
+  return {
+    id: subscription.id,
+    kind: "subscription",
+    title: subscription.planName ?? subscription.plan,
+    description: receiptDescription(subscription.status, "Nexora plan payment"),
+    status: subscription.status,
+    amountUsdc: roundUsdc(subscription.amountUsdc),
+    feeUsdc: roundUsdc(subscription.amountUsdc),
+    netUsdc: roundUsdc(subscription.amountUsdc),
+    operatorAddress: subscription.operatorAddress,
+    plan: subscription.plan,
+    interval: subscription.interval ?? "month",
+    txHash: subscription.txHash ?? null,
+    chainId: subscription.chainId ?? config.arc.chainId,
+    network: chainName(subscription.chainId ?? config.arc.chainId),
+    explorerUrl: explorerTxUrl(explorerForChain(subscription.chainId ?? config.arc.chainId), subscription.txHash),
+    createdAt: subscription.createdAt,
+    activatedAt: subscription.activatedAt ?? null,
+    currentPeriodStart: subscription.currentPeriodStart ?? null,
+    currentPeriodEnd: subscription.currentPeriodEnd ?? null
+  };
+}
+
+function indexedEventReceipt(event: IndexedChainEventRecord) {
+  return {
+    id: event.id,
+    kind: `onchain_${event.contract}`,
+    title: onchainReceiptLabel(event),
+    description: receiptDescription("indexed", `${event.contract} ${event.event}`),
+    status: "indexed",
+    amountUsdc: roundUsdc(event.amountUsdc ?? 0),
+    feeUsdc: roundUsdc(event.feeUsdc ?? 0),
+    netUsdc: roundUsdc(Math.max(0, (event.amountUsdc ?? 0) - (event.feeUsdc ?? 0))),
+    actor: event.actor ?? null,
+    counterparty: event.counterparty ?? null,
+    event: event.event,
+    contract: event.contract,
+    contractAddress: event.address,
+    blockNumber: event.blockNumber,
+    logIndex: event.logIndex,
+    txHash: event.transactionHash,
+    chainId: event.chainId,
+    network: chainName(event.chainId),
+    explorerUrl: explorerTxUrl(explorerForChain(event.chainId), event.transactionHash),
+    createdAt: event.createdAt
+  };
+}
+
+function matchesReceiptId(input: string, values: Array<string | null | undefined>) {
+  const normalized = input.toLowerCase();
+  return values.some((value) => value && value.toLowerCase() === normalized);
+}
+
+function receiptDescription(status: string, fallback: string) {
+  if (status === "settled") return "Settled x402 payment receipt.";
+  if (status === "released") return "Released escrow payment receipt.";
+  if (status === "active") return "Active Nexora plan receipt.";
+  if (status === "policy_blocked") return "Policy-blocked x402 payment record.";
+  return fallback;
+}
+
+function explorerForChain(chainId: number) {
+  if (chainId === config.base.sepoliaChainId) return config.base.sepoliaExplorerUrl;
+  if (chainId === config.arbitrum.sepoliaChainId) return config.arbitrum.sepoliaExplorerUrl;
+  return config.arc.explorerUrl;
+}
+
+function chainName(chainId: number) {
+  if (chainId === config.base.sepoliaChainId) return "Base Sepolia";
+  if (chainId === config.arbitrum.sepoliaChainId) return "Arbitrum Sepolia";
+  return "Arc Testnet";
+}
+
+function explorerTxUrl(explorerUrl: string, txHash?: string | null) {
+  if (!txHash) return null;
+  return `${explorerUrl.replace(/\/$/, "")}/tx/${txHash}`;
 }
 
 async function deploymentDashboard() {

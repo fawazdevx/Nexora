@@ -1,5 +1,7 @@
 import {useState} from "react";
 import {useAccount} from "wagmi";
+import toast from "react-hot-toast";
+import {Copy, ExternalLink} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
@@ -77,6 +79,7 @@ export default function PaymentsPage() {
               <th>Service</th>
               <th>Amount</th>
               <th>Status</th>
+              <th>Receipt</th>
             </tr>
           </thead>
           <tbody>
@@ -86,6 +89,7 @@ export default function PaymentsPage() {
                 <td className="text-white">{payment.serviceName}</td>
                 <td>${payment.amountUsdc}</td>
                 <td className={payment.status === "failed" || payment.status === "policy_blocked" ? "text-magenta" : "text-mint"}>{payment.status}</td>
+                <td><ReceiptActions receiptId={payment.id} /></td>
               </tr>
             ))}
           </tbody>
@@ -95,5 +99,24 @@ export default function PaymentsPage() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ReceiptActions({receiptId}: {receiptId: string}) {
+  const href = `/receipts/${encodeURIComponent(receiptId)}`;
+  async function copy() {
+    await navigator.clipboard.writeText(`${window.location.origin}${href}`);
+    toast.success("Receipt link copied");
+  }
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button type="button" className="secondary-button min-h-9 px-2.5 py-1.5 text-xs" onClick={() => void copy()} aria-label="Copy receipt link">
+        <Copy size={13} />
+      </button>
+      <a className="secondary-button min-h-9 px-2.5 py-1.5 text-xs" href={href} aria-label="Open receipt">
+        <ExternalLink size={13} />
+      </a>
+    </span>
   );
 }

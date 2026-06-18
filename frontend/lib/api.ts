@@ -129,6 +129,42 @@ export type AppSnapshot = {
     txHash?: string | null;
     createdAt: string;
   }>;
+  approvalRequests: Array<{
+    id: string;
+    operatorAddress: string;
+    agentId: string;
+    agentWallet?: string | null;
+    serviceId: string;
+    serviceName: string;
+    publisherAddress: string;
+    amountUsdc: number;
+    units: number;
+    requestHash: string;
+    simulation: {
+      allowed: boolean;
+      reason?: string | null;
+      dailySpentUsdc: number;
+      weeklySpentUsdc: number;
+      monthlySpentUsdc: number;
+    };
+    status: "pending" | "approved" | "rejected" | "expired";
+    note?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    decidedAt?: string | null;
+    expiresAt?: string | null;
+  }>;
+  riskAlerts: Array<{
+    id: string;
+    severity: "info" | "warning" | "critical";
+    category: "policy" | "spend" | "approval" | "payment";
+    title: string;
+    detail: string;
+    agentId?: string | null;
+    serviceId?: string | null;
+    actionHref?: string | null;
+    createdAt: string;
+  }>;
   subscriptions: Array<{
     id: string;
     operatorAddress: string;

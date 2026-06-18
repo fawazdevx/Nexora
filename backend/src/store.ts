@@ -49,7 +49,23 @@ export type ServiceRecord = {
 };
 
 export type ServiceManifest = {
-  kind: "website_analyzer" | "github_repo_analyzer" | "x_account_analyzer" | "contract_safety_check" | "wallet_activity_summary" | "landing_page_copy_reviewer" | "grant_application_reviewer" | "generic";
+  kind:
+    | "website_analyzer"
+    | "github_repo_analyzer"
+    | "x_account_analyzer"
+    | "contract_safety_check"
+    | "wallet_activity_summary"
+    | "landing_page_copy_reviewer"
+    | "grant_application_reviewer"
+    | "meeting_brief"
+    | "arc_builder_research"
+    | "domain_name_research"
+    | "social_content_audit"
+    | "stablecoin_route_report"
+    | "policy_risk_review"
+    | "launch_readiness_check"
+    | "x402_integration_planner"
+    | "generic";
   version: string;
   description: string;
   inputSchema: Array<{name: string; label: string; type: "text" | "url"; required: boolean; placeholder?: string}>;
@@ -80,6 +96,32 @@ export type PaymentRecord = {
   txHash?: string | null;
   createdAt: string;
   settledAt?: string | null;
+};
+
+export type AgentApprovalRequestRecord = {
+  id: string;
+  operatorAddress: string;
+  agentId: string;
+  agentWallet?: string | null;
+  serviceId: string;
+  serviceName: string;
+  publisherAddress: string;
+  amountUsdc: number;
+  units: number;
+  requestHash: string;
+  simulation: {
+    allowed: boolean;
+    reason?: string | null;
+    dailySpentUsdc: number;
+    weeklySpentUsdc: number;
+    monthlySpentUsdc: number;
+  };
+  status: "pending" | "approved" | "rejected" | "expired";
+  note?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string | null;
+  expiresAt?: string | null;
 };
 
 export type EarnActivationRecord = {
@@ -172,6 +214,18 @@ export type IndexedChainEventRecord = {
   createdAt: string;
 };
 
+export type RiskAlertRecord = {
+  id: string;
+  severity: "info" | "warning" | "critical";
+  category: "policy" | "spend" | "approval" | "payment";
+  title: string;
+  detail: string;
+  agentId?: string | null;
+  serviceId?: string | null;
+  actionHref?: string | null;
+  createdAt: string;
+};
+
 export type IndexerCursorRecord = {
   id: string;
   chainId: number;
@@ -192,6 +246,7 @@ type StoreShape = {
   facilitatorEvents: FacilitatorEventRecord[];
   indexedEvents: IndexedChainEventRecord[];
   indexerCursors: IndexerCursorRecord[];
+  approvalRequests: AgentApprovalRequestRecord[];
 };
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
@@ -251,6 +306,9 @@ export async function appSnapshot(operatorAddress?: string) {
   const payments = operator
     ? store.payments.filter((payment) => payment.payer.toLowerCase() === operator || payment.publisherAddress.toLowerCase() === operator)
     : store.payments;
+  const approvalRequests = operator
+    ? store.approvalRequests.filter((request) => request.operatorAddress.toLowerCase() === operator)
+    : store.approvalRequests;
   const scopedAgents = operator ? store.agents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : store.agents;
   const agents = scopedAgents.map(sanitizeAgent);
   const subscriptions = operator
@@ -275,9 +333,11 @@ export async function appSnapshot(operatorAddress?: string) {
     agents,
     services: store.services,
     payments,
+    approvalRequests,
     subscriptions,
     escrows,
     notifications: notifications.slice(0, 20),
+    riskAlerts: computeRiskAlerts({agents: scopedAgents, payments, approvalRequests}),
     reputation: {
       successfulPayments,
       completedTasks,
@@ -335,6 +395,195 @@ function summarizeIndexedEvents(events: IndexedChainEventRecord[]) {
   };
 }
 
+function computeRiskAlerts(input: {
+  agents: AgentWalletRecord[];
+  payments: PaymentRecord[];
+  approvalRequests: AgentApprovalRequestRecord[];
+}): RiskAlertRecord[] {
+  const now = Date.now();
+  const today = startOfUtcDay(now);
+  const recentCutoff = now - 24 * 60 * 60 * 1000;
+  const alerts: RiskAlertRecord[] = [];
+
+  for (const agent of input.agents) {
+    const agentLabel = agent.arcName || agent.address || agent.id;
+    const settledToday = input.payments.filter((payment) => (
+      payment.status === "settled"
+      && paymentBelongsToAgent(payment, agent)
+      && Date.parse(payment.settledAt ?? payment.createdAt) >= today
+    ));
+    const spentToday = roundUsdc(settledToday.reduce((sum, payment) => sum + Number(payment.amountUsdc || 0), 0));
+    const dailyLimit = Number(agent.policy.dailyLimitUsdc || 0);
+    const transactionCap = Number(agent.policy.transactionCapUsdc || 0);
+    const spentRatio = dailyLimit > 0 ? spentToday / dailyLimit : 0;
+
+    if (!agent.policy.active) {
+      alerts.push(riskAlert({
+        severity: "critical",
+        category: "policy",
+        title: "Policy disabled",
+        detail: `${agentLabel} cannot enforce spend controls until its policy is active.`,
+        agentId: agent.id,
+        actionHref: "/settings/policies"
+      }));
+    }
+
+    if (dailyLimit > 0 && spentRatio >= 1) {
+      alerts.push(riskAlert({
+        severity: "critical",
+        category: "spend",
+        title: "Daily spend limit reached",
+        detail: `${agentLabel} has spent ${spentToday} of ${dailyLimit} USDC today.`,
+        agentId: agent.id,
+        actionHref: "/settings/policies"
+      }));
+    } else if (dailyLimit > 0 && spentRatio >= 0.8) {
+      alerts.push(riskAlert({
+        severity: "warning",
+        category: "spend",
+        title: "Daily spend near limit",
+        detail: `${agentLabel} has used ${Math.round(spentRatio * 100)}% of today's policy limit.`,
+        agentId: agent.id,
+        actionHref: "/settings/policies"
+      }));
+    }
+
+    if (dailyLimit > 0 && transactionCap > dailyLimit) {
+      alerts.push(riskAlert({
+        severity: "warning",
+        category: "policy",
+        title: "Transaction cap above daily limit",
+        detail: `${agentLabel} has a ${transactionCap} USDC transaction cap but only ${dailyLimit} USDC daily spend limit.`,
+        agentId: agent.id,
+        actionHref: "/settings/policies"
+      }));
+    }
+
+    if (agent.policy.active && agent.policy.contractAllowlist.length === 0 && agent.policy.recipientAllowlist.length === 0) {
+      alerts.push(riskAlert({
+        severity: "warning",
+        category: "policy",
+        title: "No allowlists configured",
+        detail: `${agentLabel} has spend limits, but no contract or recipient allowlist.`,
+        agentId: agent.id,
+        actionHref: "/settings/policies"
+      }));
+    }
+
+    if (agent.policy.v2?.requireOnchainPolicy && !agent.policy.txHash) {
+      alerts.push(riskAlert({
+        severity: "critical",
+        category: "policy",
+        title: "On-chain policy required",
+        detail: `${agentLabel} requires on-chain enforcement, but no policy save transaction is recorded.`,
+        agentId: agent.id,
+        actionHref: "/settings/policies"
+      }));
+    }
+
+    if (agent.policy.v2?.expiresAt) {
+      const expiresAt = Date.parse(agent.policy.v2.expiresAt);
+      if (Number.isFinite(expiresAt) && expiresAt <= now) {
+        alerts.push(riskAlert({
+          severity: "critical",
+          category: "policy",
+          title: "Policy expired",
+          detail: `${agentLabel} policy expired and should be renewed before more agent payments.`,
+          agentId: agent.id,
+          actionHref: "/settings/policies"
+        }));
+      } else if (Number.isFinite(expiresAt) && expiresAt - now <= 3 * 24 * 60 * 60 * 1000) {
+        alerts.push(riskAlert({
+          severity: "warning",
+          category: "policy",
+          title: "Policy expires soon",
+          detail: `${agentLabel} policy expires in ${Math.max(1, Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000)))} day(s).`,
+          agentId: agent.id,
+          actionHref: "/settings/policies"
+        }));
+      }
+    }
+
+    const recentBlocked = input.payments.filter((payment) => (
+      paymentBelongsToAgent(payment, agent)
+      && (payment.status === "failed" || payment.status === "policy_blocked")
+      && Date.parse(payment.createdAt) >= recentCutoff
+    ));
+    if (recentBlocked.length >= 3) {
+      alerts.push(riskAlert({
+        severity: "warning",
+        category: "payment",
+        title: "Repeated payment blocks",
+        detail: `${agentLabel} has ${recentBlocked.length} failed or policy-blocked payment attempts in the last 24 hours.`,
+        agentId: agent.id,
+        actionHref: "/payments"
+      }));
+    }
+  }
+
+  for (const request of input.approvalRequests.filter((item) => item.status === "pending")) {
+    const expiresAt = request.expiresAt ? Date.parse(request.expiresAt) : null;
+    if (expiresAt && Number.isFinite(expiresAt) && expiresAt <= now) {
+      alerts.push(riskAlert({
+        severity: "critical",
+        category: "approval",
+        title: "Approval request expired",
+        detail: `${request.serviceName} request for ${request.amountUsdc} USDC is past its approval window.`,
+        agentId: request.agentId,
+        serviceId: request.serviceId,
+        actionHref: "/settings/policies"
+      }));
+    } else if (expiresAt && Number.isFinite(expiresAt) && expiresAt - now <= 2 * 60 * 60 * 1000) {
+      alerts.push(riskAlert({
+        severity: "warning",
+        category: "approval",
+        title: "Approval expires soon",
+        detail: `${request.serviceName} request for ${request.amountUsdc} USDC expires within 2 hours.`,
+        agentId: request.agentId,
+        serviceId: request.serviceId,
+        actionHref: "/settings/policies"
+      }));
+    }
+  }
+
+  return alerts
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .slice(0, 20);
+}
+
+function riskAlert(input: Omit<RiskAlertRecord, "id" | "createdAt">): RiskAlertRecord {
+  return {
+    id: stableAlertId(input),
+    createdAt: new Date().toISOString(),
+    ...input
+  };
+}
+
+function stableAlertId(input: Omit<RiskAlertRecord, "id" | "createdAt">) {
+  return [
+    input.category,
+    input.severity,
+    input.agentId ?? "global",
+    input.serviceId ?? "service",
+    input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+  ].join(":");
+}
+
+function severityRank(severity: RiskAlertRecord["severity"]) {
+  if (severity === "critical") return 3;
+  if (severity === "warning") return 2;
+  return 1;
+}
+
+function paymentBelongsToAgent(payment: PaymentRecord, agent: AgentWalletRecord) {
+  return payment.agentId === agent.id || Boolean(agent.address && payment.agentWallet?.toLowerCase() === agent.address.toLowerCase());
+}
+
+function startOfUtcDay(timestamp: number) {
+  const date = new Date(timestamp);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
 function sanitizeAgent(agent: AgentWalletRecord) {
   return {
     id: agent.id,
@@ -369,7 +618,8 @@ function emptyStore(): StoreShape {
     notifications: [],
     facilitatorEvents: [],
     indexedEvents: [],
-    indexerCursors: []
+    indexerCursors: [],
+    approvalRequests: []
   };
 }
 
@@ -378,10 +628,12 @@ function normalizeStore(value: unknown): StoreShape {
   store.facilitatorEvents = Array.isArray(store.facilitatorEvents) ? store.facilitatorEvents : [];
   store.indexedEvents = Array.isArray(store.indexedEvents) ? store.indexedEvents : [];
   store.indexerCursors = Array.isArray(store.indexerCursors) ? store.indexerCursors : [];
+  store.approvalRequests = Array.isArray(store.approvalRequests) ? store.approvalRequests.map(normalizeApprovalRequest) : [];
   store.services = store.services.map((service) => ({
     ...service,
     manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash)
   }));
+  store.services = mergeSeededServices(store.services);
   store.agents = store.agents.map((agent) => ({
     ...agent,
     policy: normalizeAgentPolicy(agent.policy)
@@ -409,6 +661,88 @@ function normalizeStore(value: unknown): StoreShape {
     currentPeriodEnd: subscription.currentPeriodEnd ?? null
   }));
   return store;
+}
+
+function normalizeApprovalRequest(request: AgentApprovalRequestRecord): AgentApprovalRequestRecord {
+  const amountUsdc = Number(request.amountUsdc || 0);
+  const units = Number(request.units || 0);
+  return {
+    ...request,
+    agentWallet: request.agentWallet ?? null,
+    amountUsdc: Number.isFinite(amountUsdc) ? amountUsdc : 0,
+    units: Number.isInteger(units) && units > 0 ? units : 1,
+    simulation: {
+      allowed: Boolean(request.simulation?.allowed),
+      reason: request.simulation?.reason ?? null,
+      dailySpentUsdc: Number(request.simulation?.dailySpentUsdc || 0),
+      weeklySpentUsdc: Number(request.simulation?.weeklySpentUsdc || 0),
+      monthlySpentUsdc: Number(request.simulation?.monthlySpentUsdc || 0)
+    },
+    status: ["pending", "approved", "rejected", "expired"].includes(request.status) ? request.status : "pending",
+    note: request.note ?? null,
+    updatedAt: request.updatedAt ?? request.createdAt,
+    decidedAt: request.decidedAt ?? null,
+    expiresAt: request.expiresAt ?? null
+  };
+}
+
+function mergeSeededServices(existing: ServiceRecord[]) {
+  const services = [...existing];
+  const seen = new Set(services.map((service) => service.endpointHash));
+  for (const service of seededServices()) {
+    if (!seen.has(service.endpointHash)) {
+      services.push(service);
+      seen.add(service.endpointHash);
+    }
+  }
+  return services;
+}
+
+function seededServices(): ServiceRecord[] {
+  const publisherAddress = process.env.NEXORA_MARKETPLACE_PUBLISHER_ADDRESS || config.contracts.treasury || "0x0000000000000000000000000000000000000000";
+  const createdAt = "2026-06-01T00:00:00.000Z";
+  const seeds: Array<{
+    id: string;
+    name: string;
+    endpointHash: string;
+    pricePerUnitUsdc: number;
+    kind: ServiceManifest["kind"];
+    featured?: boolean;
+    description?: string;
+  }> = [
+    {id: "nexora-website-growth-analyzer", name: "Website Growth Analyzer", endpointHash: "website-analyzer-v1", pricePerUnitUsdc: 0.025, kind: "website_analyzer", featured: true},
+    {id: "nexora-github-repo-analyzer", name: "GitHub Repo Analyzer", endpointHash: "github-repo-analyzer-v1", pricePerUnitUsdc: 0.05, kind: "github_repo_analyzer", featured: true},
+    {id: "nexora-x-account-analyzer", name: "X Account Analyzer", endpointHash: "x-account-analyzer-v1", pricePerUnitUsdc: 0.035, kind: "x_account_analyzer"},
+    {id: "nexora-contract-safety-check", name: "Contract Safety Check", endpointHash: "contract-safety-check-v1", pricePerUnitUsdc: 0.015, kind: "contract_safety_check", featured: true},
+    {id: "nexora-wallet-activity-summary", name: "Wallet Activity Summary", endpointHash: "wallet-activity-summary-v1", pricePerUnitUsdc: 0.015, kind: "wallet_activity_summary"},
+    {id: "nexora-landing-page-copy-reviewer", name: "Landing Page Copy Reviewer", endpointHash: "landing-page-copy-reviewer-v1", pricePerUnitUsdc: 0.02, kind: "landing_page_copy_reviewer"},
+    {id: "nexora-grant-application-reviewer", name: "Grant Application Reviewer", endpointHash: "grant-application-reviewer-v1", pricePerUnitUsdc: 0.03, kind: "grant_application_reviewer"},
+    {id: "nexora-meeting-brief", name: "Meeting Brief Agent", endpointHash: "meeting-brief-v1", pricePerUnitUsdc: 0.02, kind: "meeting_brief", description: "Turn a meeting goal, wallet, project, or URL into a short prep brief with questions and follow-up actions."},
+    {id: "nexora-arc-builder-research", name: "Arc Builder Research", endpointHash: "arc-builder-research-v1", pricePerUnitUsdc: 0.025, kind: "arc_builder_research", featured: true},
+    {id: "nexora-domain-name-research", name: "Domain Name Research", endpointHash: "domain-name-research-v1", pricePerUnitUsdc: 0.015, kind: "domain_name_research"},
+    {id: "nexora-social-content-audit", name: "Social Content Audit", endpointHash: "social-content-audit-v1", pricePerUnitUsdc: 0.02, kind: "social_content_audit"},
+    {id: "nexora-stablecoin-route-report", name: "Stablecoin Route Report", endpointHash: "stablecoin-route-report-v1", pricePerUnitUsdc: 0.02, kind: "stablecoin_route_report", featured: true},
+    {id: "nexora-policy-risk-review", name: "Agent Policy Risk Review", endpointHash: "policy-risk-review-v1", pricePerUnitUsdc: 0.025, kind: "policy_risk_review"},
+    {id: "nexora-launch-readiness-check", name: "Launch Readiness Check", endpointHash: "launch-readiness-check-v1", pricePerUnitUsdc: 0.03, kind: "launch_readiness_check"},
+    {id: "nexora-x402-integration-planner", name: "x402 Integration Planner", endpointHash: "x402-integration-planner-v1", pricePerUnitUsdc: 0.025, kind: "x402_integration_planner", featured: true}
+  ];
+
+  return seeds.map((seed, index) => ({
+    id: seed.id,
+    chainServiceId: null,
+    publisherAddress,
+    name: seed.name,
+    endpointHash: seed.endpointHash,
+    pricePerUnitUsdc: seed.pricePerUnitUsdc,
+    manifest: {
+      ...manifestTemplateForKind(seed.kind),
+      description: seed.description ?? manifestTemplateForKind(seed.kind).description
+    },
+    active: true,
+    featured: Boolean(seed.featured),
+    txHash: null,
+    createdAt: new Date(Date.parse(createdAt) + index * 60_000).toISOString()
+  }));
 }
 
 function titleFromPlanId(planId: string) {
@@ -500,8 +834,89 @@ function defaultManifestForService(name: string, endpointHash: string): ServiceM
     };
   }
   if (marker.includes("grant") || marker.includes("application reviewer")) {
+    return manifestTemplateForKind("grant_application_reviewer");
+  }
+  if (marker.includes("meeting") || marker.includes("brief")) return manifestTemplateForKind("meeting_brief");
+  if (marker.includes("arc builder") || marker.includes("builder research")) return manifestTemplateForKind("arc_builder_research");
+  if (marker.includes("domain") || marker.includes("name research")) return manifestTemplateForKind("domain_name_research");
+  if (marker.includes("social") || marker.includes("content audit")) return manifestTemplateForKind("social_content_audit");
+  if (marker.includes("stablecoin route") || marker.includes("route report")) return manifestTemplateForKind("stablecoin_route_report");
+  if (marker.includes("policy risk") || marker.includes("agent policy review")) return manifestTemplateForKind("policy_risk_review");
+  if (marker.includes("launch readiness") || marker.includes("launch check")) return manifestTemplateForKind("launch_readiness_check");
+  if (marker.includes("x402 integration") || marker.includes("integration planner")) return manifestTemplateForKind("x402_integration_planner");
+  return manifestTemplateForKind("generic");
+}
+
+function manifestTemplateForKind(kind: ServiceManifest["kind"]): ServiceManifest {
+  if (kind === "website_analyzer") {
     return {
-      kind: "grant_application_reviewer",
+      kind,
+      version: "1.0.0",
+      description: "Reviews a website URL and returns page title, metadata, links, headings, and a short readable summary.",
+      inputSchema: [{name: "url", label: "Website URL", type: "url", required: true, placeholder: "https://example.com"}],
+      outputSchema: ["title", "description", "summary", "headings", "links", "wordCount"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "github_repo_analyzer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a public GitHub repository and returns activity, language, license, popularity, and README signal.",
+      inputSchema: [{name: "repo", label: "GitHub repository", type: "text", required: true, placeholder: "owner/repo or GitHub URL"}],
+      outputSchema: ["repo", "description", "stars", "forks", "openIssues", "license", "signal"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "x_account_analyzer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a public X account when API credits are available and returns metrics, account signal, and score.",
+      inputSchema: [{name: "handle", label: "X account", type: "text", required: true, placeholder: "@username"}],
+      outputSchema: ["account", "metrics", "score", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "contract_safety_check") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Checks a contract address and returns a safety checklist before it is used in agent policy.",
+      inputSchema: [{name: "contract", label: "Contract address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["contract", "riskLevel", "checks", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "wallet_activity_summary") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Summarizes wallet risk notes and recommended agent recipient policy.",
+      inputSchema: [{name: "wallet", label: "Wallet address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["wallet", "riskLevel", "summary", "recommendedPolicy"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "landing_page_copy_reviewer") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews landing page copy or a URL for clarity, conversion, and CTA quality.",
+      inputSchema: [{name: "url", label: "URL or page copy", type: "text", required: true, placeholder: "https://example.com or paste copy"}],
+      outputSchema: ["score", "issues", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "grant_application_reviewer") {
+    return {
+      kind,
       version: "1.0.0",
       description: "Reviews a grant application summary for infrastructure clarity, revenue proof, and ecosystem fit.",
       inputSchema: [{name: "application", label: "Application summary", type: "text", required: true, placeholder: "Paste your grant summary"}],
@@ -510,8 +925,96 @@ function defaultManifestForService(name: string, endpointHash: string): ServiceM
       platformFeeBps: 200
     };
   }
+  if (kind === "meeting_brief") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Turns a meeting goal into a concise prep brief with agenda, context, questions, and follow-up actions.",
+      inputSchema: [{name: "brief", label: "Meeting goal", type: "text", required: true, placeholder: "Discuss Arc x402 integration with a wallet team"}],
+      outputSchema: ["summary", "agenda", "questions", "followUps"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "arc_builder_research") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Researches an Arc builder, project, or integration idea and returns fit, proof points, and collaboration angles.",
+      inputSchema: [{name: "target", label: "Builder or project", type: "text", required: true, placeholder: "Project name, URL, or wallet"}],
+      outputSchema: ["summary", "arcFit", "questions", "integrationIdeas"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "domain_name_research") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a domain or product name for positioning, trust, and launch-readiness signals.",
+      inputSchema: [{name: "domain", label: "Domain or name", type: "text", required: true, placeholder: "nexora.finance"}],
+      outputSchema: ["domain", "score", "risks", "suggestions", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "social_content_audit") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a post, thread draft, or announcement and returns clarity, audience fit, and CTA improvements.",
+      inputSchema: [{name: "content", label: "Post or thread draft", type: "text", required: true, placeholder: "Paste post copy or announcement"}],
+      outputSchema: ["score", "issues", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "stablecoin_route_report") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Summarizes a stablecoin route, swap, bridge, or Save/Earn flow for cost, risk, and integration readiness.",
+      inputSchema: [{name: "route", label: "Route or flow", type: "text", required: true, placeholder: "USDC on Arc to EURC using Synthra"}],
+      outputSchema: ["route", "riskLevel", "checks", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "policy_risk_review") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews agent policy settings and returns risk notes, suggested caps, and approval recommendations.",
+      inputSchema: [{name: "policy", label: "Policy details", type: "text", required: true, placeholder: "Daily 100 USDC, tx cap 20, allow x402 ledger"}],
+      outputSchema: ["riskLevel", "checks", "recommendedPolicy", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "launch_readiness_check") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Checks a product launch plan for docs, demo, contracts, receipts, security notes, and community-readiness.",
+      inputSchema: [{name: "launch", label: "Launch plan", type: "text", required: true, placeholder: "Paste launch plan, website, or demo checklist"}],
+      outputSchema: ["score", "strengths", "gaps", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "x402_integration_planner") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Creates a practical x402 integration checklist for a paid API, including requirements, SDK wiring, and settlement flow.",
+      inputSchema: [{name: "api", label: "API description", type: "text", required: true, placeholder: "Paid repo analyzer endpoint in Next.js"}],
+      outputSchema: ["summary", "steps", "requirements", "securityNotes"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
   return {
-    kind: "generic",
+    kind,
     version: "1.0.0",
     description: "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
     inputSchema: [],

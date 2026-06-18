@@ -46,6 +46,62 @@ const serviceTemplates = [
     endpointHash: "grant-application-reviewer-v1",
     price: "0.03",
     description: "Review a grant summary for infrastructure clarity, revenue proof, and ecosystem fit."
+  },
+  {
+    kind: "meeting_brief",
+    name: "Meeting Brief Agent",
+    endpointHash: "meeting-brief-v1",
+    price: "0.02",
+    description: "Turn a meeting goal into agenda points, questions, and follow-up actions."
+  },
+  {
+    kind: "arc_builder_research",
+    name: "Arc Builder Research",
+    endpointHash: "arc-builder-research-v1",
+    price: "0.025",
+    description: "Research an Arc builder, project, or integration idea and return collaboration angles."
+  },
+  {
+    kind: "domain_name_research",
+    name: "Domain Name Research",
+    endpointHash: "domain-name-research-v1",
+    price: "0.015",
+    description: "Review a domain or product name for trust, positioning, and launch readiness."
+  },
+  {
+    kind: "social_content_audit",
+    name: "Social Content Audit",
+    endpointHash: "social-content-audit-v1",
+    price: "0.02",
+    description: "Review an announcement, post, or thread draft for clarity, proof, and CTA quality."
+  },
+  {
+    kind: "stablecoin_route_report",
+    name: "Stablecoin Route Report",
+    endpointHash: "stablecoin-route-report-v1",
+    price: "0.02",
+    description: "Analyze a stablecoin swap, bridge, or Save/Earn route for risk and integration readiness."
+  },
+  {
+    kind: "policy_risk_review",
+    name: "Agent Policy Risk Review",
+    endpointHash: "policy-risk-review-v1",
+    price: "0.025",
+    description: "Review agent policy settings and return suggested caps, allowlist notes, and risk level."
+  },
+  {
+    kind: "launch_readiness_check",
+    name: "Launch Readiness Check",
+    endpointHash: "launch-readiness-check-v1",
+    price: "0.03",
+    description: "Check a launch plan for docs, demo, contract proof, receipts, and security notes."
+  },
+  {
+    kind: "x402_integration_planner",
+    name: "x402 Integration Planner",
+    endpointHash: "x402-integration-planner-v1",
+    price: "0.025",
+    description: "Create a practical x402 integration checklist for a paid API endpoint."
   }
 ] as const;
 
@@ -121,12 +177,12 @@ export function PublishServiceForm() {
       <label className="grid gap-2 text-sm text-slate-300">
         Service name
         <input className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Website Analyzer" />
-        <span className="text-xs leading-5 text-slate-500">Examples: Website Analyzer, GitHub Repo Analyzer, X Account Analyzer, Contract Safety Check.</span>
+        <span className="text-xs leading-5 text-slate-500">Examples: Website Analyzer, GitHub Repo Analyzer, Meeting Brief Agent, x402 Integration Planner.</span>
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Endpoint hash / manifest URI
         <input className="field" value={endpointHash} onChange={(event) => setEndpointHash(event.target.value)} placeholder="website-analyzer-v1" />
-        <span className="text-xs leading-5 text-slate-500">Use website-analyzer-v1, github-repo-analyzer-v1, or x-account-analyzer-v1 for built-in Nexora execution.</span>
+        <span className="text-xs leading-5 text-slate-500">Use a built-in endpoint hash like website-analyzer-v1, meeting-brief-v1, or x402-integration-planner-v1 for Nexora execution.</span>
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Manifest type
@@ -139,6 +195,14 @@ export function PublishServiceForm() {
           <option value="wallet_activity_summary">Wallet Activity Summary</option>
           <option value="landing_page_copy_reviewer">Landing Page Copy Reviewer</option>
           <option value="grant_application_reviewer">Grant Application Reviewer</option>
+          <option value="meeting_brief">Meeting Brief Agent</option>
+          <option value="arc_builder_research">Arc Builder Research</option>
+          <option value="domain_name_research">Domain Name Research</option>
+          <option value="social_content_audit">Social Content Audit</option>
+          <option value="stablecoin_route_report">Stablecoin Route Report</option>
+          <option value="policy_risk_review">Agent Policy Risk Review</option>
+          <option value="launch_readiness_check">Launch Readiness Check</option>
+          <option value="x402_integration_planner">x402 Integration Planner</option>
         </select>
         <span className="text-xs leading-5 text-slate-500">Choose the kind of API you are publishing. Nexora uses this to show the right input and result layout.</span>
       </label>
