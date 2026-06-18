@@ -160,23 +160,23 @@ export function PolicySimulationPanel() {
           <span className="status-pill">{pendingRequests.length} pending</span>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px]">
-          <div className="grid gap-2 text-sm text-slate-300">
+        <div className="flex flex-wrap gap-4">
+          <div className="grid min-w-[240px] flex-1 gap-2 text-sm text-slate-300">
             Agent
             <AgentPicker agents={agents} value={selectedAgent} onChange={setAgentId} />
           </div>
-          <label className="grid gap-2 text-sm text-slate-300">
+          <label className="grid min-w-[200px] flex-1 gap-2 text-sm text-slate-300">
             Service
-            <select className="field" value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
+            <select className="field w-full min-w-0" value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
               {serviceOptions.length === 0 ? <option value="">No services available</option> : null}
               {serviceOptions.map((service) => (
                 <option key={service.id} value={service.id}>{service.name} · ${service.pricePerUnitUsdc}/unit</option>
               ))}
             </select>
           </label>
-          <label className="grid gap-2 text-sm text-slate-300">
+          <label className="grid w-24 shrink-0 gap-2 text-sm text-slate-300">
             Units
-            <input className="field" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value.replace(/[^\d]/g, "") || "1")} />
+            <input className="field w-full" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value.replace(/[^\d]/g, "") || "1")} />
           </label>
         </div>
 
