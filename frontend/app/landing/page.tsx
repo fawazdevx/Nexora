@@ -166,7 +166,7 @@ export default function LandingPage() {
             <a href="/docs/api" onClick={(event) => navigate(event, "/docs/api")} className="secondary-button hidden min-h-10 px-4 py-2 text-sm sm:inline-flex">
               Docs
             </a>
-            <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button min-h-10 px-4 py-2 text-sm">
+            <a href="/home" onClick={(event) => navigate(event, "/home")} className="action-button min-h-10 px-4 py-2 text-sm">
               Launch App
               <ArrowRight size={15} />
             </a>
@@ -200,7 +200,7 @@ export default function LandingPage() {
               Create policy-controlled agent wallets, monetize APIs with x402, manage escrow payments, and route USDC through swap and Save/Earn flows.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button px-6">
+              <a href="/home" onClick={(event) => navigate(event, "/home")} className="action-button px-6">
                 Launch App
                 <ArrowRight size={17} />
               </a>
@@ -365,7 +365,7 @@ export default function LandingPage() {
               <h2 className="page-title">Start with an agent wallet or integrate the x402 SDK.</h2>
             </div>
             <div className="flex flex-wrap gap-3">
-              <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button">Open Console</a>
+              <a href="/home" onClick={(event) => navigate(event, "/home")} className="action-button">Open Console</a>
               <a href="/docs/api" onClick={(event) => navigate(event, "/docs/api")} className="secondary-button">Read Docs</a>
             </div>
           </div>

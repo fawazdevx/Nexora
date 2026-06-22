@@ -14,7 +14,7 @@ function go(event: React.MouseEvent<HTMLAnchorElement>, href: string, after?: ()
 /** Desktop grouped dropdown nav with a sliding active indicator. */
 export function HeaderNav({pathname}: {pathname: string}) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
-  const homeActive = pathname === "/app" || pathname === "/";
+  const homeActive = pathname === "/home" || pathname === "/app" || pathname === "/";
 
   return (
     <nav className="hidden items-center gap-1 lg:flex">
@@ -103,7 +103,7 @@ export function HeaderNav({pathname}: {pathname: string}) {
 /** Mobile/tablet slide-in menu shown below the lg breakpoint. */
 export function MobileNav({pathname}: {pathname: string}) {
   const [open, setOpen] = useState(false);
-  const homeActive = pathname === "/app" || pathname === "/";
+  const homeActive = pathname === "/home" || pathname === "/app" || pathname === "/";
 
   return (
     <>

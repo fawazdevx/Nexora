@@ -11,10 +11,17 @@ import {apiPost} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
 import {arcTestnet, shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
-import {settleX402Request} from "@/lib/contracts";
+import {settleX402Request, type NexoraStructuredMemo} from "@/lib/contracts";
 
 type Service = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["services"][number];
 type SortKey = "featured" | "priceAsc" | "priceDesc" | "name";
+type PrivacyScope = "public" | "selective" | "private";
+
+const PRIVACY_OPTIONS: Array<{value: PrivacyScope; label: string; copy: string}> = [
+  {value: "selective", label: "Selective", copy: "Budget, policy, and intent only"},
+  {value: "private", label: "Private", copy: "Scope and timestamp only"},
+  {value: "public", label: "Public", copy: "Full purchase metadata"}
+];
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
   event.preventDefault();
@@ -51,6 +58,7 @@ export default function MarketplacePage() {
   const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [privacyScope, setPrivacyScope] = useState<PrivacyScope>("selective");
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState("all");
   const [sort, setSort] = useState<SortKey>("featured");
@@ -93,35 +101,53 @@ export default function MarketplacePage() {
       toast.error("Create an agent wallet before purchasing an API.");
       return;
     }
+    if (!service.chainServiceId) {
+      toast.error("This service must be published on the Arc ledger before purchase.");
+      return;
+    }
     setBusyId(service.id);
     const toastId = toast.loading(`Authorizing x402 payment for ${service.name}…`);
     try {
       const requestHash = `0x${crypto.randomUUID().replaceAll("-", "").padEnd(64, "0")}` as `0x${string}`;
-      const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number}}>("/api/x402/authorize", {
+      const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number; memo?: NexoraStructuredMemo | null}}>("/api/x402/authorize", {
         serviceId: service.id,
         payer: address,
         agentId: selectedAgent.id,
+        privacyScope,
         requestHash,
         units: 1
       });
       let txHash: string | null = null;
-      if (service.chainServiceId) {
+      let memoSettlement: Awaited<ReturnType<typeof settleX402Request>> | null = null;
+      const canUseCircleAgentSettlement = Boolean(selectedAgent.circleWalletId);
+      if (!canUseCircleAgentSettlement) {
         toast.loading(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement…`, {id: toastId});
-        const walletSettlement = await settleX402Request({
+        memoSettlement = await settleX402Request({
           chainServiceId: service.chainServiceId,
           requestHash,
           payer: address,
           units: 1,
-          amountUsdc: String(result.settlement.amountUsdc)
+          amountUsdc: String(result.settlement.amountUsdc),
+          memo: result.settlement.memo ?? null
         });
-        txHash = walletSettlement.settleHash;
-      } else {
-        toast.loading(`Recording test x402 settlement for ${service.name}…`, {id: toastId});
+        txHash = memoSettlement.settleHash;
+      } else if (canUseCircleAgentSettlement) {
+        toast.loading(`Agent wallet settling ${service.name} on Arc with memo receipt…`, {id: toastId});
       }
       const settlement = await apiPost<{status: string; txHash?: string | null}>("/api/x402/settle", {
         authorizationId: result.authorizationId,
-        txHash
+        agentId: canUseCircleAgentSettlement ? selectedAgent.id : undefined,
+        txHash,
+        memo: memoSettlement?.memo ?? result.settlement.memo ?? null,
+        targetContract: memoSettlement?.targetContract,
+        callDataHash: memoSettlement?.callDataHash,
+        memoIndex: memoSettlement?.memoIndex
       });
+      if (settlement.status === "pending_settlement") {
+        await snapshot.refetch();
+        toast.success(`Agent settlement is pending on Circle. Execute ${service.name} after the Arc transaction confirms.`, {id: toastId});
+        return;
+      }
       toast.loading(`Executing ${service.name}…`, {id: toastId});
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
         payer: address,
@@ -133,7 +159,7 @@ export default function MarketplacePage() {
       if (settlement.txHash) {
         toast.success(txToast(`Purchased ${service.name}`, settlement.txHash), {id: toastId});
       } else {
-        toast.success(`Purchased ${service.name} with agent policy enforced.`, {id: toastId});
+        toast.success(`Settlement recorded for ${service.name}.`, {id: toastId});
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Service purchase failed", {id: toastId});
@@ -165,6 +191,26 @@ export default function MarketplacePage() {
           Agent used for purchases
         </div>
         <AgentPicker agents={agents} value={selectedAgent} onChange={setSelectedAgentId} />
+      </div>
+
+      <div className="panel flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-bold text-white">Memo privacy</p>
+          <p className="mt-1 text-xs text-slate-400">Choose what purchase context is written into public memo data.</p>
+        </div>
+        <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-3">
+          {PRIVACY_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setPrivacyScope(option.value)}
+              className={`rounded-lg border px-3 py-2 text-left text-sm transition ${privacyScope === option.value ? "border-mint/40 bg-mint/10 text-white" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-mint/30"}`}
+            >
+              <span className="block font-semibold">{option.label}</span>
+              <span className="mt-1 block text-xs text-slate-500">{option.copy}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Search + filter + sort */}
@@ -230,7 +276,7 @@ export default function MarketplacePage() {
               key={service.id}
               service={service}
               busy={busyId === service.id}
-              disabled={!isConnected || !selectedAgent || Boolean(busyId)}
+              disabled={!isConnected || !selectedAgent || !service.chainServiceId || Boolean(busyId)}
               input={serviceInputs[service.id] ?? ""}
               onInput={(value) => setServiceInputs((current) => ({...current, [service.id]: value}))}
               onPurchase={() => void purchase(service)}
@@ -309,7 +355,7 @@ function ServiceCard({
       </div>
 
       <div className="relative mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
-        <span className="surface px-3 py-2.5 font-medium">Ledger <b className="font-bold text-white">{service.chainServiceId ?? "Off-chain"}</b></span>
+        <span className="surface px-3 py-2.5 font-medium">Settlement <b className="font-bold text-white">{service.chainServiceId ? `Ledger #${service.chainServiceId}` : "Not published"}</b></span>
         <span className="surface px-3 py-2.5 font-medium">Platform fee <b className="font-bold text-white">{(service.manifest.platformFeeBps / 100).toFixed(2)}%</b></span>
       </div>
 
@@ -337,7 +383,7 @@ function ServiceCard({
       <div className="relative mt-4 flex items-center gap-3">
         <button onClick={onPurchase} className="action-button flex-1" disabled={disabled}>
           {busy ? <Loader2 size={16} className="animate-spin" /> : null}
-          {busy ? "Processing…" : service.chainServiceId ? "Purchase per execution" : "Test purchase"}
+          {busy ? "Processing…" : "Purchase per execution"}
         </button>
         <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button px-3" aria-label="Public service page">
           <ArrowUpRight size={16} />

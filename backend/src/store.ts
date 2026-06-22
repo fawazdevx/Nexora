@@ -2,6 +2,7 @@ import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
 import {Pool, type PoolClient} from "pg";
 import {config} from "./config.js";
+import {normalizeMemo, type NexoraStructuredMemo} from "./memos.js";
 import {normalizePolicyV2} from "./policies/engine.js";
 
 export type AgentPolicy = {
@@ -30,7 +31,11 @@ export type AgentWalletRecord = {
   circleWalletStatus: string;
   circleWalletSetId?: string | null;
   circleWalletId?: string | null;
+  circleAccountType?: "EOA" | "SCA" | null;
+  settlementMode?: "eoa_memo" | "sca_direct" | null;
   createdAt: string;
+  archivedAt?: string | null;
+  archiveReason?: string | null;
   policy: AgentPolicy;
 };
 
@@ -46,6 +51,8 @@ export type ServiceRecord = {
   featured: boolean;
   txHash?: string | null;
   createdAt: string;
+  archivedAt?: string | null;
+  archiveReason?: string | null;
 };
 
 export type ServiceManifest = {
@@ -93,6 +100,7 @@ export type PaymentRecord = {
   requestHash: string;
   status: "authorized" | "settled" | "failed" | "policy_blocked";
   policyReason?: string | null;
+  memo?: NexoraStructuredMemo | null;
   txHash?: string | null;
   createdAt: string;
   settledAt?: string | null;
@@ -179,6 +187,41 @@ export type NotificationRecord = {
   detail?: string | null;
   kind: "agent" | "payment" | "earn" | "escrow" | "policy" | "system";
   txHash?: string | null;
+  receiptId?: string | null;
+  actionHref?: string | null;
+  createdAt: string;
+};
+
+export type NotificationPreferencesRecord = {
+  operatorAddress: string;
+  email: string | null;
+  whatsapp: string | null;
+  telegram: string | null;
+  channels: {
+    inApp: boolean;
+    email: boolean;
+    whatsapp: boolean;
+    telegram: boolean;
+  };
+  events: {
+    agentActions: boolean;
+    paymentReceipts: boolean;
+    policyAlerts: boolean;
+    escrowUpdates: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotificationDeliveryRecord = {
+  id: string;
+  notificationId: string;
+  operatorAddress: string;
+  channel: "email" | "whatsapp" | "telegram";
+  target: string;
+  status: "sent" | "skipped" | "failed";
+  provider: string;
+  reason?: string | null;
   createdAt: string;
 };
 
@@ -243,11 +286,49 @@ type StoreShape = {
   subscriptions: SubscriptionRecord[];
   escrows: EscrowRecord[];
   notifications: NotificationRecord[];
+  notificationPreferences: NotificationPreferencesRecord[];
+  notificationDeliveries: NotificationDeliveryRecord[];
   facilitatorEvents: FacilitatorEventRecord[];
   indexedEvents: IndexedChainEventRecord[];
   indexerCursors: IndexerCursorRecord[];
   approvalRequests: AgentApprovalRequestRecord[];
 };
+
+const SEEDED_SERVICE_IDS = new Set([
+  "nexora-website-growth-analyzer",
+  "nexora-github-repo-analyzer",
+  "nexora-x-account-analyzer",
+  "nexora-contract-safety-check",
+  "nexora-wallet-activity-summary",
+  "nexora-landing-page-copy-reviewer",
+  "nexora-grant-application-reviewer",
+  "nexora-meeting-brief",
+  "nexora-arc-builder-research",
+  "nexora-domain-name-research",
+  "nexora-social-content-audit",
+  "nexora-stablecoin-route-report",
+  "nexora-policy-risk-review",
+  "nexora-launch-readiness-check",
+  "nexora-x402-integration-planner"
+]);
+
+const SEEDED_ENDPOINT_HASHES = new Set([
+  "website-analyzer-v1",
+  "github-repo-analyzer-v1",
+  "x-account-analyzer-v1",
+  "contract-safety-check-v1",
+  "wallet-activity-summary-v1",
+  "landing-page-copy-reviewer-v1",
+  "grant-application-reviewer-v1",
+  "meeting-brief-v1",
+  "arc-builder-research-v1",
+  "domain-name-research-v1",
+  "social-content-audit-v1",
+  "stablecoin-route-report-v1",
+  "policy-risk-review-v1",
+  "launch-readiness-check-v1",
+  "x402-integration-planner-v1"
+]);
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
 const writableStorePath = process.env.VERCEL || process.env.NETLIFY ? "/tmp/nexora-store.json" : ".nexora-data/store.json";
@@ -303,40 +384,53 @@ export function storageFriendlyError(error: unknown) {
 export async function appSnapshot(operatorAddress?: string) {
   const store = await readStore();
   const operator = operatorAddress?.toLowerCase();
+  const visibleServices = visibleServicesForStore(store.services);
+  const visibleAgents = store.agents.filter(isVisibleAgent);
+  const visibleServiceIds = new Set(visibleServices.map((service) => service.id));
+  const visibleAgentIds = new Set(visibleAgents.map((agent) => agent.id));
+  const visibleAgentWallets = new Set(visibleAgents.map((agent) => agent.address?.toLowerCase()).filter(Boolean) as string[]);
+  const visiblePayments = store.payments.filter((payment) => isVisiblePayment(payment, {visibleServiceIds, visibleAgentIds, visibleAgentWallets}));
   const payments = operator
-    ? store.payments.filter((payment) => payment.payer.toLowerCase() === operator || payment.publisherAddress.toLowerCase() === operator)
-    : store.payments;
+    ? visiblePayments.filter((payment) => payment.payer.toLowerCase() === operator || payment.publisherAddress.toLowerCase() === operator)
+    : [];
   const approvalRequests = operator
     ? store.approvalRequests.filter((request) => request.operatorAddress.toLowerCase() === operator)
-    : store.approvalRequests;
-  const scopedAgents = operator ? store.agents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : store.agents;
+    : [];
+  const scopedAgents = operator ? visibleAgents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : [];
   const agents = scopedAgents.map(sanitizeAgent);
   const subscriptions = operator
     ? store.subscriptions.filter((subscription) => subscription.operatorAddress.toLowerCase() === operator)
-    : store.subscriptions;
+    : [];
   const escrows = operator
     ? store.escrows.filter((escrow) => escrow.creatorAddress.toLowerCase() === operator || escrow.counterpartyAddress.toLowerCase() === operator)
-    : store.escrows;
+    : [];
   const notifications = operator
     ? store.notifications.filter((item) => !item.operatorAddress || item.operatorAddress.toLowerCase() === operator)
-    : store.notifications;
+    : [];
+  const notificationPreferences = operator ? preferencesForOperator(store, operatorAddress ?? "") : null;
+  const notificationDeliveries = operator
+    ? store.notificationDeliveries.filter((item) => item.operatorAddress.toLowerCase() === operator).slice(0, 20)
+    : [];
 
+  const platformSettledPayments = store.payments.filter((payment) => payment.status === "settled");
   const settledPayments = payments.filter((payment) => payment.status === "settled");
   const marketplaceSales = settledPayments.length;
   const completedTasks = store.earnActivations.filter((activation) => !operator || activation.operatorAddress.toLowerCase() === operator).length;
-  const ecosystemContributions = store.services.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
+  const ecosystemContributions = visibleServices.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
   const successfulPayments = settledPayments.length;
   const indexedStats = summarizeIndexedEvents(store.indexedEvents);
   const indexedAvailable = indexedStats.indexedEvents > 0;
 
   return {
     agents,
-    services: store.services,
+    services: visibleServices,
     payments,
     approvalRequests,
     subscriptions,
     escrows,
     notifications: notifications.slice(0, 20),
+    notificationPreferences,
+    notificationDeliveries,
     riskAlerts: computeRiskAlerts({agents: scopedAgents, payments, approvalRequests}),
     reputation: {
       successfulPayments,
@@ -347,10 +441,10 @@ export async function appSnapshot(operatorAddress?: string) {
       score: successfulPayments * 5 + completedTasks * 8 + marketplaceSales * 10 + ecosystemContributions * 12
     },
     stats: {
-      agentWallets: agents.length,
-      usdcSettled: indexedAvailable ? indexedStats.marketplaceGrossUsdc : settledPayments.reduce((sum, payment) => sum + payment.amountUsdc, 0),
+      agentWallets: operator ? agents.length : store.agents.length,
+      usdcSettled: indexedAvailable ? indexedStats.marketplaceGrossUsdc : (operator ? settledPayments : platformSettledPayments).reduce((sum, payment) => sum + payment.amountUsdc, 0),
       earnRoutes: indexedAvailable ? indexedStats.saveEarnDeposits : store.earnActivations.length,
-      policySaves: indexedStats.policySaves > 0 ? indexedStats.policySaves : agents.filter((agent) => agent.policy.txHash).length,
+      policySaves: indexedStats.policySaves > 0 ? indexedStats.policySaves : (operator ? agents : store.agents).filter((agent) => agent.policy.txHash).length,
       analyticsSource: indexedAvailable ? "indexed" : "local",
       indexedEvents: indexedStats.indexedEvents,
       saveEarnDepositVolumeUsdc: indexedStats.saveEarnDepositVolumeUsdc,
@@ -593,8 +687,174 @@ function sanitizeAgent(agent: AgentWalletRecord) {
     circleWalletStatus: agent.circleWalletStatus,
     circleWalletSetId: agent.circleWalletSetId ?? null,
     circleWalletId: agent.circleWalletId ?? null,
+    circleAccountType: agent.circleAccountType ?? null,
+    settlementMode: agent.settlementMode ?? null,
     createdAt: agent.createdAt,
     policy: agent.policy
+  };
+}
+
+export function isArchivedAgent(agent: Pick<AgentWalletRecord, "archivedAt">) {
+  return Boolean(agent.archivedAt);
+}
+
+export function isVisibleAgent(agent: AgentWalletRecord) {
+  return !isArchivedAgent(agent);
+}
+
+export function isArchivedService(service: Pick<ServiceRecord, "archivedAt">) {
+  return Boolean(service.archivedAt);
+}
+
+export function isSeededService(service: Pick<ServiceRecord, "id" | "endpointHash">) {
+  return SEEDED_SERVICE_IDS.has(service.id) || SEEDED_ENDPOINT_HASHES.has(service.endpointHash);
+}
+
+export function isVisibleService(service: ServiceRecord) {
+  return !isArchivedService(service) && service.active !== false && service.chainServiceId !== null;
+}
+
+export function visibleServicesForStore(services: ServiceRecord[]) {
+  const canonicalByEndpoint = new Map<string, ServiceRecord>();
+
+  for (const service of services) {
+    if (!isVisibleService(service)) continue;
+    const key = serviceEndpointKey(service);
+    const current = canonicalByEndpoint.get(key);
+    if (!current || shouldPreferVisibleService(service, current)) {
+      canonicalByEndpoint.set(key, service);
+    }
+  }
+
+  return services.filter((service) => isVisibleService(service) && canonicalByEndpoint.get(serviceEndpointKey(service)) === service);
+}
+
+function serviceEndpointKey(service: Pick<ServiceRecord, "id" | "endpointHash">) {
+  const endpointHash = service.endpointHash.trim().toLowerCase();
+  return endpointHash || service.id;
+}
+
+function shouldPreferVisibleService(candidate: ServiceRecord, current: ServiceRecord) {
+  const candidateChainId = candidate.chainServiceId ?? -1;
+  const currentChainId = current.chainServiceId ?? -1;
+  if (candidateChainId !== currentChainId) return candidateChainId > currentChainId;
+
+  const candidateCreatedAt = Date.parse(candidate.createdAt) || 0;
+  const currentCreatedAt = Date.parse(current.createdAt) || 0;
+  if (candidateCreatedAt !== currentCreatedAt) return candidateCreatedAt > currentCreatedAt;
+
+  return candidate.id > current.id;
+}
+
+function isVisiblePayment(payment: PaymentRecord, scope: {
+  visibleServiceIds: Set<string>;
+  visibleAgentIds: Set<string>;
+  visibleAgentWallets: Set<string>;
+}) {
+  if (!scope.visibleServiceIds.has(payment.serviceId)) return false;
+  if (payment.agentId && !scope.visibleAgentIds.has(payment.agentId)) return false;
+  if (payment.agentWallet && !scope.visibleAgentWallets.has(payment.agentWallet.toLowerCase())) return false;
+  return true;
+}
+
+export async function archiveWorkspaceTestData(input: {reason?: string; archiveAgents?: boolean; archiveServices?: boolean} = {}) {
+  const archivedAt = new Date().toISOString();
+  const archiveAgents = input.archiveAgents !== false;
+  const archiveServices = input.archiveServices !== false;
+  const reason = input.reason ?? "Archived pre-demo test data";
+
+  return updateStore((store) => {
+    let agentsArchived = 0;
+    let servicesArchived = 0;
+
+    if (archiveAgents) {
+      for (const agent of store.agents) {
+        if (isArchivedAgent(agent)) continue;
+        agent.archivedAt = archivedAt;
+        agent.archiveReason = reason;
+        agentsArchived += 1;
+      }
+    }
+
+    if (archiveServices) {
+      for (const service of store.services) {
+        if (isArchivedService(service) || isSeededService(service)) continue;
+        service.archivedAt = archivedAt;
+        service.archiveReason = reason;
+        service.active = false;
+        servicesArchived += 1;
+      }
+    }
+
+    return {archivedAt, agentsArchived, servicesArchived};
+  });
+}
+
+export async function updateNotificationPreferences(input: {
+  operatorAddress: string;
+  email?: string | null;
+  whatsapp?: string | null;
+  telegram?: string | null;
+  channels?: Partial<NotificationPreferencesRecord["channels"]>;
+  events?: Partial<NotificationPreferencesRecord["events"]>;
+}) {
+  return updateStore((store) => {
+    const lower = input.operatorAddress.toLowerCase();
+    const current = preferencesForOperator(store, input.operatorAddress);
+    const now = new Date().toISOString();
+    const next = normalizeNotificationPreferences({
+      ...current,
+      email: input.email === undefined ? current.email : input.email,
+      whatsapp: input.whatsapp === undefined ? current.whatsapp : input.whatsapp,
+      telegram: input.telegram === undefined ? current.telegram : input.telegram,
+      channels: {...current.channels, ...(input.channels ?? {})},
+      events: {...current.events, ...(input.events ?? {})},
+      updatedAt: now
+    });
+    const index = store.notificationPreferences.findIndex((item) => item.operatorAddress.toLowerCase() === lower);
+    if (index >= 0) store.notificationPreferences[index] = next;
+    else store.notificationPreferences.push(next);
+    return next;
+  });
+}
+
+export async function recordNotificationDeliveries(records: Omit<NotificationDeliveryRecord, "id" | "createdAt">[]) {
+  if (records.length === 0) return [];
+  return updateStore((store) => {
+    const created = records.map((record) => normalizeNotificationDelivery({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      ...record
+    }));
+    store.notificationDeliveries.unshift(...created);
+    store.notificationDeliveries = store.notificationDeliveries.slice(0, 500);
+    return created;
+  });
+}
+
+export function preferencesForOperator(store: StoreShape, operatorAddress: string): NotificationPreferencesRecord {
+  const existing = store.notificationPreferences.find((item) => item.operatorAddress.toLowerCase() === operatorAddress.toLowerCase());
+  if (existing) return normalizeNotificationPreferences(existing);
+  const now = new Date().toISOString();
+  return {
+    operatorAddress,
+    email: null,
+    whatsapp: null,
+    telegram: null,
+    channels: {
+      inApp: true,
+      email: false,
+      whatsapp: false,
+      telegram: false
+    },
+    events: {
+      agentActions: true,
+      paymentReceipts: true,
+      policyAlerts: true,
+      escrowUpdates: true
+    },
+    createdAt: now,
+    updatedAt: now
   };
 }
 
@@ -616,6 +876,8 @@ function emptyStore(): StoreShape {
     subscriptions: [],
     escrows: [],
     notifications: [],
+    notificationPreferences: [],
+    notificationDeliveries: [],
     facilitatorEvents: [],
     indexedEvents: [],
     indexerCursors: [],
@@ -628,14 +890,22 @@ function normalizeStore(value: unknown): StoreShape {
   store.facilitatorEvents = Array.isArray(store.facilitatorEvents) ? store.facilitatorEvents : [];
   store.indexedEvents = Array.isArray(store.indexedEvents) ? store.indexedEvents : [];
   store.indexerCursors = Array.isArray(store.indexerCursors) ? store.indexerCursors : [];
+  store.notificationPreferences = Array.isArray(store.notificationPreferences) ? store.notificationPreferences.map(normalizeNotificationPreferences) : [];
+  store.notificationDeliveries = Array.isArray(store.notificationDeliveries) ? store.notificationDeliveries.map(normalizeNotificationDelivery) : [];
   store.approvalRequests = Array.isArray(store.approvalRequests) ? store.approvalRequests.map(normalizeApprovalRequest) : [];
   store.services = store.services.map((service) => ({
     ...service,
-    manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash)
+    manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash),
+    archivedAt: service.archivedAt ?? null,
+    archiveReason: service.archiveReason ?? null
   }));
   store.services = mergeSeededServices(store.services);
   store.agents = store.agents.map((agent) => ({
     ...agent,
+    archivedAt: agent.archivedAt ?? null,
+    archiveReason: agent.archiveReason ?? null,
+    circleAccountType: agent.circleAccountType === "EOA" || agent.circleAccountType === "SCA" ? agent.circleAccountType : null,
+    settlementMode: agent.settlementMode === "eoa_memo" || agent.settlementMode === "sca_direct" ? agent.settlementMode : null,
     policy: normalizeAgentPolicy(agent.policy)
   }));
   store.payments = store.payments.map((payment) => {
@@ -646,7 +916,8 @@ function normalizeStore(value: unknown): StoreShape {
       ...payment,
       grossAmountUsdc,
       platformFeeUsdc,
-      publisherNetUsdc: payment.publisherNetUsdc ?? roundUsdc(grossAmountUsdc - platformFeeUsdc)
+      publisherNetUsdc: payment.publisherNetUsdc ?? roundUsdc(grossAmountUsdc - platformFeeUsdc),
+      memo: normalizeMemo(payment.memo) ?? null
     };
   });
   store.subscriptions = store.subscriptions.map((subscription) => ({
@@ -683,6 +954,45 @@ function normalizeApprovalRequest(request: AgentApprovalRequestRecord): AgentApp
     updatedAt: request.updatedAt ?? request.createdAt,
     decidedAt: request.decidedAt ?? null,
     expiresAt: request.expiresAt ?? null
+  };
+}
+
+function normalizeNotificationPreferences(value: NotificationPreferencesRecord): NotificationPreferencesRecord {
+  const now = new Date().toISOString();
+  const operatorAddress = typeof value.operatorAddress === "string" ? value.operatorAddress : "";
+  return {
+    operatorAddress,
+    email: typeof value.email === "string" && value.email.trim() ? value.email.trim().toLowerCase() : null,
+    whatsapp: typeof value.whatsapp === "string" && value.whatsapp.trim() ? value.whatsapp.trim() : null,
+    telegram: typeof value.telegram === "string" && value.telegram.trim() ? value.telegram.trim() : null,
+    channels: {
+      inApp: value.channels?.inApp !== false,
+      email: Boolean(value.channels?.email),
+      whatsapp: Boolean(value.channels?.whatsapp),
+      telegram: Boolean(value.channels?.telegram)
+    },
+    events: {
+      agentActions: value.events?.agentActions !== false,
+      paymentReceipts: value.events?.paymentReceipts !== false,
+      policyAlerts: value.events?.policyAlerts !== false,
+      escrowUpdates: value.events?.escrowUpdates !== false
+    },
+    createdAt: value.createdAt ?? now,
+    updatedAt: value.updatedAt ?? value.createdAt ?? now
+  };
+}
+
+function normalizeNotificationDelivery(value: NotificationDeliveryRecord): NotificationDeliveryRecord {
+  return {
+    id: value.id ?? crypto.randomUUID(),
+    notificationId: String(value.notificationId ?? ""),
+    operatorAddress: String(value.operatorAddress ?? ""),
+    channel: value.channel === "whatsapp" || value.channel === "telegram" ? value.channel : "email",
+    target: String(value.target ?? ""),
+    status: value.status === "sent" || value.status === "failed" || value.status === "skipped" ? value.status : "skipped",
+    provider: String(value.provider ?? "unknown"),
+    reason: value.reason ?? null,
+    createdAt: value.createdAt ?? new Date().toISOString()
   };
 }
 
@@ -741,7 +1051,9 @@ function seededServices(): ServiceRecord[] {
     active: true,
     featured: Boolean(seed.featured),
     txHash: null,
-    createdAt: new Date(Date.parse(createdAt) + index * 60_000).toISOString()
+    createdAt: new Date(Date.parse(createdAt) + index * 60_000).toISOString(),
+    archivedAt: null,
+    archiveReason: null
   }));
 }
 
@@ -1029,12 +1341,14 @@ function roundUsdc(value: number) {
 }
 
 export function pushNotification(store: StoreShape, input: Omit<NotificationRecord, "id" | "createdAt">) {
-  store.notifications.unshift({
+  const record = {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     ...input
-  });
+  };
+  store.notifications.unshift(record);
   store.notifications = store.notifications.slice(0, 200);
+  return record;
 }
 
 async function readDatabaseStore() {

@@ -45,6 +45,22 @@ type PublicReceipt = {
   contract?: string;
   blockNumber?: number;
   logIndex?: number;
+  memoBacked?: boolean;
+  memo?: {
+    memoId: string;
+    memoData: {
+      budgetBucket?: string;
+      intent?: string;
+      privacy?: {scope?: string};
+      policy?: {mode?: string};
+    };
+    arc: {
+      memoContract: string;
+      targetContract?: string | null;
+      callDataHash?: string | null;
+      memoIndex?: number | null;
+    };
+  } | null;
   publicNote?: string | null;
 };
 
@@ -154,6 +170,29 @@ export default function ReceiptPage({receiptId}: {receiptId: string}) {
           {receipt.requestHash ? <ReceiptRow label="Request hash" value={shortAddress(receipt.requestHash)} mono /> : null}
           {receipt.txHash ? <ReceiptRow label="Transaction" value={shortAddress(receipt.txHash)} mono /> : null}
         </div>
+
+        {receipt.memo ? (
+          <div className="mt-5 rounded-xl border border-plasma/20 bg-plasma/10 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-wider text-plasma">Structured memo</p>
+                <h2 className="mt-1 text-lg font-semibold text-white">{receipt.memo.memoData.intent ?? "Agent payment context"}</h2>
+              </div>
+              <span className="rounded-full border border-mint/25 bg-mint/10 px-3 py-1 text-xs font-semibold text-mint">
+                {receipt.memoBacked ? "memo backed" : "memo planned"}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <ReceiptRow label="Memo ID" value={shortAddress(receipt.memo.memoId)} mono />
+              <ReceiptRow label="Budget bucket" value={receipt.memo.memoData.budgetBucket ?? "general"} />
+              <ReceiptRow label="Policy mode" value={receipt.memo.memoData.policy?.mode ?? "auto"} />
+              <ReceiptRow label="Privacy scope" value={receipt.memo.memoData.privacy?.scope ?? "public"} />
+              <ReceiptRow label="Memo contract" value={shortAddress(receipt.memo.arc.memoContract)} mono />
+              {receipt.memo.arc.callDataHash ? <ReceiptRow label="Call data hash" value={shortAddress(receipt.memo.arc.callDataHash)} mono /> : null}
+              {receipt.memo.arc.memoIndex !== null && receipt.memo.arc.memoIndex !== undefined ? <ReceiptRow label="Memo index" value={String(receipt.memo.arc.memoIndex)} /> : null}
+            </div>
+          </div>
+        ) : null}
 
         {receipt.publicNote ? (
           <p className="mt-5 rounded-xl border border-amber/25 bg-amber/10 p-4 text-sm leading-6 text-amber">{receipt.publicNote}</p>

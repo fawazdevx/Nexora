@@ -18,6 +18,8 @@ interface ImportMetaEnv {
   readonly VITE_ARB_ONE_RPC_URL?: string;
   readonly VITE_ARBITRUM_ONE_RPC_URL?: string;
   readonly VITE_NEXORA_API_URL?: string;
+  readonly VITE_NEXORA_PUBLIC_URL?: string;
+  readonly VITE_NEXORA_SITE_URL?: string;
   readonly VITE_MAINTENANCE_MODE?: string;
   readonly VITE_POLICY_REGISTRY_ADDRESS?: string;
   readonly VITE_X402_LEDGER_ADDRESS?: string;
@@ -64,6 +66,7 @@ interface ImportMeta {
 
 declare module "vite" {
   export function defineConfig(config: unknown): unknown;
+  export function loadEnv(mode: string, envDir: string, prefixes?: string | string[]): Record<string, string>;
 }
 
 declare module "@vitejs/plugin-react" {

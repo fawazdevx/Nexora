@@ -43,7 +43,9 @@ export const config = {
   },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
-    entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? ""
+    entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? "",
+    walletSetId: process.env.CIRCLE_WALLET_SET_ID ?? "",
+    agentWalletAccountType: normalizeCircleAccountType(process.env.CIRCLE_AGENT_WALLET_ACCOUNT_TYPE)
   },
   contracts: {
     usdc: process.env.USDC_ADDRESS ?? "",
@@ -74,6 +76,23 @@ export const config = {
     xBearerToken: process.env.X_BEARER_TOKEN ?? "",
     synthraApiKey: process.env.SYNTHRA_API_KEY ?? "",
     synthraApiUrl: process.env.SYNTHRA_API_URL ?? "https://trading-api.synthra.org"
+  },
+  notifications: {
+    publicAppUrl: process.env.NEXORA_PUBLIC_APP_URL ?? process.env.FRONTEND_PUBLIC_URL ?? "",
+    email: {
+      provider: process.env.NEXORA_EMAIL_PROVIDER ?? "resend",
+      from: process.env.NEXORA_EMAIL_FROM ?? "",
+      resendApiKey: process.env.RESEND_API_KEY ?? ""
+    },
+    whatsapp: {
+      provider: process.env.NEXORA_WHATSAPP_PROVIDER ?? "twilio",
+      accountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
+      authToken: process.env.TWILIO_AUTH_TOKEN ?? "",
+      from: process.env.TWILIO_WHATSAPP_FROM ?? ""
+    },
+    telegram: {
+      botToken: process.env.TELEGRAM_BOT_TOKEN ?? ""
+    }
   }
 };
 
@@ -91,4 +110,8 @@ function loadLocalEnv() {
     const value = trimmed.slice(index + 1).trim();
     if (key && process.env[key] === undefined) process.env[key] = value;
   }
+}
+
+function normalizeCircleAccountType(value: string | undefined): "EOA" | "SCA" {
+  return value?.toUpperCase() === "SCA" ? "SCA" : "EOA";
 }

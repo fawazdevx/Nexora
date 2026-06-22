@@ -3,11 +3,13 @@ import {createPublicClient, formatUnits, http, isAddress, parseAbi} from "viem";
 import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
 import {createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy} from "./circle/agent-wallets.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
-import {activatePlan, executeBuiltInService, executeMarketplaceService, featureService, listServices, platformPlans, publishService, requirePlatformPlan, subscribePlan} from "./marketplace/services.js";
+import {activatePlan, executeBuiltInService, executeMarketplaceService, featureService, getService, listServices, platformPlans, publishService, requirePlatformPlan, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
 import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
 import {indexedAnalytics, syncArcIndexer} from "./indexer/arc.js";
+import {normalizeMemo, paymentMemoSummary, publicMemoView} from "./memos.js";
+import {dispatchNotification} from "./notifications.js";
 import {
   addressArray,
   assertJsonObject,
@@ -30,7 +32,7 @@ import {
   verifyAuthSignature,
   type AuthContext
 } from "./security.js";
-import {appSnapshot, pushNotification, readStore, storageFriendlyError, updateStore} from "./store.js";
+import {appSnapshot, archiveWorkspaceTestData, isVisibleAgent, pushNotification, readStore, storageFriendlyError, updateNotificationPreferences, updateStore, visibleServicesForStore} from "./store.js";
 import {settleFacilitatorPayment, supportedX402, verifyFacilitatorPayment} from "./x402/protocol-facilitator.js";
 import {evaluateAgentPolicy} from "./policies/engine.js";
 import type {AgentApprovalRequestRecord, EscrowRecord, IndexedChainEventRecord, PaymentRecord, SubscriptionRecord} from "./store.js";
@@ -93,6 +95,15 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok(await deploymentDashboard());
     }
 
+    if (req.method === "POST" && path === "/api/admin/archive-test-data") {
+      assertSharedSecret(header(req, "x-admin-secret"), config.security.adminSecret, "admin");
+      return ok(await archiveWorkspaceTestData({
+        reason: optionalLimitedString(body.reason, "reason", 240) ?? "Archived before clean Nexora demo",
+        archiveAgents: body.archiveAgents !== false,
+        archiveServices: body.archiveServices !== false
+      }));
+    }
+
     if (req.method === "GET" && path === "/api/app") {
       const operator = optionalLimitedString(url.searchParams.get("operator"), "operator", 80);
       await refreshPendingCircleWallets(operator).catch(() => undefined);
@@ -111,6 +122,19 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
           signature: optionalLimitedString(body.signature, "signature", 200)
         })
       });
+    }
+
+    if (req.method === "POST" && path === "/api/notifications/preferences") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await updateNotificationPreferences({
+        operatorAddress,
+        email: optionalEmail(body.email),
+        whatsapp: optionalWhatsApp(body.whatsapp),
+        telegram: optionalTelegram(body.telegram),
+        channels: optionalNotificationChannels(body.channels),
+        events: optionalNotificationEvents(body.events)
+      }));
     }
 
     if (req.method === "GET" && path.startsWith("/api/operators/")) {
@@ -200,7 +224,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path.startsWith("/api/marketplace/services/")) {
       const serviceId = path.split("/")[4] ?? "";
-      const service = (await readStore()).services.find((item) => item.id === serviceId || String(item.chainServiceId) === serviceId);
+      const service = await getService(serviceId);
       if (!service) return response(404, {error: "service_not_found"});
       return ok({service});
     }
@@ -272,9 +296,11 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "POST" && path.startsWith("/api/marketplace/services/") && path.endsWith("/execute")) {
       const serviceId = path.split("/")[4] ?? "";
+      const payer = requiredAddress(body.payer, "payer");
+      assertTokenAddress(auth, payer, "payer");
       return ok(await executeMarketplaceService({
         serviceId,
-        payer: requiredAddress(body.payer, "payer"),
+        payer,
         authorizationId: optionalLimitedString(body.authorizationId, "authorizationId", 120),
         args: assertJsonObject(body.args)
       }));
@@ -329,7 +355,8 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
         payer,
         requestHash: requiredBytes32(body.requestHash, "requestHash"),
         units: requiredPositiveInteger(body.units, "units", 1_000),
-        agentId: optionalLimitedString(body.agentId, "agentId", 120)
+        agentId: optionalLimitedString(body.agentId, "agentId", 120),
+        privacyScope: optionalMemoPrivacyScope(body.privacyScope)
       }));
     }
 
@@ -344,10 +371,12 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
         if (!service.chainServiceId) throw new Error("service is not published on-chain");
         const circleSettlement = await submitAgentX402Settlement({
           agentId,
+          operatorAddress: payment.payer,
           serviceId: service.chainServiceId,
           requestHash: payment.requestHash,
           amountUsdc: payment.amountUsdc,
-          units: payment.units
+          units: payment.units,
+          memo: normalizeMemo(body.memo) ?? normalizeMemo(payment.memo)
         });
         if (circleSettlement.state === "PENDING") {
           return ok({
@@ -356,12 +385,33 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
             ...circleSettlement
           });
         }
-        return ok(await settleX402({authorizationId, txHash: circleSettlement.txHash ?? undefined}));
+        if (!circleSettlement.txHash) {
+          throw new Error("Circle settlement completed without an Arc transaction hash");
+        }
+        const settlement = await settleX402({
+          authorizationId,
+          txHash: circleSettlement.txHash,
+          memo: normalizeMemo(body.memo) ?? normalizeMemo(payment.memo),
+          targetContract: circleSettlement.targetContract,
+          callDataHash: circleSettlement.callDataHash,
+          memoIndex: circleSettlement.memoIndex
+        });
+        return ok(settlement);
       }
-      return ok(await settleX402({
+      const settlement = await settleX402({
         authorizationId,
-        txHash: optionalTxHash(body.txHash)
-      }));
+        txHash: optionalTxHash(body.txHash),
+        memo: normalizeMemo(body.memo),
+        targetContract: optionalLimitedString(body.targetContract, "targetContract", 80),
+        callDataHash: optionalLimitedString(body.callDataHash, "callDataHash", 80),
+        memoIndex: optionalNumber(body.memoIndex)
+      });
+      return ok(settlement);
+    }
+
+    if (req.method === "GET" && path === "/api/agents/memory") {
+      const operator = requiredAddress(url.searchParams.get("operator"), "operator");
+      return ok(await agentFinancialMemory(operator));
     }
 
     if (req.method === "GET" && path.startsWith("/api/developers/") && path.endsWith("/dashboard")) {
@@ -537,6 +587,57 @@ function optionalNumber(value: unknown) {
   return numberValue;
 }
 
+function optionalEmail(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const email = requiredLimitedString(value, "email", 320).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("email must be valid");
+  return email;
+}
+
+function optionalWhatsApp(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const raw = requiredLimitedString(value, "whatsapp", 32).replace(/\s+/g, "");
+  if (!/^\+?[1-9]\d{7,14}$/.test(raw)) throw new Error("whatsapp must be an international phone number");
+  return raw.startsWith("+") ? raw : `+${raw}`;
+}
+
+function optionalTelegram(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const raw = requiredLimitedString(value, "telegram", 80).trim();
+  if (/^-?\d{5,20}$/.test(raw)) return raw;
+  if (!/^@?[a-zA-Z0-9_]{5,32}$/.test(raw)) throw new Error("telegram must be a username or chat id");
+  return raw.startsWith("@") ? raw : `@${raw}`;
+}
+
+function optionalNotificationChannels(value: unknown) {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    inApp: record.inApp !== false,
+    email: Boolean(record.email),
+    whatsapp: Boolean(record.whatsapp),
+    telegram: Boolean(record.telegram)
+  };
+}
+
+function optionalNotificationEvents(value: unknown) {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    agentActions: record.agentActions !== false,
+    paymentReceipts: record.paymentReceipts !== false,
+    policyAlerts: record.policyAlerts !== false,
+    escrowUpdates: record.escrowUpdates !== false
+  };
+}
+
+function optionalMemoPrivacyScope(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const scope = requiredLimitedString(value, "privacyScope", 20);
+  if (scope !== "public" && scope !== "selective" && scope !== "private") {
+    throw new Error("privacyScope must be public, selective, or private");
+  }
+  return scope;
+}
+
 function optionalPolicyV2(value: unknown) {
   const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   return {
@@ -649,10 +750,10 @@ function tryJson<T>(raw: string): T {
 
 async function simulateAgentPolicy(input: {operatorAddress: string; agentId: string; serviceId: string; units: number}) {
   const store = await readStore();
-  const agent = store.agents.find((item) => item.id === input.agentId || item.address?.toLowerCase() === input.agentId.toLowerCase());
+  const agent = store.agents.find((item) => isVisibleAgent(item) && (item.id === input.agentId || item.address?.toLowerCase() === input.agentId.toLowerCase()));
   if (!agent) throw new Error("agent wallet not found");
   if (agent.operatorAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) throw new Error("agent operator wallet required");
-  const service = store.services.find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
+  const service = visibleServicesForStore(store.services).find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
   if (!service) throw new Error("service not found");
   const evaluation = evaluateAgentPolicy({
     agent,
@@ -690,9 +791,9 @@ async function simulateAgentPolicy(input: {operatorAddress: string; agentId: str
 
 async function createAgentApprovalRequest(input: {operatorAddress: string; agentId: string; serviceId: string; units: number; note?: string}) {
   const simulation = await simulateAgentPolicy(input);
-  return updateStore((store) => {
-    const agent = store.agents.find((item) => item.id === input.agentId || item.address?.toLowerCase() === input.agentId.toLowerCase());
-    const service = store.services.find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
+  const result = await updateStore((store) => {
+    const agent = store.agents.find((item) => isVisibleAgent(item) && (item.id === input.agentId || item.address?.toLowerCase() === input.agentId.toLowerCase()));
+    const service = visibleServicesForStore(store.services).find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
     if (!agent || !service) throw new Error("approval request target not found");
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
@@ -723,18 +824,21 @@ async function createAgentApprovalRequest(input: {operatorAddress: string; agent
     };
     store.approvalRequests.unshift(record);
     store.approvalRequests = store.approvalRequests.slice(0, 300);
-    pushNotification(store, {
+    const notification = pushNotification(store, {
       operatorAddress: input.operatorAddress,
       title: "Agent approval requested",
       detail: `${service.name} · ${simulation.amountUsdc} USDC`,
-      kind: "policy"
+      kind: "policy",
+      actionHref: "/settings/policies"
     });
-    return record;
+    return {record, notification};
   });
+  await dispatchNotification({notification: result.notification, event: "policyAlerts"});
+  return result.record;
 }
 
 async function decideAgentApprovalRequest(id: string, operatorAddress: string, status: "approved" | "rejected", note?: string) {
-  return updateStore((store) => {
+  const result = await updateStore((store) => {
     const request = store.approvalRequests.find((item) => item.id === id);
     if (!request) throw new Error("approval request not found");
     if (request.operatorAddress.toLowerCase() !== operatorAddress.toLowerCase()) throw new Error("approval request operator wallet required");
@@ -749,14 +853,17 @@ async function decideAgentApprovalRequest(id: string, operatorAddress: string, s
     request.note = note ?? request.note ?? null;
     request.updatedAt = now.toISOString();
     request.decidedAt = now.toISOString();
-    pushNotification(store, {
+    const notification = pushNotification(store, {
       operatorAddress,
       title: status === "approved" ? "Agent payment approved" : "Agent payment rejected",
       detail: `${request.serviceName} · ${request.amountUsdc} USDC`,
-      kind: "policy"
+      kind: "policy",
+      actionHref: "/settings/policies"
     });
-    return request;
+    return {request, notification};
   });
+  await dispatchNotification({notification: result.notification, event: "policyAlerts"});
+  return result.request;
 }
 
 function requestHashForSimulation(agentId: string, serviceId: string, units: number) {
@@ -768,8 +875,9 @@ function requestHashForSimulation(agentId: string, serviceId: string, units: num
 async function developerDashboard(address: string) {
   const store = await readStore();
   const lower = address.toLowerCase();
-  const services = store.services.filter((service) => service.publisherAddress.toLowerCase() === lower);
-  const payments = store.payments.filter((payment) => payment.publisherAddress.toLowerCase() === lower);
+  const services = visibleServicesForStore(store.services).filter((service) => service.publisherAddress.toLowerCase() === lower);
+  const serviceIds = new Set(services.map((service) => service.id));
+  const payments = store.payments.filter((payment) => serviceIds.has(payment.serviceId) && payment.publisherAddress.toLowerCase() === lower);
   const escrows = store.escrows.filter((escrow) => escrow.creatorAddress.toLowerCase() === lower || escrow.counterpartyAddress.toLowerCase() === lower);
   const settled = payments.filter((payment) => payment.status === "settled");
   const hasAnalytics = isPlanActive(store.subscriptions, lower, "developer_analytics");
@@ -809,7 +917,18 @@ async function platformRevenueDashboard() {
   const onchain = await indexedAnalytics();
   const onchainSummary = onchain.summary;
   const treasuryBalance = await treasuryUsdcBalance();
-  const settledPayments = store.payments.filter((payment) => payment.status === "settled");
+  const visibleServices = visibleServicesForStore(store.services);
+  const visibleAgents = store.agents.filter(isVisibleAgent);
+  const visibleServiceIds = new Set(visibleServices.map((service) => service.id));
+  const visibleAgentIds = new Set(visibleAgents.map((agent) => agent.id));
+  const visibleAgentWallets = new Set(visibleAgents.map((agent) => agent.address?.toLowerCase()).filter(Boolean) as string[]);
+  const visiblePayments = store.payments.filter((payment) => {
+    if (!visibleServiceIds.has(payment.serviceId)) return false;
+    if (payment.agentId && !visibleAgentIds.has(payment.agentId)) return false;
+    if (payment.agentWallet && !visibleAgentWallets.has(payment.agentWallet.toLowerCase())) return false;
+    return true;
+  });
+  const settledPayments = visiblePayments.filter((payment) => payment.status === "settled");
   const facilitatorVolume = store.facilitatorEvents
     .filter((event) => event.kind === "settle" && event.status === "success")
     .reduce((sum, event) => sum + (event.amountUsdc ?? 0), 0);
@@ -840,7 +959,7 @@ async function platformRevenueDashboard() {
     ? onchainSummary.escrowReleases
     : store.escrows.filter((escrow) => escrow.status === "released").length;
   const collectedFees = selectedMarketplaceFees + selectedEscrowRevenue + selectedSaveEarnFees + collectedSubscriptions;
-  const policySaves = store.agents.filter((agent) => agent.policy.txHash).length;
+  const policySaves = visibleAgents.filter((agent) => agent.policy.txHash).length;
   const treasury = config.contracts.treasury;
   const onchainFeeReceipts = onchain.recentEvents
     .filter((event) => event.feeUsdc && event.feeUsdc > 0)
@@ -918,8 +1037,8 @@ async function platformRevenueDashboard() {
       settledPayments: selectedSettlementCount,
       onchainMarketplaceSettlements: onchainSummary.marketplaceSettlements,
       onchainEscrowReleases: onchainSummary.escrowReleases,
-      publishedServices: store.services.length,
-      activeAgents: store.agents.filter((agent) => agent.address).length,
+      publishedServices: visibleServices.length,
+      activeAgents: visibleAgents.filter((agent) => agent.address).length,
       policySaves: onchainSummary.policySaves > 0 ? onchainSummary.policySaves : policySaves
     },
     bySource: [
@@ -1073,13 +1192,14 @@ async function facilitatorAnalytics() {
 async function publicBuilderDirectory() {
   const store = await readStore();
   const byPublisher = new Map<string, typeof store.services>();
-  for (const service of store.services.filter((item) => item.active)) {
+  for (const service of visibleServicesForStore(store.services)) {
     const key = service.publisherAddress.toLowerCase();
     byPublisher.set(key, [...(byPublisher.get(key) ?? []), service]);
   }
 
   const builders = [...byPublisher.entries()].map(([address, services]) => {
-    const settled = store.payments.filter((payment) => payment.publisherAddress.toLowerCase() === address && payment.status === "settled");
+    const serviceIds = new Set(services.map((service) => service.id));
+    const settled = store.payments.filter((payment) => serviceIds.has(payment.serviceId) && payment.publisherAddress.toLowerCase() === address && payment.status === "settled");
     const fees = settled.reduce((sum, payment) => sum + (payment.platformFeeUsdc ?? 0), 0);
     const gross = settled.reduce((sum, payment) => sum + (payment.grossAmountUsdc ?? payment.amountUsdc), 0);
     return {
@@ -1139,6 +1259,10 @@ async function publicReceipt(id: string) {
 
 function paymentReceipt(payment: PaymentRecord) {
   const status = payment.status;
+  const publicNote = payment.policyReason
+    ?? (!payment.txHash && status === "settled"
+      ? "This receipt records an off-chain/test x402 settlement. No Arc transaction hash was attached, so no treasury transfer can be verified on Arc Explorer."
+      : null);
   return {
     id: payment.id,
     kind: "x402_payment",
@@ -1158,9 +1282,110 @@ function paymentReceipt(payment: PaymentRecord) {
     chainId: config.arc.chainId,
     network: "Arc Testnet",
     explorerUrl: explorerTxUrl(config.arc.explorerUrl, payment.txHash),
+    memo: publicMemoView(payment.memo),
+    memoBacked: Boolean(payment.memo?.arc.memoIndex !== null && payment.memo?.arc.memoIndex !== undefined),
     createdAt: payment.createdAt,
     settledAt: payment.settledAt ?? null,
-    publicNote: payment.policyReason ?? null
+    publicNote
+  };
+}
+
+async function agentFinancialMemory(operatorAddress: string) {
+  const store = await readStore();
+  const operator = operatorAddress.toLowerCase();
+  const agents = store.agents.filter((agent) => isVisibleAgent(agent) && agent.operatorAddress.toLowerCase() === operator);
+  const agentIds = new Set(agents.map((agent) => agent.id));
+  const agentWallets = new Set(agents.map((agent) => agent.address?.toLowerCase()).filter(Boolean));
+  const visibleServiceIds = new Set(visibleServicesForStore(store.services).map((service) => service.id));
+  const payments = store.payments
+    .filter((payment) => (
+      visibleServiceIds.has(payment.serviceId)
+      && (
+        payment.payer.toLowerCase() === operator
+        || Boolean(payment.agentId && agentIds.has(payment.agentId))
+        || Boolean(payment.agentWallet && agentWallets.has(payment.agentWallet.toLowerCase()))
+      )
+    ))
+    .sort((a, b) => Date.parse(b.settledAt ?? b.createdAt) - Date.parse(a.settledAt ?? a.createdAt));
+
+  const settled = payments.filter((payment) => payment.status === "settled");
+  const blocked = payments.filter((payment) => payment.status === "policy_blocked");
+  const byBucket = new Map<string, {budgetBucket: string; totalUsdc: number; payments: number; settled: number; blocked: number}>();
+  const byService = new Map<string, {serviceId: string; serviceName: string; totalUsdc: number; payments: number; settled: number; lastUsedAt: string}>();
+  const byIntent = new Map<string, {intent: string; totalUsdc: number; payments: number; latestAt: string}>();
+
+  for (const payment of payments) {
+    const memo = paymentMemoSummary(payment);
+    const bucket = byBucket.get(memo.budgetBucket) ?? {budgetBucket: memo.budgetBucket, totalUsdc: 0, payments: 0, settled: 0, blocked: 0};
+    bucket.totalUsdc = roundUsdc(bucket.totalUsdc + (payment.status === "settled" ? payment.amountUsdc : 0));
+    bucket.payments += 1;
+    if (payment.status === "settled") bucket.settled += 1;
+    if (payment.status === "policy_blocked") bucket.blocked += 1;
+    byBucket.set(bucket.budgetBucket, bucket);
+
+    const service = byService.get(payment.serviceId) ?? {
+      serviceId: payment.serviceId,
+      serviceName: payment.serviceName,
+      totalUsdc: 0,
+      payments: 0,
+      settled: 0,
+      lastUsedAt: payment.settledAt ?? payment.createdAt
+    };
+    service.totalUsdc = roundUsdc(service.totalUsdc + (payment.status === "settled" ? payment.amountUsdc : 0));
+    service.payments += 1;
+    if (payment.status === "settled") service.settled += 1;
+    if (Date.parse(payment.settledAt ?? payment.createdAt) > Date.parse(service.lastUsedAt)) service.lastUsedAt = payment.settledAt ?? payment.createdAt;
+    byService.set(payment.serviceId, service);
+
+    const intent = byIntent.get(memo.intent) ?? {intent: memo.intent, totalUsdc: 0, payments: 0, latestAt: payment.settledAt ?? payment.createdAt};
+    intent.totalUsdc = roundUsdc(intent.totalUsdc + (payment.status === "settled" ? payment.amountUsdc : 0));
+    intent.payments += 1;
+    if (Date.parse(payment.settledAt ?? payment.createdAt) > Date.parse(intent.latestAt)) intent.latestAt = payment.settledAt ?? payment.createdAt;
+    byIntent.set(memo.intent, intent);
+  }
+
+  const recentMemories = payments.slice(0, 40).map((payment) => {
+    const memo = paymentMemoSummary(payment);
+    return {
+      paymentId: payment.id,
+      authorizationId: payment.authorizationId ?? null,
+      memoId: memo.memoId,
+      serviceId: payment.serviceId,
+      serviceName: payment.serviceName,
+      status: payment.status,
+      amountUsdc: roundUsdc(payment.amountUsdc),
+      budgetBucket: memo.budgetBucket,
+      intent: memo.intent,
+      privacyScope: memo.privacyScope,
+      requestHash: payment.requestHash,
+      txHash: payment.txHash ?? null,
+      createdAt: payment.createdAt,
+      settledAt: payment.settledAt ?? null
+    };
+  });
+
+  return {
+    operatorAddress,
+    agents: agents.map((agent) => ({
+      id: agent.id,
+      arcName: agent.arcName,
+      address: agent.address,
+      dailyLimitUsdc: agent.policy.dailyLimitUsdc,
+      transactionCapUsdc: agent.policy.transactionCapUsdc
+    })),
+    summary: {
+      totalPayments: payments.length,
+      settledPayments: settled.length,
+      blockedPayments: blocked.length,
+      totalSpentUsdc: roundUsdc(settled.reduce((sum, payment) => sum + payment.amountUsdc, 0)),
+      memoBackedPayments: payments.filter((payment) => Boolean(payment.memo?.memoId)).length,
+      uniqueServices: new Set(payments.map((payment) => payment.serviceId)).size,
+      budgetBuckets: byBucket.size
+    },
+    byBudgetBucket: [...byBucket.values()].sort((a, b) => b.totalUsdc - a.totalUsdc || b.payments - a.payments),
+    byService: [...byService.values()].sort((a, b) => b.totalUsdc - a.totalUsdc || Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt)).slice(0, 20),
+    byIntent: [...byIntent.values()].sort((a, b) => b.totalUsdc - a.totalUsdc || Date.parse(b.latestAt) - Date.parse(a.latestAt)).slice(0, 20),
+    recentMemories
   };
 }
 
@@ -1374,7 +1599,7 @@ async function createEscrow(input: {
   chainEscrowId?: number;
   txHash?: string;
 }) {
-  return updateStore((store) => {
+  const result = await updateStore((store) => {
     const platformFeeUsdc = roundUsdc((input.amountUsdc * input.platformFeeBps) / 10_000);
     const escrow = {
       id: crypto.randomUUID(),
@@ -1393,22 +1618,30 @@ async function createEscrow(input: {
       txHash: input.txHash ?? null
     };
     store.escrows.push(escrow);
-    pushNotification(store, {
+    const creatorNotification = pushNotification(store, {
       operatorAddress: input.creatorAddress,
       title: "Escrow created",
       detail: `${input.amountUsdc} USDC for ${input.title}`,
       kind: "escrow",
-      txHash: input.txHash ?? null
+      txHash: input.txHash ?? null,
+      receiptId: escrow.id,
+      actionHref: `/receipts/${encodeURIComponent(escrow.id)}`
     });
-    pushNotification(store, {
+    const counterpartyNotification = pushNotification(store, {
       operatorAddress: input.counterpartyAddress,
       title: "Escrow assigned",
       detail: `${input.amountUsdc} USDC task: ${input.title}`,
       kind: "escrow",
-      txHash: input.txHash ?? null
+      txHash: input.txHash ?? null,
+      receiptId: escrow.id,
+      actionHref: `/receipts/${encodeURIComponent(escrow.id)}`
     });
-    return escrow;
+    return {escrow, notifications: [creatorNotification, counterpartyNotification]};
   });
+  for (const notification of result.notifications) {
+    await dispatchNotification({notification, event: "escrowUpdates", receiptId: result.escrow.id}).catch(() => undefined);
+  }
+  return result.escrow;
 }
 
 async function removeEscrow(escrowId: string, operatorAddress: string) {
@@ -1444,7 +1677,7 @@ async function updateEscrow(
   const operatorAddress = requiredAddress(fields.operatorAddress, "operatorAddress");
   assertTokenAddress(auth, operatorAddress, "operatorAddress");
   const autoResult = status === "submitted" && fields.autoExecute ? await runEscrowAgentSafe(escrowId) : null;
-  return updateStore((store) => {
+  const result = await updateStore((store) => {
     const escrow = store.escrows.find((item) => item.id === escrowId);
     if (!escrow) throw new Error("escrow not found");
     assertEscrowRole(escrow, operatorAddress, status);
@@ -1468,22 +1701,30 @@ async function updateEscrow(
         : status === "verified"
           ? "Escrow verified"
           : "Escrow released";
-    pushNotification(store, {
+    const creatorNotification = pushNotification(store, {
       operatorAddress: escrow.creatorAddress,
       title,
       detail: escrow.title,
       kind: "escrow",
-      txHash: escrow.txHash ?? null
+      txHash: escrow.txHash ?? null,
+      receiptId: escrow.id,
+      actionHref: `/receipts/${encodeURIComponent(escrow.id)}`
     });
-    pushNotification(store, {
+    const counterpartyNotification = pushNotification(store, {
       operatorAddress: escrow.counterpartyAddress,
       title,
       detail: escrow.title,
       kind: "escrow",
-      txHash: escrow.txHash ?? null
+      txHash: escrow.txHash ?? null,
+      receiptId: escrow.id,
+      actionHref: `/receipts/${encodeURIComponent(escrow.id)}`
     });
-    return escrow;
+    return {escrow, notifications: [creatorNotification, counterpartyNotification]};
   });
+  for (const notification of result.notifications) {
+    await dispatchNotification({notification, event: "escrowUpdates", receiptId: result.escrow.id}).catch(() => undefined);
+  }
+  return result.escrow;
 }
 
 function assertEscrowRole(

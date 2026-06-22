@@ -6,7 +6,7 @@ import {PageHeader} from "@/components/PageHeader";
 import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
-import {settleX402Request} from "@/lib/contracts";
+import {settleX402Request, type NexoraStructuredMemo} from "@/lib/contracts";
 
 export default function PaymentsPage() {
   const {address, isConnected} = useAccount();
@@ -27,11 +27,12 @@ export default function PaymentsPage() {
         setStatus("Publish an x402 service before authorizing a payment.");
         return;
       }
-      const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number}}>("/api/x402/authorize", {
+      const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number; memo?: NexoraStructuredMemo | null}}>("/api/x402/authorize", {
         serviceId: firstService.id,
         payer: address,
         requestHash,
-        units: 1
+        units: 1,
+        privacyScope: "selective"
       });
       let txHash: string | null = null;
       if (firstService.chainServiceId) {
@@ -41,11 +42,21 @@ export default function PaymentsPage() {
           requestHash: requestHash as `0x${string}`,
           payer: address,
           units: 1,
-          amountUsdc: String(result.settlement.amountUsdc)
+          amountUsdc: String(result.settlement.amountUsdc),
+          memo: result.settlement.memo ?? null
         });
         txHash = tx.settleHash;
+        await apiPost("/api/x402/settle", {
+          authorizationId: result.authorizationId,
+          txHash,
+          memo: tx.memo,
+          targetContract: tx.targetContract,
+          callDataHash: tx.callDataHash,
+          memoIndex: tx.memoIndex
+        });
+      } else {
+        await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash, memo: result.settlement.memo ?? null});
       }
-      await apiPost("/api/x402/settle", {authorizationId: result.authorizationId, txHash});
       await snapshot.refetch();
       setStatus(
         txHash

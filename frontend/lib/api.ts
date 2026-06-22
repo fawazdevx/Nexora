@@ -78,6 +78,8 @@ export type AppSnapshot = {
     address: string | null;
     circleWalletSetId?: string | null;
     circleWalletId?: string | null;
+    circleAccountType?: "EOA" | "SCA" | null;
+    settlementMode?: "eoa_memo" | "sca_direct" | null;
     circleWalletStatus: string;
     createdAt: string;
     policy: {
@@ -137,6 +139,20 @@ export type AppSnapshot = {
     requestHash: string;
     status: string;
     policyReason?: string | null;
+    memo?: {
+      protocol: "nexora.memo";
+      version: "1.0";
+      type: "nexora.x402.purchase";
+      memoId: `0x${string}`;
+      memoData: Record<string, unknown>;
+      encoding: "json";
+      arc: {
+        memoContract: string;
+        targetContract?: string | null;
+        callDataHash?: string | null;
+        memoIndex?: number | null;
+      };
+    } | null;
     txHash?: string | null;
     createdAt: string;
   }>;
@@ -221,6 +237,39 @@ export type AppSnapshot = {
     detail?: string | null;
     kind: string;
     txHash?: string | null;
+    receiptId?: string | null;
+    actionHref?: string | null;
+    createdAt: string;
+  }>;
+  notificationPreferences: {
+    operatorAddress: string;
+    email: string | null;
+    whatsapp: string | null;
+    telegram: string | null;
+    channels: {
+      inApp: boolean;
+      email: boolean;
+      whatsapp: boolean;
+      telegram: boolean;
+    };
+    events: {
+      agentActions: boolean;
+      paymentReceipts: boolean;
+      policyAlerts: boolean;
+      escrowUpdates: boolean;
+    };
+    createdAt: string;
+    updatedAt: string;
+  } | null;
+  notificationDeliveries: Array<{
+    id: string;
+    notificationId: string;
+    operatorAddress: string;
+    channel: "email" | "whatsapp" | "telegram";
+    target: string;
+    status: "sent" | "skipped" | "failed";
+    provider: string;
+    reason?: string | null;
     createdAt: string;
   }>;
   reputation: {

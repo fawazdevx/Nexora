@@ -46,7 +46,7 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
               <Info label="Price" value={`${service.pricePerUnitUsdc} USDC`} />
               <Info label="Platform fee" value={`${(service.manifest.platformFeeBps / 100).toFixed(2)}%`} />
-              <Info label="Ledger service" value={service.chainServiceId ? String(service.chainServiceId) : "Off-chain"} />
+              <Info label="Ledger service" value={service.chainServiceId ? `#${service.chainServiceId}` : "Not published"} />
             </div>
 
             <div className="mt-6">

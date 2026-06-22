@@ -138,7 +138,7 @@ export function Footer() {
           <a href="/docs/api" onClick={(event) => navigate(event, "/docs/api")} className="secondary-button min-h-10 px-4 py-2 text-sm">
             Read Docs
           </a>
-          <a href="/app" onClick={(event) => navigate(event, "/app")} className="action-button min-h-10 px-4 py-2 text-sm">
+          <a href="/home" onClick={(event) => navigate(event, "/home")} className="action-button min-h-10 px-4 py-2 text-sm">
             Launch App
             <ArrowRight size={15} />
           </a>

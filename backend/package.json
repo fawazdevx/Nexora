@@ -6,6 +6,7 @@
   "main": "index.ts",
   "scripts": {
     "dev": "tsx src/local-http.ts",
+    "archive:test-data": "tsx src/archive-test-data.ts",
     "build": "tsc",
     "start": "node dist/local-http.js",
     "typecheck": "tsc --noEmit"

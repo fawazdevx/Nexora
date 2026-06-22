@@ -1,5 +1,5 @@
-import {useState} from "react";
-import {Bot, Check, Copy, ExternalLink, Gauge, Loader2, Plus, RefreshCw, Settings, ShieldCheck, Wallet} from "lucide-react";
+import {useEffect, useState} from "react";
+import {Bot, Check, Coins, Copy, ExternalLink, Gauge, Loader2, Plus, RefreshCw, Send, Settings, ShieldCheck, Wallet} from "lucide-react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
 import {apiPost} from "@/lib/api";
@@ -13,6 +13,7 @@ import {timeAgo} from "@/lib/time";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {navigateTo} from "@/lib/router";
 import {PlanSubscriptionCard} from "@/components/PlanSubscriptionCard";
+import {fundAgentWalletUsdc, readUsdcBalance} from "@/lib/contracts";
 
 type Agent = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["agents"][number];
 
@@ -208,6 +209,10 @@ function AgentCard({agent}: {agent: Agent}) {
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2">
+          <div className="surface flex items-center justify-between px-3 py-2"><span className="text-slate-400">Account</span><b className="text-white">{agent.circleAccountType ?? "Unknown"}</b></div>
+          <div className="surface flex items-center justify-between px-3 py-2"><span className="text-slate-400">Mode</span><b className="text-white">{agent.settlementMode === "eoa_memo" ? "EOA memo" : agent.settlementMode === "sca_direct" ? "SCA direct" : "Not set"}</b></div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
           <div className="surface flex items-center justify-between px-3 py-2"><span className="text-slate-400">Daily limit</span><b className="text-white">${agent.policy.dailyLimitUsdc}</b></div>
           <div className="surface flex items-center justify-between px-3 py-2"><span className="text-slate-400">Tx cap</span><b className="text-white">${agent.policy.transactionCapUsdc}</b></div>
         </div>
@@ -218,12 +223,122 @@ function AgentCard({agent}: {agent: Agent}) {
         <AllowlistGroup label="Recipients" items={recipients} />
       </div>
 
+      {agent.address ? <AgentFundingControls agent={agent} /> : null}
+
       <button type="button" onClick={() => navigateTo("/settings/policies")} className="secondary-button mt-4 w-full justify-center">
         <Settings size={15} />
         Manage policy
       </button>
     </article>
   );
+}
+
+function AgentFundingControls({agent}: {agent: Agent}) {
+  const [amount, setAmount] = useState("0.25");
+  const [balance, setBalance] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [funding, setFunding] = useState(false);
+
+  useEffect(() => {
+    if (!agent.address) {
+      setBalance(null);
+      return;
+    }
+    let active = true;
+    setChecking(true);
+    readUsdcBalance(agent.address)
+      .then((value) => {
+        if (active) setBalance(value);
+      })
+      .catch(() => {
+        if (active) setBalance(null);
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [agent.address]);
+
+  async function refreshBalance() {
+    if (!agent.address) return;
+    setChecking(true);
+    try {
+      setBalance(await readUsdcBalance(agent.address));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not read agent balance");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function fundAgent() {
+    if (!agent.address) return;
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      toast.error("Enter a USDC amount greater than zero.");
+      return;
+    }
+    setFunding(true);
+    const toastId = toast.loading(`Funding agent wallet with ${amount} USDC...`);
+    try {
+      const result = await fundAgentWalletUsdc({agentAddress: agent.address, amountUsdc: amount});
+      await refreshBalance();
+      toast.success(
+        <span>
+          Agent funded.{" "}
+          <a href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${result.txHash}`} target="_blank" rel="noreferrer" className="font-semibold text-mint underline-offset-2 hover:underline">
+            View tx
+          </a>
+        </span>,
+        {id: toastId}
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Agent funding failed", {id: toastId});
+    } finally {
+      setFunding(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-mint/20 bg-mint/[0.04] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-white">
+          <Coins size={15} className="shrink-0 text-mint" />
+          <span>Agent USDC</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <b className="text-sm text-mint">{checking ? "Checking..." : balance === null ? "--" : `$${formatUsdc(balance)}`}</b>
+          <button type="button" onClick={() => void refreshBalance()} className="text-slate-500 transition hover:text-white" aria-label="Refresh agent balance" disabled={checking}>
+            <RefreshCw size={13} className={checking ? "animate-spin" : ""} />
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 flex gap-2">
+        <input
+          className="field min-w-0 flex-1 py-2 text-sm"
+          inputMode="decimal"
+          value={amount}
+          onChange={(event) => setAmount(event.target.value)}
+          placeholder="0.25"
+          aria-label="USDC amount"
+        />
+        <button type="button" onClick={() => void fundAgent()} className="action-button px-3 py-2 text-sm" disabled={funding || checking}>
+          {funding ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+          Fund
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatUsdc(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return value;
+  if (parsed === 0) return "0.00";
+  if (parsed < 0.01) return parsed.toFixed(6);
+  return parsed.toFixed(2);
 }
 
 function AllowlistGroup({label, items}: {label: string; items: string[]}) {

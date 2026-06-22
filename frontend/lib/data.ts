@@ -1,7 +1,9 @@
 import {
   ArrowRightLeft,
+  Bell,
   BookOpen,
   Bot,
+  Brain,
   BriefcaseBusiness,
   Coins,
   Gauge,
@@ -21,13 +23,14 @@ import type {LucideIcon} from "lucide-react";
 export type NavLeaf = {href: string; label: string; icon: LucideIcon; description: string};
 export type NavGroup = {label: string; items: NavLeaf[]};
 
-export const homeItem: NavLeaf = {href: "/app", label: "Home", icon: Home, description: "Control center overview"};
+export const homeItem: NavLeaf = {href: "/home", label: "Home", icon: Home, description: "Control center overview"};
 
 export const navGroups: NavGroup[] = [
   {
     label: "Platform",
     items: [
       {href: "/agents", label: "Agents", icon: Bot, description: "Create and manage agent wallets"},
+      {href: "/memory", label: "Memory", icon: Brain, description: "Memo-backed agent spend context"},
       {href: "/marketplace", label: "Marketplace", icon: Store, description: "Discover and buy paid APIs"},
       {href: "/escrow", label: "Escrow", icon: BriefcaseBusiness, description: "USDC work agreements"},
       {href: "/payments", label: "Payments", icon: Coins, description: "Settled payment receipts"}
@@ -57,6 +60,7 @@ export const navGroups: NavGroup[] = [
       {href: "/admin/deployments", label: "Deployments", icon: Network, description: "Contract deployment status"},
       {href: "/identity", label: "Identity", icon: KeyRound, description: "Arc name and identity"},
       {href: "/reputation", label: "Reputation", icon: ShieldCheck, description: "Operator reputation signal"},
+      {href: "/settings/notifications", label: "Notifications", icon: Bell, description: "Agent alerts and receipts"},
       {href: "/settings/policies", label: "Policies", icon: Gauge, description: "Spending limits and allowlists"}
     ]
   }
@@ -66,7 +70,8 @@ export const navGroups: NavGroup[] = [
 export const allNavItems: NavLeaf[] = [homeItem, ...navGroups.flatMap((group) => group.items)];
 
 export function isNavActive(pathname: string, href: string) {
-  return pathname === href || (href !== "/" && href !== "/app" && pathname.startsWith(href));
+  if (href === "/home") return pathname === "/home" || pathname === "/app" || pathname === "/";
+  return pathname === href || (href !== "/" && pathname.startsWith(href));
 }
 
 /** Resolve the active group + leaf for a pathname, for breadcrumb context. */
@@ -76,6 +81,6 @@ export function findNav(pathname: string): {group: string | null; item: NavLeaf}
       if (isNavActive(pathname, item.href)) return {group: group.label, item};
     }
   }
-  if (pathname === "/app" || pathname === "/") return {group: null, item: homeItem};
+  if (pathname === "/home" || pathname === "/app" || pathname === "/") return {group: null, item: homeItem};
   return null;
 }

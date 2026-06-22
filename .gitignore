@@ -20,7 +20,7 @@ backend/node_modules/
 skills-lock.json
 # Docs
 docs/
-
+wallet.txt
 # Dotenv file
 .env
 frontend/.env.arbitrum-sepolia
@@ -31,3 +31,4 @@ backend/.env.base-sepolia
 contracts/.env.arbitrum-sepolia
 contracts/.env.arbitrum-one
 contracts/.env.base-sepolia
+*.tsbuildinfo

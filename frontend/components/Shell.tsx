@@ -70,7 +70,7 @@ export function Shell({children}: {children: React.ReactNode}) {
       <header className={`sticky top-0 z-30 border-b border-white/[0.1] bg-gradient-to-b from-void/95 to-void/90 px-3 backdrop-blur-2xl transition-all duration-300 sm:px-4 md:px-6 ${scrolled ? "py-2 shadow-[0_8px_32px_rgba(0,0,0,0.4)]" : "py-3 md:py-4"}`}>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-plasma/40 to-transparent" />
         <div className="mx-auto flex max-w-[1440px] items-center gap-3 sm:gap-4">
-          <a href="/app" onClick={(event) => navigate(event, "/app")} className="group flex shrink-0 items-center gap-2.5">
+          <a href="/home" onClick={(event) => navigate(event, "/home")} className="group flex shrink-0 items-center gap-2.5">
             <span className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-plasma to-violet text-sm font-bold text-white shadow-[0_0_18px_rgba(155,92,246,0.3)] transition-transform duration-200 group-hover:scale-105">
               N
               <span className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-inset ring-white/20" />

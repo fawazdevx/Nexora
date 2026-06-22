@@ -1,6 +1,7 @@
-import {readStore, updateStore, type ServiceManifest, type ServiceRecord} from "../store.js";
+import {readStore, updateStore, visibleServicesForStore, type ServiceManifest, type ServiceRecord} from "../store.js";
 import {pushNotification} from "../store.js";
 import {config} from "../config.js";
+import {dispatchNotification} from "../notifications.js";
 import {safeHttpUrl} from "../security.js";
 
 export type PlatformPlan = {
@@ -71,12 +72,12 @@ type ServiceInput = {
 
 export async function listServices() {
   const store = await readStore();
-  return store.services;
+  return visibleServicesForStore(store.services);
 }
 
 export async function getService(serviceId: string) {
   const store = await readStore();
-  return store.services.find((service) => service.id === serviceId || String(service.chainServiceId) === serviceId);
+  return visibleServicesForStore(store.services).find((service) => service.id === serviceId || String(service.chainServiceId) === serviceId);
 }
 
 export async function publishService(input: ServiceInput) {
@@ -93,7 +94,9 @@ export async function publishService(input: ServiceInput) {
       active: true,
       featured: Boolean(input.featured),
       txHash: input.txHash ?? null,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      archivedAt: null,
+      archiveReason: null
     };
 
     const existingIndex = store.services.findIndex(
@@ -114,7 +117,7 @@ export async function publishService(input: ServiceInput) {
 
 export async function featureService(input: {serviceId: string; operatorAddress: string}) {
   return updateStore((store) => {
-    const service = store.services.find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
+    const service = visibleServicesForStore(store.services).find((item) => item.id === input.serviceId || String(item.chainServiceId) === input.serviceId);
     if (!service) throw new Error("service not found");
     if (service.publisherAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) throw new Error("publisher wallet required");
     service.featured = true;
@@ -216,12 +219,22 @@ export async function executeMarketplaceService(input: {
 
   const args = input.args ?? {};
   const kind = service.manifest.kind;
-  return {
+  const execution = {
     serviceId: service.id,
     kind,
     input: args,
     result: await executeBuiltInService(kind, args)
   };
+  const notification = await updateStore((store) => pushNotification(store, {
+    operatorAddress: input.payer,
+    title: "Agent action completed",
+    detail: `${service.name} executed after verified x402 settlement`,
+    kind: "agent",
+    receiptId: input.authorizationId,
+    actionHref: `/receipts/${encodeURIComponent(input.authorizationId ?? "")}`
+  }));
+  await dispatchNotification({notification, event: "agentActions", receiptId: input.authorizationId}).catch(() => undefined);
+  return execution;
 }
 
 export async function executeBuiltInService(kind: ServiceManifest["kind"], args: Record<string, unknown>) {

@@ -1,8 +1,11 @@
-import {Blockchain, initiateDeveloperControlledWalletsClient} from "@circle-fin/developer-controlled-wallets";
+import {Blockchain, initiateDeveloperControlledWalletsClient, type AccountType} from "@circle-fin/developer-controlled-wallets";
+import {createPublicClient, encodeFunctionData, formatUnits, http, keccak256, parseAbi, parseEventLogs, stringToHex} from "viem";
 import {config} from "../config.js";
+import {ARC_MEMO_CONTRACT, arcMemoAbi, normalizeMemo, publicMemoData, type NexoraStructuredMemo} from "../memos.js";
+import {dispatchNotification} from "../notifications.js";
 import {normalizePolicyV2} from "../policies/engine.js";
-import {assertStoreReady, pushNotification, readStore, updateStore} from "../store.js";
-import type {AgentPolicy} from "../store.js";
+import {assertStoreReady, isVisibleAgent, pushNotification, readStore, updateStore} from "../store.js";
+import type {AgentPolicy, NotificationRecord} from "../store.js";
 
 type CreateAgentWalletInput = {
   operatorAddress: string;
@@ -11,6 +14,14 @@ type CreateAgentWalletInput = {
   transactionCapUsdc: number;
   policyV2?: AgentPolicy["v2"];
 };
+
+const x402LedgerAbi = parseAbi([
+  "function settleAgentRequest(uint256 serviceId,bytes32 requestHash,uint256 units) returns (uint256 grossAmount)"
+]);
+
+const erc20BalanceAbi = parseAbi([
+  "function balanceOf(address account) view returns (uint256)"
+]);
 
 type AgentPolicyInput = {
   operatorAddress: string;
@@ -35,23 +46,27 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
 
     try {
       const client = circleClient();
-      walletSet = await client.createWalletSet({
-        idempotencyKey: crypto.randomUUID(),
-        name: `nexora-${input.operatorAddress.slice(2, 10)}`
-      });
-      walletSetId = walletSet.data?.walletSet?.id ?? null;
+      walletSetId = config.circle.walletSetId || null;
       if (!walletSetId) {
-        throw new Error(circleErrorMessage("Circle wallet set creation failed", walletSet));
+        walletSet = await client.createWalletSet({
+          idempotencyKey: crypto.randomUUID(),
+          name: `nexora-${input.operatorAddress.slice(2, 10)}`
+        });
+        walletSetId = walletSet.data?.walletSet?.id ?? null;
+        if (!walletSetId) {
+          throw new Error(circleErrorMessage("Circle wallet set creation failed", walletSet));
+        }
       }
+      const accountType = config.circle.agentWalletAccountType;
       wallets = await client.createWallets({
         walletSetId,
         idempotencyKey: crypto.randomUUID(),
         blockchains: [circleBlockchain()],
         count: 1,
-        accountType: "SCA",
+        accountType: circleAccountTypeForWallet(accountType),
         metadata: [
           {
-            name: `nexora-agent-${input.operatorAddress.slice(2, 10)}`,
+            name: `nexora-agent-${accountType.toLowerCase()}-${input.operatorAddress.slice(2, 10)}`,
             refId: input.operatorAddress
           }
         ]
@@ -64,7 +79,9 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
       throw new Error(circleFriendlyError(error));
     }
 
-    return updateStore((store) => {
+    const result = await updateStore((store) => {
+      const circleAccountType = config.circle.agentWalletAccountType;
+      const settlementMode: "eoa_memo" | "sca_direct" = circleAccountType === "EOA" ? "eoa_memo" : "sca_direct";
       const record = {
         id: crypto.randomUUID(),
         operatorAddress: input.operatorAddress,
@@ -73,6 +90,8 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
         circleWalletStatus: status,
         circleWalletSetId: walletSetId,
         circleWalletId: walletId,
+        circleAccountType,
+        settlementMode,
         createdAt: new Date().toISOString(),
         policy: {
           dailyLimitUsdc: input.dailyLimitUsdc,
@@ -84,23 +103,27 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
         }
       };
       store.agents.push(record);
-      pushNotification(store, {
+      const notification = pushNotification(store, {
         operatorAddress: record.operatorAddress,
         title: "Agent wallet created",
         detail: record.address ? `Wallet ready at ${record.address}` : "Wallet pending Circle confirmation",
         kind: "agent"
       });
-      return record;
+      return {record, notification};
     });
+    await notifyAgentAction(result.notification);
+    return result.record;
   }
 
-  return updateStore((store) => {
+  const result = await updateStore((store) => {
     const record = {
       id: crypto.randomUUID(),
       operatorAddress: input.operatorAddress,
       arcName: input.arcName ?? null,
       address: null,
       circleWalletStatus: "requires_circle_api_key",
+      circleAccountType: null,
+      settlementMode: null,
       createdAt: new Date().toISOString(),
       policy: {
         dailyLimitUsdc: input.dailyLimitUsdc,
@@ -112,21 +135,24 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
       }
     };
       store.agents.push(record);
-      pushNotification(store, {
+      const notification = pushNotification(store, {
         operatorAddress: record.operatorAddress,
         title: "Agent wallet saved locally",
         detail: "Circle API key is required to complete wallet creation",
         kind: "agent"
       });
-      return record;
+      return {record, notification};
     });
+  await notifyAgentAction(result.notification);
+  return result.record;
 }
 
 export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput & {txHash?: string | null}) {
   await assertPremiumPolicyAccess(input.operatorAddress, input.policyV2);
-  return updateStore((store) => {
-    const agent = store.agents.find((item) => item.id === agentId || item.address?.toLowerCase() === agentId.toLowerCase());
+  const result = await updateStore((store) => {
+    const agent = store.agents.find((item) => isVisibleAgent(item) && (item.id === agentId || item.address?.toLowerCase() === agentId.toLowerCase()));
     if (!agent && agentId !== "local") throw new Error("agent wallet not found");
+    let notification: NotificationRecord | null = null;
     if (agent) {
       if (agent.operatorAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) {
         throw new Error("agent operator wallet required");
@@ -140,7 +166,7 @@ export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput
         txHash: input.txHash ?? null,
         v2: normalizePolicyV2(input.policyV2)
       };
-      pushNotification(store, {
+      notification = pushNotification(store, {
         operatorAddress: agent.operatorAddress,
         title: "Policy updated",
         detail: `${input.dailyLimitUsdc} daily / ${input.transactionCapUsdc} per transaction`,
@@ -151,9 +177,16 @@ export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput
     return {
       agentId,
       onchainStatus: input.txHash ? "submitted" : "ready_to_submit",
-      policy: input
+      policy: input,
+      notification
     };
   });
+  await notifyAgentAction(result.notification);
+  return {
+    agentId: result.agentId,
+    onchainStatus: result.onchainStatus,
+    policy: result.policy
+  };
 }
 
 async function assertPremiumPolicyAccess(operatorAddress: string, policyV2?: AgentPolicy["v2"]) {
@@ -184,30 +217,43 @@ function hasPremiumPolicySettings(policyV2?: AgentPolicy["v2"]) {
     || (policyV2.serviceAllowlist?.length ?? 0) > 0;
 }
 
+async function notifyAgentAction(notification?: NotificationRecord | null) {
+  if (!notification) return;
+  await dispatchNotification({notification, event: "agentActions"}).catch(() => undefined);
+}
+
 export async function submitAgentX402Settlement(input: {
   agentId: string;
+  operatorAddress: string;
   serviceId: number;
   requestHash: string;
   amountUsdc: number;
   units: number;
+  memo?: NexoraStructuredMemo | null;
 }) {
   if (!config.circle.apiKey) throw new Error("Circle API key is required for agent-wallet settlement");
   if (!config.contracts.usdc || !config.contracts.x402Ledger) throw new Error("USDC and x402 ledger addresses are required for agent-wallet settlement");
 
   const store = await readStore();
-  const agent = store.agents.find((item) => item.id === input.agentId);
+  const agent = store.agents.find((item) => isVisibleAgent(item) && item.id === input.agentId);
   if (!agent) throw new Error("agent wallet not found");
+  if (agent.operatorAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) {
+    throw new Error("agent operator wallet required for settlement");
+  }
   if (!agent.circleWalletId) throw new Error("agent Circle wallet id is missing");
   if (!agent.address) throw new Error("agent wallet address is not ready");
   if (!config.contracts.x402Ledger) throw new Error("x402 ledger address is not configured");
 
   const client = circleClient();
-  const amountBaseUnits = String(Math.round(input.amountUsdc * 1_000_000));
+  const amountBaseUnits = BigInt(Math.round(input.amountUsdc * 1_000_000));
+  await assertAgentSettlementBalance(agent.address, amountBaseUnits);
+  const amountBaseUnitsString = amountBaseUnits.toString();
+  const settlementMode = agent.settlementMode ?? (agent.circleAccountType === "EOA" ? "eoa_memo" : "sca_direct");
   const approve = await client.createContractExecutionTransaction({
     walletId: agent.circleWalletId,
     contractAddress: config.contracts.usdc,
     abiFunctionSignature: "approve(address,uint256)",
-    abiParameters: [config.contracts.x402Ledger, amountBaseUnits],
+    abiParameters: [config.contracts.x402Ledger, amountBaseUnitsString],
     idempotencyKey: crypto.randomUUID(),
     refId: `nexora-x402-approve-${input.serviceId}`,
     fee: {type: "level", config: {feeLevel: "MEDIUM"}}
@@ -216,25 +262,60 @@ export async function submitAgentX402Settlement(input: {
   if (!approveTransactionId) throw new Error(circleErrorMessage("Circle approval transaction failed", approve));
   await pollCircleTransaction(approveTransactionId);
 
-  const settle = await client.createContractExecutionTransaction({
-    walletId: agent.circleWalletId,
-    contractAddress: config.contracts.x402Ledger,
-    abiFunctionSignature: "settleAgentRequest(uint256,bytes32,uint256)",
-    abiParameters: [String(input.serviceId), input.requestHash, String(input.units)],
-    idempotencyKey: crypto.randomUUID(),
-    refId: `nexora-x402-settle-${input.serviceId}`,
-    fee: {type: "level", config: {feeLevel: "MEDIUM"}}
+  const memo = normalizeMemo(input.memo);
+  const settleData = encodeFunctionData({
+    abi: x402LedgerAbi,
+    functionName: "settleAgentRequest",
+    args: [BigInt(input.serviceId), input.requestHash as `0x${string}`, BigInt(input.units)]
   });
+  const callDataHash = keccak256(settleData);
+  const useMemoSettlement = settlementMode === "eoa_memo" && Boolean(memo?.memoId) && config.arc.chainId === 5042002;
+  const settle = useMemoSettlement
+    ? await client.createContractExecutionTransaction({
+      walletId: agent.circleWalletId,
+      contractAddress: ARC_MEMO_CONTRACT,
+      abiFunctionSignature: "memo(address,bytes,bytes32,bytes)",
+      abiParameters: [
+        config.contracts.x402Ledger,
+        settleData,
+        memo?.memoId,
+        stringToHex(JSON.stringify(publicMemoData(memo)))
+      ],
+      idempotencyKey: crypto.randomUUID(),
+      refId: `nexora-x402-memo-settle-${input.serviceId}`,
+      fee: {type: "level", config: {feeLevel: "MEDIUM"}}
+    })
+    : await client.createContractExecutionTransaction({
+      walletId: agent.circleWalletId,
+      contractAddress: config.contracts.x402Ledger,
+      abiFunctionSignature: "settleAgentRequest(uint256,bytes32,uint256)",
+      abiParameters: [String(input.serviceId), input.requestHash, String(input.units)],
+      idempotencyKey: crypto.randomUUID(),
+      refId: `nexora-x402-settle-${input.serviceId}`,
+      fee: {type: "level", config: {feeLevel: "MEDIUM"}}
+    });
   const settlementTransactionId = settle.data?.id;
   if (!settlementTransactionId) throw new Error(circleErrorMessage("Circle settlement transaction failed", settle));
 
   const settlement = await pollCircleTransaction(settlementTransactionId);
+  const memoContext = useMemoSettlement && memo && settlement.txHash
+    ? await memoContextForSettlement({
+      txHash: settlement.txHash,
+      memoId: memo.memoId,
+      targetContract: config.contracts.x402Ledger,
+      callDataHash
+    })
+    : null;
   return {
     agentWallet: agent.address,
     approveTransactionId,
     settlementTransactionId,
+    settlementMode,
     state: settlement.state,
-    txHash: settlement.txHash ?? null
+    txHash: settlement.txHash ?? null,
+    targetContract: memoContext?.targetContract ?? (useMemoSettlement ? config.contracts.x402Ledger : null),
+    callDataHash: memoContext?.callDataHash ?? (useMemoSettlement ? callDataHash : null),
+    memoIndex: memoContext?.memoIndex ?? null
   };
 }
 
@@ -245,7 +326,7 @@ export async function refreshPendingCircleWallets(operatorAddress?: string) {
   const operator = operatorAddress?.toLowerCase();
   const pendingAgents = store.agents.filter((agent) => {
     if (operator && agent.operatorAddress.toLowerCase() !== operator) return false;
-    return !agent.address && Boolean(agent.circleWalletId);
+    return isVisibleAgent(agent) && !agent.address && Boolean(agent.circleWalletId);
   });
   if (pendingAgents.length === 0) return;
 
@@ -322,6 +403,66 @@ function circleBlockchain() {
   if (config.arc.chainId === 421614) return Blockchain.ArbSepolia;
   if (config.arc.chainId === 42161) return Blockchain.Arb;
   throw new Error("Agent wallet creation is not available on this network yet.");
+}
+
+function circleAccountTypeForWallet(accountType: "EOA" | "SCA"): AccountType {
+  return accountType;
+}
+
+async function assertAgentSettlementBalance(agentAddress: string, requiredBaseUnits: bigint) {
+  const balance = await arcPublicClient().readContract({
+    address: config.contracts.usdc as `0x${string}`,
+    abi: erc20BalanceAbi,
+    functionName: "balanceOf",
+    args: [agentAddress as `0x${string}`]
+  });
+
+  if (balance >= requiredBaseUnits) return;
+
+  const network = config.arc.chainId === 5042002 ? "Arc Testnet" : `chain ${config.arc.chainId}`;
+  throw new Error(
+    `Agent Circle wallet ${agentAddress} has ${formatUnits(balance, 6)} USDC on ${network}, but ${formatUnits(requiredBaseUnits, 6)} USDC is required. Fund this agent wallet with ERC-20 USDC on ${network} and try again.`
+  );
+}
+
+function arcPublicClient() {
+  return createPublicClient({
+    transport: http(config.arc.rpcUrl),
+    chain: {
+      id: config.arc.chainId,
+      name: config.arc.chainId === 5042002 ? "Arc Testnet" : `Chain ${config.arc.chainId}`,
+      nativeCurrency: {name: "USDC", symbol: "USDC", decimals: 18},
+      rpcUrls: {default: {http: [config.arc.rpcUrl]}}
+    }
+  });
+}
+
+async function memoContextForSettlement(input: {
+  txHash: string;
+  memoId: string;
+  targetContract: string;
+  callDataHash: string;
+}) {
+  const client = arcPublicClient();
+  const receipt = await client.getTransactionReceipt({hash: input.txHash as `0x${string}`});
+  if (receipt.status !== "success") throw new Error("memo-backed Circle settlement transaction reverted");
+  const logs = parseEventLogs({
+    abi: arcMemoAbi,
+    eventName: "Memo",
+    logs: receipt.logs
+  }).filter((log) => (
+    log.address.toLowerCase() === ARC_MEMO_CONTRACT.toLowerCase()
+    && log.args.memoId?.toLowerCase() === input.memoId.toLowerCase()
+  ));
+  const match = logs[logs.length - 1];
+  if (!match) throw new Error("memo-backed Circle settlement event not found");
+  if (match.args.target.toLowerCase() !== input.targetContract.toLowerCase()) throw new Error("memo-backed Circle settlement target mismatch");
+  if (match.args.callDataHash.toLowerCase() !== input.callDataHash.toLowerCase()) throw new Error("memo-backed Circle settlement calldata mismatch");
+  return {
+    targetContract: match.args.target,
+    callDataHash: match.args.callDataHash,
+    memoIndex: Number(match.args.memoIndex)
+  };
 }
 
 async function pollCircleTransaction(transactionId: string) {

@@ -1,4 +1,4 @@
-import {createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, keccak256, parseUnits, stringToHex, type Address, type Hash} from "viem";
+import {createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, keccak256, parseEventLogs, parseUnits, stringToHex, type Address, type Hash} from "viem";
 import {CurrencyAmount, Percent, Token, TradeType} from "@synthra-swap/sdk/core";
 import {Pool, Route} from "@synthra-swap/sdk/v3";
 import {SwapRouter as SynthraUniversalSwapRouter, Trade as SynthraUniversalTrade, UniswapTrade} from "@synthra-swap/sdk/universal-router";
@@ -192,6 +192,63 @@ export const erc20Abi = [
 
 export const gatewayWalletTestnetAddress = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" as Address;
 export const gatewayMinterTestnetAddress = "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B" as Address;
+export const arcMemoContractAddress = "0x5294E9927c3306DcBaDb03fe70b92e01cCede505" as Address;
+
+export type NexoraStructuredMemo = {
+  protocol: "nexora.memo";
+  version: "1.0";
+  type: "nexora.x402.purchase";
+  memoId: `0x${string}`;
+  memoData: Record<string, unknown>;
+  encoding: "json";
+  arc: {
+    memoContract: string;
+    targetContract?: string | null;
+    callDataHash?: string | null;
+    memoIndex?: number | null;
+  };
+};
+
+function publicMemoData(memo: NexoraStructuredMemo) {
+  return {
+    type: memo.type,
+    serviceId: String(memo.memoData.serviceId ?? ""),
+    requestHash: String(memo.memoData.requestHash ?? ""),
+    budgetBucket: String(memo.memoData.budgetBucket ?? "general"),
+    policy: {mode: String((memo.memoData.policy as {mode?: unknown} | undefined)?.mode ?? "auto")},
+    privacy: {scope: String((memo.memoData.privacy as {scope?: unknown} | undefined)?.scope ?? "public")},
+    intent: String(memo.memoData.intent ?? ""),
+    createdAt: String(memo.memoData.createdAt ?? new Date().toISOString())
+  };
+}
+
+export const arcMemoAbi = [
+  {
+    type: "function",
+    name: "memo",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "target", type: "address"},
+      {name: "data", type: "bytes"},
+      {name: "memoId", type: "bytes32"},
+      {name: "memoData", type: "bytes"}
+    ],
+    outputs: []
+  },
+  {
+    type: "event",
+    name: "Memo",
+    anonymous: false,
+    inputs: [
+      {name: "sender", type: "address", indexed: true},
+      {name: "target", type: "address", indexed: true},
+      {name: "callDataHash", type: "bytes32", indexed: false},
+      {name: "memoId", type: "bytes32", indexed: true},
+      {name: "memo", type: "bytes", indexed: false},
+      {name: "memoIndex", type: "uint256", indexed: false}
+    ]
+  }
+] as const;
 
 export const gatewayWalletAbi = [
   {
@@ -1181,8 +1238,8 @@ export async function publishX402Service(input: {endpointHash: string; pricePerU
   return {txHash, chainServiceId: Number(chainServiceId)};
 }
 
-export async function settleX402Request(input: {chainServiceId: number; requestHash: `0x${string}`; payer: string; units: number; amountUsdc: string}) {
-  const {client, contracts} = await walletClient();
+export async function settleX402Request(input: {chainServiceId: number; requestHash: `0x${string}`; payer: string; units: number; amountUsdc: string; memo?: NexoraStructuredMemo | null}) {
+  const {client, chainId, contracts} = await walletClient();
   const usdc = requireAddress(contracts.usdc, "USDC address");
   const ledger = requireAddress(contracts.x402Ledger, "x402 ledger address");
   const amount = parseUnits(input.amountUsdc || "0", 6);
@@ -1193,15 +1250,48 @@ export async function settleX402Request(input: {chainServiceId: number; requestH
     functionName: "approve",
     args: [ledger, amount]
   });
+  await waitForSuccessfulReceipt(chainId, approveHash, "USDC approval");
 
-  const settleHash = await client.writeContract({
-    address: ledger,
+  const settleData = encodeFunctionData({
     abi: x402LedgerAbi,
     functionName: "settleRequest",
     args: [BigInt(input.chainServiceId), input.requestHash, input.payer as Address, BigInt(input.units)]
   });
+  const callDataHash = keccak256(settleData);
+  let memoIndex: number | null = null;
+  const useArcMemo = Boolean(input.memo?.memoId) && chainId === arcTestnet.id;
+  const settleHash = useArcMemo
+    ? await client.writeContract({
+      address: arcMemoContractAddress,
+      abi: arcMemoAbi,
+      functionName: "memo",
+      args: [
+        ledger,
+        settleData,
+        input.memo?.memoId as `0x${string}`,
+        stringToHex(JSON.stringify(input.memo ? publicMemoData(input.memo) : {}))
+      ]
+    })
+    : await client.writeContract({
+      address: ledger,
+      abi: x402LedgerAbi,
+      functionName: "settleRequest",
+      args: [BigInt(input.chainServiceId), input.requestHash, input.payer as Address, BigInt(input.units)]
+    });
 
-  return {approveHash, settleHash};
+  const receipt = await waitForSuccessfulReceipt(chainId, settleHash, useArcMemo ? "Memo-backed x402 settlement" : "x402 settlement");
+  if (useArcMemo) {
+    const memoLogs = parseEventLogs({
+      abi: arcMemoAbi,
+      eventName: "Memo",
+      logs: receipt.logs
+    }).filter((log) => log.args.memoId?.toLowerCase() === input.memo?.memoId.toLowerCase());
+    const memoLog = memoLogs[memoLogs.length - 1];
+    if (!memoLog) throw new Error("Memo-backed x402 settlement did not emit a matching memo event.");
+    memoIndex = Number(memoLog.args.memoIndex);
+  }
+
+  return {approveHash, settleHash, memo: input.memo ?? null, memoBacked: useArcMemo, targetContract: ledger, callDataHash, memoIndex};
 }
 
 export async function createOnchainEscrow(input: {
@@ -1399,6 +1489,26 @@ export async function payTreasuryUsdc(input: {treasury: string; amountUsdc: stri
     args: [treasury, amount]
   });
   await waitForSuccessfulReceipt(chainId, txHash, "Plan payment");
+  return {txHash, chainId};
+}
+
+export async function fundAgentWalletUsdc(input: {agentAddress: string; amountUsdc: string}): Promise<{txHash: Hash; chainId: number}> {
+  const {client, chainId, contracts} = await walletClient();
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Switch to Arc Testnet to fund an agent wallet.");
+  }
+  const usdc = requireAddress(contracts.usdc, "USDC token address");
+  const agentAddress = requireAddress(input.agentAddress, "Agent wallet address");
+  const amount = parseUnits(input.amountUsdc || "0", 6);
+  if (amount <= 0n) throw new Error("Funding amount must be greater than zero.");
+
+  const txHash = await client.writeContract({
+    address: usdc,
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [agentAddress, amount]
+  });
+  await waitForSuccessfulReceipt(chainId, txHash, "Agent wallet funding");
   return {txHash, chainId};
 }
 
