@@ -56,13 +56,13 @@ function RiskAlertCard({alert}: {alert: RiskAlert}) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${visual.pill}`}>{alert.severity}</span>
-            <span className="text-xs capitalize text-slate-500">{alert.category}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${visual.pill}`}>{alert.severity}</span>
+            <span className="text-xs capitalize text-slate-400">{alert.category}</span>
           </div>
-          <h3 className="mt-2 font-semibold text-white">{alert.title}</h3>
+          <h3 className="mt-2 text-base font-semibold text-white">{alert.title}</h3>
           <p className="mt-1 text-sm leading-6 text-slate-300">{alert.detail}</p>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs text-slate-500">Current check</span>
+            <span className="text-xs text-slate-400">Current check</span>
             {alert.actionHref ? (
               <button type="button" className="secondary-button min-h-9 px-3 py-1.5 text-xs" onClick={() => navigateTo(alert.actionHref ?? "/settings/policies")}>
                 Review <ExternalLink size={12} />

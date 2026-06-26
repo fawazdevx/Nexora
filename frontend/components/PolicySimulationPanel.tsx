@@ -277,8 +277,8 @@ function ApprovalRequestCard({
         <div className="flex min-w-0 items-center gap-3">
           <AgentAvatar seed={request.agentWallet ?? request.agentId} label={request.serviceName} size={34} />
           <div className="min-w-0">
-            <p className="truncate font-semibold text-white">{request.serviceName}</p>
-            <p className="mt-0.5 text-xs text-slate-500">{timeAgo(request.createdAt)} · {request.units} unit{request.units === 1 ? "" : "s"}</p>
+            <p className="truncate text-base font-semibold text-white">{request.serviceName}</p>
+            <p className="mt-0.5 text-[13px] text-slate-400">{timeAgo(request.createdAt)} · {request.units} unit{request.units === 1 ? "" : "s"}</p>
           </div>
         </div>
         <RequestStatus status={request.status} blocked={blocked} />
@@ -296,13 +296,13 @@ function ApprovalRequestCard({
       </div>
 
       {request.simulation.reason ? (
-        <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber/20 bg-amber/10 p-2.5 text-xs leading-5 text-amber">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+        <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber/20 bg-amber/10 p-2.5 text-[13px] leading-5 text-amber">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           {request.simulation.reason}
         </p>
       ) : null}
 
-      {request.note ? <p className="mt-3 text-xs leading-5 text-slate-400">{request.note}</p> : null}
+      {request.note ? <p className="mt-3 text-[13px] leading-5 text-slate-300">{request.note}</p> : null}
 
       {pending ? (
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -333,8 +333,8 @@ function RequestStatus({status, blocked}: {status: ApprovalRequest["status"]; bl
 function MiniMetric({label, value}: {label: string; value: string}) {
   return (
     <div className="surface px-3 py-2.5">
-      <p className="text-[11px] uppercase tracking-wider text-slate-500">{label}</p>
-      <p className="mt-1 font-semibold text-white">{value}</p>
+      <p className="text-xs uppercase tracking-wider text-slate-400">{label}</p>
+      <p className="mt-1 text-base font-semibold text-white">{value}</p>
     </div>
   );
 }

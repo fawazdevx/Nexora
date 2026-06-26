@@ -20,3 +20,4 @@ docs/
 .env
 .env.arbitrum-one
 .env.arbitrum-sepolia
+.env.base-sepolia

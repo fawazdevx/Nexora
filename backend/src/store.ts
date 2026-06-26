@@ -197,6 +197,14 @@ export type NotificationPreferencesRecord = {
   email: string | null;
   whatsapp: string | null;
   telegram: string | null;
+  telegramLink?: {
+    code: string;
+    status: "pending" | "connected";
+    chatId?: string | null;
+    username?: string | null;
+    expiresAt?: string | null;
+    updatedAt: string;
+  } | null;
   channels: {
     inApp: boolean;
     email: boolean;
@@ -818,6 +826,74 @@ export async function updateNotificationPreferences(input: {
   });
 }
 
+export async function beginTelegramNotificationLink(input: {
+  operatorAddress: string;
+  code: string;
+  expiresAt: string;
+}) {
+  return updateStore((store) => {
+    const lower = input.operatorAddress.toLowerCase();
+    const current = preferencesForOperator(store, input.operatorAddress);
+    const now = new Date().toISOString();
+    const next = normalizeNotificationPreferences({
+      ...current,
+      telegramLink: {
+        code: input.code,
+        status: "pending",
+        chatId: null,
+        username: null,
+        expiresAt: input.expiresAt,
+        updatedAt: now
+      },
+      updatedAt: now
+    });
+    const index = store.notificationPreferences.findIndex((item) => item.operatorAddress.toLowerCase() === lower);
+    if (index >= 0) store.notificationPreferences[index] = next;
+    else store.notificationPreferences.push(next);
+    return next;
+  });
+}
+
+export async function completeTelegramNotificationLink(input: {
+  operatorAddress?: string;
+  code?: string;
+  chatId: string;
+  username?: string | null;
+}) {
+  return updateStore((store) => {
+    const now = new Date().toISOString();
+    const index = store.notificationPreferences.findIndex((item) => {
+      const preferences = normalizeNotificationPreferences(item);
+      if (input.operatorAddress && preferences.operatorAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) return false;
+      if (input.code && preferences.telegramLink?.code !== input.code) return false;
+      return Boolean(preferences.telegramLink?.code);
+    });
+    if (index === -1) throw new Error("Telegram link request was not found. Start Telegram linking again.");
+
+    const current = normalizeNotificationPreferences(store.notificationPreferences[index]);
+    if (current.telegramLink?.expiresAt && new Date(current.telegramLink.expiresAt).getTime() < Date.now()) {
+      throw new Error("Telegram link request expired. Start Telegram linking again.");
+    }
+
+    const next = normalizeNotificationPreferences({
+      ...current,
+      telegram: input.chatId,
+      telegramLink: {
+        code: current.telegramLink?.code ?? input.code ?? "",
+        status: "connected",
+        chatId: input.chatId,
+        username: input.username ?? null,
+        expiresAt: current.telegramLink?.expiresAt ?? null,
+        updatedAt: now
+      },
+      channels: {...current.channels, telegram: true},
+      updatedAt: now
+    });
+    store.notificationPreferences[index] = next;
+    return next;
+  });
+}
+
 export async function recordNotificationDeliveries(records: Omit<NotificationDeliveryRecord, "id" | "createdAt">[]) {
   if (records.length === 0) return [];
   return updateStore((store) => {
@@ -841,6 +917,7 @@ export function preferencesForOperator(store: StoreShape, operatorAddress: strin
     email: null,
     whatsapp: null,
     telegram: null,
+    telegramLink: null,
     channels: {
       inApp: true,
       email: false,
@@ -960,11 +1037,22 @@ function normalizeApprovalRequest(request: AgentApprovalRequestRecord): AgentApp
 function normalizeNotificationPreferences(value: NotificationPreferencesRecord): NotificationPreferencesRecord {
   const now = new Date().toISOString();
   const operatorAddress = typeof value.operatorAddress === "string" ? value.operatorAddress : "";
+  const telegramLink = value.telegramLink && typeof value.telegramLink === "object"
+    ? {
+        code: typeof value.telegramLink.code === "string" ? value.telegramLink.code : "",
+        status: value.telegramLink.status === "connected" ? "connected" as const : "pending" as const,
+        chatId: typeof value.telegramLink.chatId === "string" && value.telegramLink.chatId.trim() ? value.telegramLink.chatId.trim() : null,
+        username: typeof value.telegramLink.username === "string" && value.telegramLink.username.trim() ? value.telegramLink.username.trim() : null,
+        expiresAt: typeof value.telegramLink.expiresAt === "string" && value.telegramLink.expiresAt.trim() ? value.telegramLink.expiresAt.trim() : null,
+        updatedAt: value.telegramLink.updatedAt ?? value.updatedAt ?? now
+      }
+    : null;
   return {
     operatorAddress,
     email: typeof value.email === "string" && value.email.trim() ? value.email.trim().toLowerCase() : null,
     whatsapp: typeof value.whatsapp === "string" && value.whatsapp.trim() ? value.whatsapp.trim() : null,
     telegram: typeof value.telegram === "string" && value.telegram.trim() ? value.telegram.trim() : null,
+    telegramLink,
     channels: {
       inApp: value.channels?.inApp !== false,
       email: Boolean(value.channels?.email),

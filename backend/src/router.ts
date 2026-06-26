@@ -9,7 +9,7 @@ import {integrationReadiness} from "./readiness.js";
 import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
 import {indexedAnalytics, syncArcIndexer} from "./indexer/arc.js";
 import {normalizeMemo, paymentMemoSummary, publicMemoView} from "./memos.js";
-import {dispatchNotification} from "./notifications.js";
+import {dispatchNotification, handleTelegramWebhookUpdate, syncTelegramNotificationLink, telegramBotStartUrl} from "./notifications.js";
 import {
   addressArray,
   assertJsonObject,
@@ -32,7 +32,7 @@ import {
   verifyAuthSignature,
   type AuthContext
 } from "./security.js";
-import {appSnapshot, archiveWorkspaceTestData, isVisibleAgent, pushNotification, readStore, storageFriendlyError, updateNotificationPreferences, updateStore, visibleServicesForStore} from "./store.js";
+import {appSnapshot, archiveWorkspaceTestData, beginTelegramNotificationLink, isVisibleAgent, pushNotification, readStore, storageFriendlyError, updateNotificationPreferences, updateStore, visibleServicesForStore} from "./store.js";
 import {settleFacilitatorPayment, supportedX402, verifyFacilitatorPayment} from "./x402/protocol-facilitator.js";
 import {evaluateAgentPolicy} from "./policies/engine.js";
 import type {AgentApprovalRequestRecord, EscrowRecord, IndexedChainEventRecord, PaymentRecord, SubscriptionRecord} from "./store.js";
@@ -135,6 +135,32 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
         channels: optionalNotificationChannels(body.channels),
         events: optionalNotificationEvents(body.events)
       }));
+    }
+
+    if (req.method === "POST" && path === "/api/notifications/telegram/link") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      const code = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      const preferences = await beginTelegramNotificationLink({operatorAddress, code, expiresAt});
+      return ok({
+        startUrl: await telegramBotStartUrl(code),
+        code,
+        expiresAt,
+        status: preferences.telegramLink?.status ?? "pending"
+      });
+    }
+
+    if (req.method === "POST" && path === "/api/notifications/telegram/confirm") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      const code = requiredLimitedString(body.code, "code", 80);
+      const preferences = await syncTelegramNotificationLink({operatorAddress, code});
+      return ok({
+        connected: Boolean(preferences.telegram),
+        telegram: preferences.telegram,
+        telegramLink: preferences.telegramLink ?? null
+      });
     }
 
     if (req.method === "GET" && path.startsWith("/api/operators/")) {
@@ -528,6 +554,11 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({received: true, eventType: typeof body.type === "string" ? body.type : "unknown"});
     }
 
+    if (req.method === "POST" && path === "/api/webhooks/telegram") {
+      assertSharedSecret(header(req, "x-telegram-bot-api-secret-token"), config.notifications.telegram.webhookSecret, "telegram webhook");
+      return ok(await handleTelegramWebhookUpdate(body));
+    }
+
     if (req.method === "POST" && path === "/api/indexer/arc/sync") {
       assertSharedSecret(header(req, "x-indexer-secret"), config.security.indexerSecret, "indexer");
       return ok(await syncArcIndexer());
@@ -544,7 +575,7 @@ export function corsHeaders(origin?: string) {
     ...securityHeaders(),
     "access-control-allow-origin": corsOrigin(origin),
     "access-control-allow-methods": "GET,POST,PATCH,HEAD,OPTIONS",
-    "access-control-allow-headers": "content-type,authorization,x-payment,x-accept-payment,x402-version,x-admin-secret,x-webhook-secret,x-indexer-secret",
+    "access-control-allow-headers": "content-type,authorization,x-payment,x-accept-payment,x402-version,x-admin-secret,x-webhook-secret,x-indexer-secret,x-telegram-bot-api-secret-token",
     "access-control-expose-headers": "x-accept-payment,x-payment-response,x402-version",
     "vary": "Origin"
   };
@@ -605,8 +636,7 @@ function optionalTelegram(value: unknown) {
   if (value === undefined || value === null || value === "") return null;
   const raw = requiredLimitedString(value, "telegram", 80).trim();
   if (/^-?\d{5,20}$/.test(raw)) return raw;
-  if (!/^@?[a-zA-Z0-9_]{5,32}$/.test(raw)) throw new Error("telegram must be a username or chat id");
-  return raw.startsWith("@") ? raw : `@${raw}`;
+  throw new Error("telegram must be a numeric chat id. Open your bot in Telegram, send /start, then use the chat id returned by getUpdates.");
 }
 
 function optionalNotificationChannels(value: unknown) {

@@ -1,5 +1,5 @@
 import {config} from "./config.js";
-import {preferencesForOperator, readStore, recordNotificationDeliveries, type NotificationDeliveryRecord, type NotificationPreferencesRecord, type NotificationRecord} from "./store.js";
+import {completeTelegramNotificationLink, preferencesForOperator, readStore, recordNotificationDeliveries, type NotificationDeliveryRecord, type NotificationPreferencesRecord, type NotificationRecord} from "./store.js";
 
 type DeliveryEvent = "agentActions" | "paymentReceipts" | "policyAlerts" | "escrowUpdates";
 
@@ -49,7 +49,7 @@ export async function dispatchNotification(input: DispatchInput) {
 function enabledTargets(preferences: NotificationPreferencesRecord): Array<{channel: "email" | "whatsapp" | "telegram"; target: string}> {
   const targets: Array<{channel: "email" | "whatsapp" | "telegram"; target: string}> = [];
   if (preferences.channels.email && preferences.email) targets.push({channel: "email", target: preferences.email});
-  if (preferences.channels.whatsapp && preferences.whatsapp) targets.push({channel: "whatsapp", target: preferences.whatsapp});
+  if (config.notifications.whatsapp.enabled && preferences.channels.whatsapp && preferences.whatsapp) targets.push({channel: "whatsapp", target: preferences.whatsapp});
   if (preferences.channels.telegram && preferences.telegram) targets.push({channel: "telegram", target: preferences.telegram});
   return targets;
 }
@@ -92,11 +92,14 @@ async function sendEmail(to: string, message: {subject: string; text: string}) {
       text: message.text
     })
   });
-  if (!response.ok) throw new Error(`email provider returned ${response.status}`);
+  if (!response.ok) throw new Error(`email provider returned ${response.status}: ${await providerErrorDescription(response)}`);
   return {sent: true, provider: config.notifications.email.provider};
 }
 
 async function sendWhatsApp(to: string, text: string) {
+  if (!config.notifications.whatsapp.enabled) {
+    return {sent: false, provider: config.notifications.whatsapp.provider, reason: "WhatsApp notifications are coming soon"};
+  }
   if (!config.notifications.whatsapp.accountSid || !config.notifications.whatsapp.authToken || !config.notifications.whatsapp.from) {
     return {sent: false, provider: config.notifications.whatsapp.provider, reason: "WhatsApp provider is not configured"};
   }
@@ -114,7 +117,7 @@ async function sendWhatsApp(to: string, text: string) {
     },
     body
   });
-  if (!response.ok) throw new Error(`WhatsApp provider returned ${response.status}`);
+  if (!response.ok) throw new Error(`WhatsApp provider returned ${response.status}: ${await providerErrorDescription(response)}`);
   return {sent: true, provider: config.notifications.whatsapp.provider};
 }
 
@@ -122,17 +125,34 @@ async function sendTelegram(chatId: string, text: string) {
   if (!config.notifications.telegram.botToken) {
     return {sent: false, provider: "telegram", reason: "Telegram bot token is not configured"};
   }
+  const normalizedChatId = chatId.trim();
+  if (!/^-?\d{5,20}$/.test(normalizedChatId)) {
+    throw new Error("Telegram requires a numeric chat id. Ask the user to open the bot, send /start, then use getUpdates to find their chat id.");
+  }
   const response = await fetch(`https://api.telegram.org/bot${config.notifications.telegram.botToken}/sendMessage`, {
     method: "POST",
     headers: {"content-type": "application/json"},
     body: JSON.stringify({
-      chat_id: chatId.replace(/^@/, ""),
+      chat_id: normalizedChatId,
       text,
       disable_web_page_preview: true
     })
   });
-  if (!response.ok) throw new Error(`Telegram provider returned ${response.status}`);
+  if (!response.ok) throw new Error(`Telegram provider returned ${response.status}: ${await providerErrorDescription(response)}`);
   return {sent: true, provider: "telegram"};
+}
+
+async function providerErrorDescription(response: Response) {
+  try {
+    const body = await response.json() as Record<string, unknown>;
+    if (typeof body.message === "string") return body.message;
+    if (typeof body.error === "string") return body.error;
+    if (typeof body.description === "string") return body.description;
+    if (typeof body.errors === "object" && body.errors) return JSON.stringify(body.errors);
+    return "unknown provider error";
+  } catch {
+    return "unknown provider error";
+  }
 }
 
 function providerForChannel(channel: "email" | "whatsapp" | "telegram") {
@@ -146,11 +166,98 @@ function receiptUrl(receiptId: string) {
 }
 
 function appUrl(path: string) {
-  const base = config.notifications.publicAppUrl.trim().replace(/\/+$/, "");
+  const configuredBase = config.notifications.publicAppUrl.trim() || "https://nexorafi.app";
+  const baseWithProtocol = /^https?:\/\//i.test(configuredBase) ? configuredBase : `https://${configuredBase}`;
+  const base = baseWithProtocol.replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return base ? `${base}${normalizedPath}` : normalizedPath;
+  return `${base}${normalizedPath}`;
 }
 
 function whatsappAddress(value: string) {
   return value.startsWith("whatsapp:") ? value : `whatsapp:${value}`;
+}
+
+export async function telegramBotStartUrl(code: string) {
+  if (!config.notifications.telegram.botToken) {
+    throw new Error("Telegram bot token is not configured");
+  }
+  const bot = await telegramApi<{result?: {username?: string}}>("getMe", {});
+  const username = bot.result?.username;
+  if (!username) throw new Error("Telegram bot username could not be resolved");
+  return `https://t.me/${username}?start=${encodeURIComponent(code)}`;
+}
+
+export async function syncTelegramNotificationLink(input: {operatorAddress: string; code: string}) {
+  if (!config.notifications.telegram.botToken) {
+    throw new Error("Telegram bot token is not configured");
+  }
+  const current = preferencesForOperator(await readStore(), input.operatorAddress);
+  if (current.telegram && current.telegramLink?.code === input.code) return current;
+  let updates: {result?: TelegramUpdate[]};
+  try {
+    updates = await telegramApi<{result?: TelegramUpdate[]}>("getUpdates", {
+      allowed_updates: ["message"],
+      limit: 100
+    });
+  } catch (error) {
+    if (error instanceof Error && /409|webhook/i.test(error.message)) return current;
+    throw error;
+  }
+  const match = (updates.result ?? []).find((update) => telegramStartCode(update) === input.code);
+  const chat = match?.message?.chat;
+  if (!chat) return current;
+  const preferences = await completeTelegramNotificationLink({
+    operatorAddress: input.operatorAddress,
+    code: input.code,
+    chatId: String(chat.id),
+    username: chat.username ?? null
+  });
+  await sendTelegram(String(chat.id), "Nexora notifications are connected. You will receive enabled receipts and alerts here.").catch(() => undefined);
+  return preferences;
+}
+
+export async function handleTelegramWebhookUpdate(update: unknown) {
+  const parsed = update && typeof update === "object" ? update as TelegramUpdate : null;
+  const code = parsed ? telegramStartCode(parsed) : null;
+  const chat = parsed?.message?.chat;
+  if (!code || !chat) {
+    if (parsed?.message?.text?.trim().startsWith("/start") && parsed.message.chat) {
+      await sendTelegram(String(parsed.message.chat.id), "Open Nexora notification settings and use Connect Telegram to link this chat.").catch(() => undefined);
+    }
+    return {linked: false};
+  }
+  const preferences = await completeTelegramNotificationLink({
+    code,
+    chatId: String(chat.id),
+    username: chat.username ?? null
+  });
+  await sendTelegram(String(chat.id), "Nexora notifications are connected. You will receive enabled receipts and alerts here.").catch(() => undefined);
+  return {linked: true, operatorAddress: preferences.operatorAddress};
+}
+
+async function telegramApi<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`https://api.telegram.org/bot${config.notifications.telegram.botToken}/${method}`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(`Telegram provider returned ${response.status}: ${await providerErrorDescription(response)}`);
+  return await response.json() as T;
+}
+
+type TelegramUpdate = {
+  message?: {
+    text?: string;
+    chat?: {
+      id: number | string;
+      username?: string;
+    };
+  };
+};
+
+function telegramStartCode(update: TelegramUpdate) {
+  const text = update.message?.text?.trim();
+  if (!text?.startsWith("/start")) return null;
+  const [, code] = text.split(/\s+/, 2);
+  return code && /^[a-zA-Z0-9_-]{12,80}$/.test(code) ? code : null;
 }

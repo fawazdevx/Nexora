@@ -78,20 +78,22 @@ export const config = {
     synthraApiUrl: process.env.SYNTHRA_API_URL ?? "https://trading-api.synthra.org"
   },
   notifications: {
-    publicAppUrl: process.env.NEXORA_PUBLIC_APP_URL ?? process.env.FRONTEND_PUBLIC_URL ?? "",
+    publicAppUrl: process.env.NEXORA_PUBLIC_APP_URL ?? process.env.FRONTEND_PUBLIC_URL ?? "https://nexorafi.app",
     email: {
       provider: process.env.NEXORA_EMAIL_PROVIDER ?? "resend",
       from: process.env.NEXORA_EMAIL_FROM ?? "",
       resendApiKey: process.env.RESEND_API_KEY ?? ""
     },
     whatsapp: {
+      enabled: (process.env.NEXORA_WHATSAPP_ENABLED ?? "false").toLowerCase() === "true",
       provider: process.env.NEXORA_WHATSAPP_PROVIDER ?? "twilio",
       accountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
       authToken: process.env.TWILIO_AUTH_TOKEN ?? "",
       from: process.env.TWILIO_WHATSAPP_FROM ?? ""
     },
     telegram: {
-      botToken: process.env.TELEGRAM_BOT_TOKEN ?? ""
+      botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+      webhookSecret: process.env.NEXORA_TELEGRAM_WEBHOOK_SECRET ?? process.env.TELEGRAM_WEBHOOK_SECRET ?? ""
     }
   }
 };
@@ -107,9 +109,16 @@ function loadLocalEnv() {
     const index = trimmed.indexOf("=");
     if (index === -1) continue;
     const key = trimmed.slice(0, index).trim();
-    const value = trimmed.slice(index + 1).trim();
+    const value = unquoteEnvValue(trimmed.slice(index + 1).trim());
     if (key && process.env[key] === undefined) process.env[key] = value;
   }
+}
+
+function unquoteEnvValue(value: string) {
+  if (value.length < 2) return value;
+  const quote = value[0];
+  if ((quote !== "\"" && quote !== "'") || value[value.length - 1] !== quote) return value;
+  return value.slice(1, -1);
 }
 
 function normalizeCircleAccountType(value: string | undefined): "EOA" | "SCA" {

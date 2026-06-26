@@ -246,6 +246,14 @@ export type AppSnapshot = {
     email: string | null;
     whatsapp: string | null;
     telegram: string | null;
+    telegramLink?: {
+      code: string;
+      status: "pending" | "connected";
+      chatId?: string | null;
+      username?: string | null;
+      expiresAt?: string | null;
+      updatedAt: string;
+    } | null;
     channels: {
       inApp: boolean;
       email: boolean;

@@ -20,6 +20,7 @@ interface ImportMetaEnv {
   readonly VITE_NEXORA_API_URL?: string;
   readonly VITE_NEXORA_PUBLIC_URL?: string;
   readonly VITE_NEXORA_SITE_URL?: string;
+  readonly VITE_NEXORA_WHATSAPP_ENABLED?: string;
   readonly VITE_MAINTENANCE_MODE?: string;
   readonly VITE_POLICY_REGISTRY_ADDRESS?: string;
   readonly VITE_X402_LEDGER_ADDRESS?: string;

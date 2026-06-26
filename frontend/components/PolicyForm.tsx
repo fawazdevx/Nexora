@@ -301,8 +301,8 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.1] bg-white/[0.04] text-slate-500"><ShieldCheck size={18} /></span>
           )}
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-white">{selectedAgent ? selectedAgent.arcName ?? shortAddress(selectedAgent.operatorAddress) : "No agent selected"}</p>
-            <p className="font-mono text-xs text-slate-500">{selectedAgent?.address ? shortAddress(selectedAgent.address) : selectedAgent ? "Circle pending" : address ? shortAddress(address) : "Connect wallet"}</p>
+            <p className="truncate text-base font-semibold text-white">{selectedAgent ? selectedAgent.arcName ?? shortAddress(selectedAgent.operatorAddress) : "No agent selected"}</p>
+            <p className="font-mono text-[13px] text-slate-400">{selectedAgent?.address ? shortAddress(selectedAgent.address) : selectedAgent ? "Circle pending" : address ? shortAddress(address) : "Connect wallet"}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -327,7 +327,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
         <p className="mb-2 text-sm font-medium text-slate-300">Agent</p>
         <AgentPicker agents={agents} value={selectedAgent} onChange={setAgentId} />
         {agents.length === 0 ? (
-          <p className="mt-2 text-xs leading-5 text-slate-500">No agent is available yet. Create an agent wallet first; once Circle returns the wallet, it will appear here.</p>
+          <p className="mt-2 text-[13px] leading-5 text-slate-400">No agent is available yet. Create an agent wallet first; once Circle returns the wallet, it will appear here.</p>
         ) : null}
       </div>
 
@@ -339,8 +339,8 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             const Icon = preset.icon;
             return (
               <button key={preset.key} type="button" onClick={() => applyPreset(preset)} className="surface p-3 text-left transition hover:border-plasma/30">
-                <p className="flex items-center gap-2 text-sm font-semibold text-white"><Icon size={14} className="text-orchid" /> {preset.name}</p>
-                <p className="mt-1 text-xs text-slate-500">{preset.hint}</p>
+                <p className="flex items-center gap-2 text-[15px] font-semibold text-white"><Icon size={15} className="text-orchid" /> {preset.name}</p>
+                <p className="mt-1 text-[13px] text-slate-400">{preset.hint}</p>
               </button>
             );
           })}
@@ -352,7 +352,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
         <TabButton active={tab === "basic"} onClick={() => setTab("basic")}>Basic</TabButton>
         <TabButton active={tab === "advanced"} onClick={() => setTab("advanced")}>
           Advanced
-          {advancedActive > 0 ? <span className="ml-1.5 rounded-full bg-plasma/20 px-1.5 py-0.5 text-[10px] font-bold text-orchid">{advancedActive}</span> : null}
+          {advancedActive > 0 ? <span className="ml-1.5 rounded-full bg-plasma/20 px-1.5 py-0.5 text-xs font-bold text-orchid">{advancedActive}</span> : null}
         </TabButton>
       </div>
 
@@ -397,8 +397,8 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
                 return (
                   <label key={contract.address} className={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-3 transition ${checked ? "border-plasma/30 bg-plasma/[0.08]" : "border-white/[0.08] bg-white/[0.03] hover:border-white/[0.16]"}`}>
                     <span>
-                      <span className="block text-sm font-medium text-white">{contract.label}</span>
-                      <span className="mt-1 block text-xs text-slate-500">{contract.description} · {shortAddress(contract.address)}</span>
+                      <span className="block text-[15px] font-medium text-white">{contract.label}</span>
+                      <span className="mt-1 block text-[13px] text-slate-400">{contract.description} · {shortAddress(contract.address)}</span>
                     </span>
                     <input
                       type="checkbox"
@@ -411,7 +411,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
               })}
             </div>
             <div className="mt-3">
-              <p className="mb-1.5 text-xs text-slate-500">Custom contracts</p>
+              <p className="mb-1.5 text-[13px] text-slate-400">Custom contracts</p>
               <ChipInput items={customContracts} onAdd={addContract} onRemove={removeContract} placeholder="0x… custom contract address" />
             </div>
           </section>
@@ -504,14 +504,14 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       <div className="sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.12] bg-[#0c0f18]/90 p-4 shadow-[0_18px_50px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
         <div className="min-w-0 flex-1">
           {changes.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
               <span className="font-semibold text-orchid">Changes:</span>
               {changes.map((change) => (
                 <span key={change} className="rounded-md border border-plasma/20 bg-plasma/10 px-2 py-0.5 font-medium text-slate-200">{change}</span>
               ))}
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-slate-400">
               <span>Daily <b className="text-white">${dailyLimit || "0"}</b></span>
               <Dot />
               <span>Tx <b className="text-white">${transactionCap || "0"}</b></span>
@@ -606,11 +606,11 @@ function EffectivePreview({daily, weekly, monthly, txCap, cooldownSeconds, expir
         {rows.map((row) => {
           const Icon = row.icon;
           return (
-            <div key={row.label} className="surface flex items-center gap-2.5 px-3 py-2.5">
-              <Icon size={15} className={row.accent ? "text-mint" : "text-orchid"} />
+            <div key={row.label} className="surface flex items-center gap-2.5 px-3 py-3">
+              <Icon size={16} className={row.accent ? "text-mint" : "text-orchid"} />
               <div className="min-w-0">
-                <p className="text-[11px] uppercase tracking-wider text-slate-500">{row.label}</p>
-                <p className={`truncate text-sm font-semibold ${row.accent ? "text-mint" : "text-white"}`}>{row.value}</p>
+                <p className="text-xs uppercase tracking-wider text-slate-400">{row.label}</p>
+                <p className={`truncate text-[15px] font-semibold ${row.accent ? "text-mint" : "text-white"}`}>{row.value}</p>
               </div>
             </div>
           );
