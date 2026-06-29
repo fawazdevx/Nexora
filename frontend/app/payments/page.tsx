@@ -82,7 +82,8 @@ export default function PaymentsPage() {
         Payments are created when a buyer pays for a marketplace API. Publish an API first, then use Marketplace purchase or this demo button to create a receipt.
       </p>
       {status ? <p className="mb-5 break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
-      <div className="overflow-x-auto">
+      {/* Desktop table */}
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="border-b border-white/[0.08] text-slate-400">
             <tr>
@@ -105,10 +106,30 @@ export default function PaymentsPage() {
             ))}
           </tbody>
         </table>
-        {!snapshot.isLoading && (snapshot.data?.payments.length ?? 0) === 0 ? (
-          <p className="py-5 text-sm text-slate-400">No x402 authorizations or settlements have been recorded yet.</p>
-        ) : null}
       </div>
+
+      {/* Mobile cards */}
+      <div className="grid gap-3 md:hidden">
+        {(snapshot.data?.payments ?? []).map((payment) => (
+          <div key={payment.id} className="surface p-4 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-white">{payment.serviceName}</p>
+                <p className="mt-1 font-mono text-xs text-slate-400">{payment.txHash ? shortAddress(payment.txHash) : shortAddress(payment.requestHash)}</p>
+              </div>
+              <ReceiptActions receiptId={payment.id} />
+            </div>
+            <div className="mt-3 flex items-center justify-between">
+              <span className={payment.status === "failed" || payment.status === "policy_blocked" ? "font-semibold text-magenta" : "font-semibold text-mint"}>{payment.status}</span>
+              <span className="font-semibold text-white">${payment.amountUsdc}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {!snapshot.isLoading && (snapshot.data?.payments.length ?? 0) === 0 ? (
+        <p className="py-5 text-sm text-slate-400">No x402 authorizations or settlements have been recorded yet.</p>
+      ) : null}
     </div>
   );
 }

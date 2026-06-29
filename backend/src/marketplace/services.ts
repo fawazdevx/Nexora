@@ -1,4 +1,4 @@
-import {readStore, updateStore, visibleServicesForStore, type ServiceManifest, type ServiceRecord} from "../store.js";
+import {attachServiceTrust, readStore, updateStore, visibleServicesForStore, type ServiceManifest, type ServiceRecord} from "../store.js";
 import {pushNotification} from "../store.js";
 import {config} from "../config.js";
 import {dispatchNotification} from "../notifications.js";
@@ -72,12 +72,12 @@ type ServiceInput = {
 
 export async function listServices() {
   const store = await readStore();
-  return visibleServicesForStore(store.services);
+  return attachServiceTrust(visibleServicesForStore(store.services), store.payments);
 }
 
 export async function getService(serviceId: string) {
   const store = await readStore();
-  return visibleServicesForStore(store.services).find((service) => service.id === serviceId || String(service.chainServiceId) === serviceId);
+  return attachServiceTrust(visibleServicesForStore(store.services), store.payments).find((service) => service.id === serviceId || String(service.chainServiceId) === serviceId);
 }
 
 export async function publishService(input: ServiceInput) {

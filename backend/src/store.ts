@@ -53,6 +53,22 @@ export type ServiceRecord = {
   createdAt: string;
   archivedAt?: string | null;
   archiveReason?: string | null;
+  trust?: ServiceTrustScore | null;
+};
+
+export type ServiceTrustScore = {
+  score: number;
+  tier: "new" | "emerging" | "trusted" | "verified";
+  settledPayments: number;
+  failedPayments: number;
+  totalVolumeUsdc: number;
+  uniqueBuyers: number;
+  publisherSales: number;
+  publisherServices: number;
+  onchainReady: boolean;
+  receiptCoverage: number;
+  reasons: string[];
+  updatedAt: string;
 };
 
 export type ServiceManifest = {
@@ -132,6 +148,54 @@ export type AgentApprovalRequestRecord = {
   expiresAt?: string | null;
 };
 
+export type AgentAutomationTrigger =
+  | "daily_spend_threshold"
+  | "failed_payment_burst"
+  | "pending_approval_expiring"
+  | "policy_expiring"
+  | "large_receipt"
+  | "weekly_summary";
+
+export type AgentAutomationAction = "notify" | "pause_agent";
+
+export type AgentAutomationRecipeRecord = {
+  id: string;
+  operatorAddress: string;
+  agentId?: string | null;
+  name: string;
+  description: string;
+  trigger: AgentAutomationTrigger;
+  action: AgentAutomationAction;
+  params: {
+    thresholdUsdc?: number;
+    thresholdPercent?: number;
+    failureCount?: number;
+    windowHours?: number;
+    expiresWithinHours?: number;
+    minAmountUsdc?: number;
+    cooldownHours?: number;
+  };
+  active: boolean;
+  runCount: number;
+  lastTriggeredAt?: string | null;
+  lastRunAt?: string | null;
+  lastRunReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentAutomationRunRecord = {
+  id: string;
+  recipeId: string;
+  operatorAddress: string;
+  agentId?: string | null;
+  trigger: AgentAutomationTrigger;
+  action: AgentAutomationAction;
+  status: "matched" | "skipped" | "failed";
+  summary: string;
+  createdAt: string;
+};
+
 export type EarnActivationRecord = {
   id: string;
   opportunityId: string;
@@ -178,6 +242,37 @@ export type EscrowRecord = {
   submittedAt?: string | null;
   verifiedAt?: string | null;
   releasedAt?: string | null;
+  reminder?: EscrowReminderSettingsRecord | null;
+};
+
+export type EscrowReminderSettingsRecord = {
+  enabled: boolean;
+  deadlineAt: string | null;
+  offsetsHours: number[];
+  channels: {
+    inApp: boolean;
+    email: boolean;
+    telegram: boolean;
+    whatsapp: boolean;
+  };
+  muted: boolean;
+  snoozedUntil: string | null;
+  lastReminderAt?: string | null;
+  nextReminderAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EscrowReminderRunRecord = {
+  id: string;
+  escrowId: string;
+  operatorAddress: string;
+  role: "creator" | "counterparty";
+  dueAt: string;
+  offsetHours: number;
+  status: "sent" | "skipped" | "failed";
+  summary: string;
+  createdAt: string;
 };
 
 export type NotificationRecord = {
@@ -286,13 +381,16 @@ export type IndexerCursorRecord = {
   updatedAt: string;
 };
 
-type StoreShape = {
+export type StoreShape = {
   agents: AgentWalletRecord[];
   services: ServiceRecord[];
   payments: PaymentRecord[];
+  automationRecipes: AgentAutomationRecipeRecord[];
+  automationRuns: AgentAutomationRunRecord[];
   earnActivations: EarnActivationRecord[];
   subscriptions: SubscriptionRecord[];
   escrows: EscrowRecord[];
+  escrowReminderRuns: EscrowReminderRunRecord[];
   notifications: NotificationRecord[];
   notificationPreferences: NotificationPreferencesRecord[];
   notificationDeliveries: NotificationDeliveryRecord[];
@@ -393,8 +491,9 @@ export async function appSnapshot(operatorAddress?: string) {
   const store = await readStore();
   const operator = operatorAddress?.toLowerCase();
   const visibleServices = visibleServicesForStore(store.services);
+  const servicesWithTrust = attachServiceTrust(visibleServices, store.payments);
   const visibleAgents = store.agents.filter(isVisibleAgent);
-  const visibleServiceIds = new Set(visibleServices.map((service) => service.id));
+  const visibleServiceIds = new Set(servicesWithTrust.map((service) => service.id));
   const visibleAgentIds = new Set(visibleAgents.map((agent) => agent.id));
   const visibleAgentWallets = new Set(visibleAgents.map((agent) => agent.address?.toLowerCase()).filter(Boolean) as string[]);
   const visiblePayments = store.payments.filter((payment) => isVisiblePayment(payment, {visibleServiceIds, visibleAgentIds, visibleAgentWallets}));
@@ -403,6 +502,15 @@ export async function appSnapshot(operatorAddress?: string) {
     : [];
   const approvalRequests = operator
     ? store.approvalRequests.filter((request) => request.operatorAddress.toLowerCase() === operator)
+    : [];
+  const automationRecipes = operator
+    ? store.automationRecipes.filter((recipe) => recipe.operatorAddress.toLowerCase() === operator)
+    : [];
+  const automationRuns = operator
+    ? store.automationRuns.filter((run) => run.operatorAddress.toLowerCase() === operator).slice(0, 40)
+    : [];
+  const escrowReminderRuns = operator
+    ? store.escrowReminderRuns.filter((run) => run.operatorAddress.toLowerCase() === operator).slice(0, 40)
     : [];
   const scopedAgents = operator ? visibleAgents.filter((agent) => agent.operatorAddress.toLowerCase() === operator) : [];
   const agents = scopedAgents.map(sanitizeAgent);
@@ -424,16 +532,19 @@ export async function appSnapshot(operatorAddress?: string) {
   const settledPayments = payments.filter((payment) => payment.status === "settled");
   const marketplaceSales = settledPayments.length;
   const completedTasks = store.earnActivations.filter((activation) => !operator || activation.operatorAddress.toLowerCase() === operator).length;
-  const ecosystemContributions = visibleServices.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
+  const ecosystemContributions = servicesWithTrust.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
   const successfulPayments = settledPayments.length;
   const indexedStats = summarizeIndexedEvents(store.indexedEvents);
   const indexedAvailable = indexedStats.indexedEvents > 0;
 
   return {
     agents,
-    services: visibleServices,
+    services: servicesWithTrust,
     payments,
     approvalRequests,
+    automationRecipes,
+    automationRuns,
+    escrowReminderRuns,
     subscriptions,
     escrows,
     notifications: notifications.slice(0, 20),
@@ -702,6 +813,99 @@ function sanitizeAgent(agent: AgentWalletRecord) {
   };
 }
 
+export function attachServiceTrust(services: ServiceRecord[], payments: PaymentRecord[]) {
+  return services.map((service) => ({
+    ...service,
+    trust: computeServiceTrustScore(service, services, payments)
+  }));
+}
+
+export function computeServiceTrustScore(service: ServiceRecord, services: ServiceRecord[], payments: PaymentRecord[]): ServiceTrustScore {
+  const servicePayments = payments.filter((payment) => payment.serviceId === service.id);
+  const settled = servicePayments.filter((payment) => payment.status === "settled");
+  const failed = servicePayments.filter((payment) => payment.status === "failed" || payment.status === "policy_blocked");
+  const totalVolumeUsdc = roundUsdc(settled.reduce((sum, payment) => sum + (payment.grossAmountUsdc ?? payment.amountUsdc), 0));
+  const uniqueBuyers = new Set(settled.map((payment) => payment.payer.toLowerCase())).size;
+  const publisherServices = services.filter((item) => item.publisherAddress.toLowerCase() === service.publisherAddress.toLowerCase()).length;
+  const publisherSales = payments.filter((payment) => (
+    payment.publisherAddress.toLowerCase() === service.publisherAddress.toLowerCase()
+    && payment.status === "settled"
+  )).length;
+  const receiptCoverage = servicePayments.length === 0 ? 0 : settled.filter((payment) => payment.txHash || payment.memo).length / servicePayments.length;
+  const failureRate = servicePayments.length === 0 ? 0 : failed.length / servicePayments.length;
+
+  let score = 20;
+  const reasons: string[] = [];
+  if (service.chainServiceId !== null) {
+    score += 22;
+    reasons.push("Published on the x402 ledger");
+  }
+  if (service.txHash) {
+    score += 8;
+    reasons.push("Publish transaction recorded");
+  }
+  if (settled.length > 0) {
+    score += Math.min(18, settled.length * 3);
+    reasons.push(`${settled.length} settled purchase${settled.length === 1 ? "" : "s"}`);
+  }
+  if (uniqueBuyers > 0) {
+    score += Math.min(12, uniqueBuyers * 4);
+    reasons.push(`${uniqueBuyers} unique buyer${uniqueBuyers === 1 ? "" : "s"}`);
+  }
+  if (totalVolumeUsdc > 0) {
+    score += Math.min(8, totalVolumeUsdc);
+    reasons.push(`${totalVolumeUsdc.toFixed(2)} USDC settled`);
+  }
+  if (service.featured) {
+    score += 8;
+    reasons.push("Featured by Nexora");
+  }
+  if (publisherSales >= 3) {
+    score += 6;
+    reasons.push("Publisher has marketplace history");
+  }
+  if (publisherServices >= 2) {
+    score += 4;
+    reasons.push("Publisher has multiple services");
+  }
+  if (service.manifest.inputSchema.length > 0 && service.manifest.outputSchema.length > 0) {
+    score += 6;
+    reasons.push("Structured input and output schema");
+  }
+  if (receiptCoverage >= 0.8 && settled.length > 0) {
+    score += 6;
+    reasons.push("Receipt coverage is high");
+  }
+  if (failureRate > 0) {
+    const penalty = Math.min(20, Math.ceil(failureRate * 30));
+    score -= penalty;
+    reasons.push(`${Math.round(failureRate * 100)}% failed or blocked attempts`);
+  }
+
+  const bounded = Math.max(0, Math.min(100, Math.round(score)));
+  return {
+    score: bounded,
+    tier: trustTier(bounded, settled.length, Boolean(service.chainServiceId)),
+    settledPayments: settled.length,
+    failedPayments: failed.length,
+    totalVolumeUsdc,
+    uniqueBuyers,
+    publisherSales,
+    publisherServices,
+    onchainReady: service.chainServiceId !== null,
+    receiptCoverage: roundUsdc(receiptCoverage),
+    reasons: reasons.slice(0, 6),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function trustTier(score: number, settledPayments: number, onchainReady: boolean): ServiceTrustScore["tier"] {
+  if (score >= 78 && settledPayments >= 3 && onchainReady) return "verified";
+  if (score >= 60 && onchainReady) return "trusted";
+  if (score >= 40) return "emerging";
+  return "new";
+}
+
 export function isArchivedAgent(agent: Pick<AgentWalletRecord, "archivedAt">) {
   return Boolean(agent.archivedAt);
 }
@@ -949,9 +1153,12 @@ function emptyStore(): StoreShape {
     agents: [],
     services: [],
     payments: [],
+    automationRecipes: [],
+    automationRuns: [],
     earnActivations: [],
     subscriptions: [],
     escrows: [],
+    escrowReminderRuns: [],
     notifications: [],
     notificationPreferences: [],
     notificationDeliveries: [],
@@ -969,12 +1176,16 @@ function normalizeStore(value: unknown): StoreShape {
   store.indexerCursors = Array.isArray(store.indexerCursors) ? store.indexerCursors : [];
   store.notificationPreferences = Array.isArray(store.notificationPreferences) ? store.notificationPreferences.map(normalizeNotificationPreferences) : [];
   store.notificationDeliveries = Array.isArray(store.notificationDeliveries) ? store.notificationDeliveries.map(normalizeNotificationDelivery) : [];
+  store.escrowReminderRuns = Array.isArray(store.escrowReminderRuns) ? store.escrowReminderRuns.map(normalizeEscrowReminderRun) : [];
   store.approvalRequests = Array.isArray(store.approvalRequests) ? store.approvalRequests.map(normalizeApprovalRequest) : [];
+  store.automationRecipes = Array.isArray(store.automationRecipes) ? store.automationRecipes.map(normalizeAutomationRecipe) : [];
+  store.automationRuns = Array.isArray(store.automationRuns) ? store.automationRuns.map(normalizeAutomationRun) : [];
   store.services = store.services.map((service) => ({
     ...service,
     manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash),
     archivedAt: service.archivedAt ?? null,
-    archiveReason: service.archiveReason ?? null
+    archiveReason: service.archiveReason ?? null,
+    trust: service.trust ?? null
   }));
   store.services = mergeSeededServices(store.services);
   store.agents = store.agents.map((agent) => ({
@@ -1008,7 +1219,71 @@ function normalizeStore(value: unknown): StoreShape {
     currentPeriodStart: subscription.currentPeriodStart ?? (subscription.status === "active" ? subscription.createdAt : null),
     currentPeriodEnd: subscription.currentPeriodEnd ?? null
   }));
+  store.escrows = Array.isArray(store.escrows) ? store.escrows.map(normalizeEscrow) : [];
   return store;
+}
+
+function normalizeEscrow(escrow: EscrowRecord): EscrowRecord {
+  return {
+    ...escrow,
+    chainEscrowId: escrow.chainEscrowId ?? null,
+    performanceBondUsdc: Number(escrow.performanceBondUsdc || 0),
+    platformFeeBps: Number(escrow.platformFeeBps || 0),
+    platformFeeUsdc: Number(escrow.platformFeeUsdc || 0),
+    counterpartyNetUsdc: Number(escrow.counterpartyNetUsdc || 0),
+    deliverableUrl: escrow.deliverableUrl ?? null,
+    verifierNotes: escrow.verifierNotes ?? null,
+    txHash: escrow.txHash ?? null,
+    fundedAt: escrow.fundedAt ?? null,
+    submittedAt: escrow.submittedAt ?? null,
+    verifiedAt: escrow.verifiedAt ?? null,
+    releasedAt: escrow.releasedAt ?? null,
+    reminder: escrow.reminder ? normalizeEscrowReminderSettings(escrow.reminder) : null
+  };
+}
+
+function normalizeEscrowReminderSettings(value: EscrowReminderSettingsRecord): EscrowReminderSettingsRecord {
+  const now = new Date().toISOString();
+  const offsets = Array.isArray(value.offsetsHours) ? value.offsetsHours : [];
+  return {
+    enabled: value.enabled !== false,
+    deadlineAt: validIsoOrNull(value.deadlineAt),
+    offsetsHours: [...new Set(offsets.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item >= 0 && item <= 24 * 90))]
+      .sort((a, b) => b - a)
+      .slice(0, 8),
+    channels: {
+      inApp: value.channels?.inApp !== false,
+      email: Boolean(value.channels?.email),
+      telegram: Boolean(value.channels?.telegram),
+      whatsapp: Boolean(value.channels?.whatsapp)
+    },
+    muted: Boolean(value.muted),
+    snoozedUntil: validIsoOrNull(value.snoozedUntil),
+    lastReminderAt: validIsoOrNull(value.lastReminderAt),
+    nextReminderAt: validIsoOrNull(value.nextReminderAt),
+    createdAt: value.createdAt ?? now,
+    updatedAt: value.updatedAt ?? value.createdAt ?? now
+  };
+}
+
+function normalizeEscrowReminderRun(value: EscrowReminderRunRecord): EscrowReminderRunRecord {
+  return {
+    id: value.id ?? crypto.randomUUID(),
+    escrowId: String(value.escrowId ?? ""),
+    operatorAddress: String(value.operatorAddress ?? ""),
+    role: value.role === "counterparty" ? "counterparty" : "creator",
+    dueAt: validIsoOrNull(value.dueAt) ?? new Date().toISOString(),
+    offsetHours: Number.isInteger(Number(value.offsetHours)) ? Number(value.offsetHours) : 0,
+    status: value.status === "failed" || value.status === "skipped" ? value.status : "sent",
+    summary: String(value.summary ?? ""),
+    createdAt: value.createdAt ?? new Date().toISOString()
+  };
+}
+
+function validIsoOrNull(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
 function normalizeApprovalRequest(request: AgentApprovalRequestRecord): AgentApprovalRequestRecord {
@@ -1032,6 +1307,77 @@ function normalizeApprovalRequest(request: AgentApprovalRequestRecord): AgentApp
     decidedAt: request.decidedAt ?? null,
     expiresAt: request.expiresAt ?? null
   };
+}
+
+function normalizeAutomationRecipe(recipe: AgentAutomationRecipeRecord): AgentAutomationRecipeRecord {
+  return {
+    id: String(recipe.id ?? crypto.randomUUID()),
+    operatorAddress: String(recipe.operatorAddress ?? ""),
+    agentId: recipe.agentId ?? null,
+    name: String(recipe.name ?? "Automation recipe"),
+    description: String(recipe.description ?? ""),
+    trigger: normalizeAutomationTrigger(recipe.trigger),
+    action: recipe.action === "pause_agent" ? "pause_agent" : "notify",
+    params: normalizeAutomationParams(recipe.params),
+    active: recipe.active !== false,
+    runCount: Number.isFinite(Number(recipe.runCount)) ? Number(recipe.runCount) : 0,
+    lastTriggeredAt: recipe.lastTriggeredAt ?? null,
+    lastRunAt: recipe.lastRunAt ?? null,
+    lastRunReason: recipe.lastRunReason ?? null,
+    createdAt: recipe.createdAt ?? new Date().toISOString(),
+    updatedAt: recipe.updatedAt ?? recipe.createdAt ?? new Date().toISOString()
+  };
+}
+
+function normalizeAutomationRun(run: AgentAutomationRunRecord): AgentAutomationRunRecord {
+  return {
+    id: String(run.id ?? crypto.randomUUID()),
+    recipeId: String(run.recipeId ?? ""),
+    operatorAddress: String(run.operatorAddress ?? ""),
+    agentId: run.agentId ?? null,
+    trigger: normalizeAutomationTrigger(run.trigger),
+    action: run.action === "pause_agent" ? "pause_agent" : "notify",
+    status: run.status === "matched" || run.status === "failed" || run.status === "skipped" ? run.status : "skipped",
+    summary: String(run.summary ?? ""),
+    createdAt: run.createdAt ?? new Date().toISOString()
+  };
+}
+
+function normalizeAutomationTrigger(trigger: unknown): AgentAutomationTrigger {
+  if (
+    trigger === "daily_spend_threshold"
+    || trigger === "failed_payment_burst"
+    || trigger === "pending_approval_expiring"
+    || trigger === "policy_expiring"
+    || trigger === "large_receipt"
+    || trigger === "weekly_summary"
+  ) return trigger;
+  return "daily_spend_threshold";
+}
+
+function normalizeAutomationParams(params: AgentAutomationRecipeRecord["params"]): AgentAutomationRecipeRecord["params"] {
+  const record = params && typeof params === "object" ? params : {};
+  return {
+    thresholdUsdc: optionalNumberParam(record.thresholdUsdc),
+    thresholdPercent: optionalNumberParam(record.thresholdPercent),
+    failureCount: optionalIntegerParam(record.failureCount),
+    windowHours: optionalIntegerParam(record.windowHours),
+    expiresWithinHours: optionalIntegerParam(record.expiresWithinHours),
+    minAmountUsdc: optionalNumberParam(record.minAmountUsdc),
+    cooldownHours: optionalIntegerParam(record.cooldownHours)
+  };
+}
+
+function optionalNumberParam(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? roundUsdc(parsed) : undefined;
+}
+
+function optionalIntegerParam(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function normalizeNotificationPreferences(value: NotificationPreferencesRecord): NotificationPreferencesRecord {

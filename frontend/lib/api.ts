@@ -120,6 +120,20 @@ export type AppSnapshot = {
     active: boolean;
     featured: boolean;
     txHash?: string | null;
+    trust?: {
+      score: number;
+      tier: "new" | "emerging" | "trusted" | "verified";
+      settledPayments: number;
+      failedPayments: number;
+      totalVolumeUsdc: number;
+      uniqueBuyers: number;
+      publisherSales: number;
+      publisherServices: number;
+      onchainReady: boolean;
+      receiptCoverage: number;
+      reasons: string[];
+      updatedAt: string;
+    } | null;
   }>;
   payments: Array<{
     id: string;
@@ -181,6 +195,53 @@ export type AppSnapshot = {
     decidedAt?: string | null;
     expiresAt?: string | null;
   }>;
+  automationRecipes: Array<{
+    id: string;
+    operatorAddress: string;
+    agentId?: string | null;
+    name: string;
+    description: string;
+    trigger: "daily_spend_threshold" | "failed_payment_burst" | "pending_approval_expiring" | "policy_expiring" | "large_receipt" | "weekly_summary";
+    action: "notify" | "pause_agent";
+    params: {
+      thresholdUsdc?: number;
+      thresholdPercent?: number;
+      failureCount?: number;
+      windowHours?: number;
+      expiresWithinHours?: number;
+      minAmountUsdc?: number;
+      cooldownHours?: number;
+    };
+    active: boolean;
+    runCount: number;
+    lastTriggeredAt?: string | null;
+    lastRunAt?: string | null;
+    lastRunReason?: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  automationRuns: Array<{
+    id: string;
+    recipeId: string;
+    operatorAddress: string;
+    agentId?: string | null;
+    trigger: "daily_spend_threshold" | "failed_payment_burst" | "pending_approval_expiring" | "policy_expiring" | "large_receipt" | "weekly_summary";
+    action: "notify" | "pause_agent";
+    status: "matched" | "skipped" | "failed";
+    summary: string;
+    createdAt: string;
+  }>;
+  escrowReminderRuns: Array<{
+    id: string;
+    escrowId: string;
+    operatorAddress: string;
+    role: "creator" | "counterparty";
+    dueAt: string;
+    offsetHours: number;
+    status: "sent" | "skipped" | "failed";
+    summary: string;
+    createdAt: string;
+  }>;
   riskAlerts: Array<{
     id: string;
     severity: "info" | "warning" | "critical";
@@ -229,6 +290,23 @@ export type AppSnapshot = {
     submittedAt?: string | null;
     verifiedAt?: string | null;
     releasedAt?: string | null;
+    reminder?: {
+      enabled: boolean;
+      deadlineAt: string | null;
+      offsetsHours: number[];
+      channels: {
+        inApp: boolean;
+        email: boolean;
+        telegram: boolean;
+        whatsapp: boolean;
+      };
+      muted: boolean;
+      snoozedUntil: string | null;
+      lastReminderAt?: string | null;
+      nextReminderAt?: string | null;
+      createdAt: string;
+      updatedAt: string;
+    } | null;
   }>;
   notifications: Array<{
     id: string;

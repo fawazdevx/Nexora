@@ -1,7 +1,8 @@
 import {Fragment, useState} from "react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
-import {ArrowRight, Check, Circle, Copy, ExternalLink, FileText, Landmark, Loader2, ShieldCheck, Trash2, Wallet} from "lucide-react";
+import {AlarmClock, ArrowRight, Bell, Check, Circle, Copy, ExternalLink, FileText, Landmark, Loader2, Mail, Send, ShieldCheck, Trash2, Wallet} from "lucide-react";
+import type {LucideIcon} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
 import {EmptyState} from "@/components/EmptyState";
@@ -13,6 +14,8 @@ import {createOnchainEscrow, fundOnchainEscrow, readOnchainEscrow, releaseOnchai
 
 type Escrow = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["escrows"][number];
 type EscrowAction = "fund" | "submit" | "verify" | "release";
+
+const whatsAppAvailable = import.meta.env.VITE_NEXORA_WHATSAPP_ENABLED === "true";
 
 const escrowTemplates = [
   {title: "Analyze my website and send a growth report", description: "Review https://nexora.finance, list the top conversion issues, summarize SEO problems, and deliver a short action plan in a shared document.", amount: "10", bond: "1"},
@@ -145,6 +148,42 @@ export default function EscrowPage() {
     }
   }
 
+  async function updateReminder(id: string, patch: Partial<NonNullable<Escrow["reminder"]>>) {
+    if (!address) {
+      toast.error("Connect your wallet before updating reminders.");
+      return;
+    }
+    setBusyAction(`${id}:reminder`);
+    const toastId = toast.loading("Updating escrow reminders...");
+    try {
+      await apiPost(`/api/escrows/${id}/reminder`, {operatorAddress: address, ...patch});
+      await snapshot.refetch();
+      toast.success("Escrow reminder settings updated.", {id: toastId});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Reminder update failed", {id: toastId});
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function runReminderCheck() {
+    if (!address) {
+      toast.error("Connect your wallet before running reminder checks.");
+      return;
+    }
+    setBusyAction("reminders:evaluate");
+    const toastId = toast.loading("Checking escrow reminders...");
+    try {
+      const result = await apiPost<{runs: Array<{id: string}>}>("/api/escrow-reminders/evaluate", {operatorAddress: address});
+      await snapshot.refetch();
+      toast.success(result.runs.length > 0 ? `${result.runs.length} reminder${result.runs.length === 1 ? "" : "s"} sent.` : "No escrow reminders are due.", {id: toastId});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Reminder check failed", {id: toastId});
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function removeEscrow(id: string) {
     if (!address) {
       toast.error("Connect your wallet before removing an escrow.");
@@ -177,6 +216,18 @@ export default function EscrowPage() {
         <StatMetric variant="panel" icon={Wallet} label="Funds in escrow" value={inEscrow} prefix="$" decimals={2} loading={snapshot.isLoading} accent />
         <StatMetric variant="panel" icon={Landmark} label="Released" value={released} prefix="$" decimals={2} loading={snapshot.isLoading} />
       </div>
+
+      <section className="panel flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="section-kicker">Escrow reminder agent</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Deadline alerts for both parties</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">Set a deadline per escrow and Nexora will remind the creator and worker with direct action links using enabled notification channels.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => void runReminderCheck()} disabled={!isConnected || busyAction === "reminders:evaluate"}>
+          {busyAction === "reminders:evaluate" ? <Loader2 size={16} className="animate-spin" /> : <Bell size={16} />}
+          Run check
+        </button>
+      </section>
 
       <section className="panel">
         <p className="section-kicker">New agreement</p>
@@ -251,7 +302,7 @@ export default function EscrowPage() {
       ) : (
         <section className="grid gap-4 lg:grid-cols-2">
           {escrows.map((escrow) => (
-            <EscrowCard key={escrow.id} escrow={escrow} address={address} busyAction={busyAction} onAdvance={advance} onRemove={removeEscrow} />
+            <EscrowCard key={escrow.id} escrow={escrow} address={address} busyAction={busyAction} onAdvance={advance} onRemove={removeEscrow} onReminder={updateReminder} />
           ))}
         </section>
       )}
@@ -268,7 +319,21 @@ function MoneyInput({value, onChange}: {value: string; onChange: (value: string)
   );
 }
 
-function EscrowCard({escrow, address, busyAction, onAdvance, onRemove}: {escrow: Escrow; address?: string; busyAction: string; onAdvance: (id: string, action: EscrowAction) => void; onRemove: (id: string) => void}) {
+function EscrowCard({
+  escrow,
+  address,
+  busyAction,
+  onAdvance,
+  onRemove,
+  onReminder
+}: {
+  escrow: Escrow;
+  address?: string;
+  busyAction: string;
+  onAdvance: (id: string, action: EscrowAction) => void;
+  onRemove: (id: string) => void;
+  onReminder: (id: string, patch: Partial<NonNullable<Escrow["reminder"]>>) => void;
+}) {
   const role = escrowRole(address, escrow.creatorAddress, escrow.counterpartyAddress);
   const next = nextEscrowAction(role, escrow.status);
   const canRemove = (role === "creator" || role === "counterparty") && ["draft", "released", "cancelled"].includes(escrow.status);
@@ -277,6 +342,7 @@ function EscrowCard({escrow, address, busyAction, onAdvance, onRemove}: {escrow:
   const relationship = role === "creator" ? "You → worker" : role === "counterparty" ? "Creator → you" : "Creator → worker";
   const busyNext = next ? busyAction === `${escrow.id}:${next.action}` : false;
   const removing = busyAction === `${escrow.id}:remove`;
+  const reminderBusy = busyAction === `${escrow.id}:reminder`;
 
   return (
     <article className="panel relative overflow-hidden">
@@ -317,6 +383,7 @@ function EscrowCard({escrow, address, busyAction, onAdvance, onRemove}: {escrow:
       <p className="mt-4 text-sm leading-6 text-slate-300">{escrow.description}</p>
       <DeliverableChecklist description={escrow.description} status={escrow.status} />
       <EscrowAgentResult result={escrow.deliverableResult} />
+      <EscrowReminderPanel escrow={escrow} busy={reminderBusy} onUpdate={(patch) => onReminder(escrow.id, patch)} />
 
       <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
         <span className="surface px-3 py-2 text-slate-400">Amount <b className="text-white">${escrow.amountUsdc}</b></span>
@@ -342,6 +409,140 @@ function EscrowCard({escrow, address, busyAction, onAdvance, onRemove}: {escrow:
       </div>
     </article>
   );
+}
+
+function EscrowReminderPanel({escrow, busy, onUpdate}: {escrow: Escrow; busy: boolean; onUpdate: (patch: Partial<NonNullable<Escrow["reminder"]>>) => void}) {
+  const reminder = escrow.reminder ?? defaultReminder();
+  const [deadline, setDeadline] = useState(toDateTimeLocal(reminder.deadlineAt));
+  const offsets = reminder.offsetsHours.length > 0 ? reminder.offsetsHours : [72, 24, 1, 0];
+  const disabled = ["released", "cancelled", "disputed"].includes(escrow.status);
+
+  function saveDeadline() {
+    onUpdate({deadlineAt: deadline ? new Date(deadline).toISOString() : null, enabled: true, muted: false, offsetsHours: offsets});
+  }
+
+  function toggleOffset(offset: number) {
+    const next = offsets.includes(offset) ? offsets.filter((item) => item !== offset) : [...offsets, offset];
+    onUpdate({offsetsHours: next.sort((a, b) => b - a)});
+  }
+
+  function toggleChannel(channel: keyof NonNullable<Escrow["reminder"]>["channels"]) {
+    onUpdate({channels: {...reminder.channels, [channel]: !reminder.channels[channel]}});
+  }
+
+  function snooze(hours: number) {
+    onUpdate({snoozedUntil: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString(), muted: false});
+  }
+
+  return (
+    <div className="surface mt-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <AlarmClock size={16} className="text-orchid" />
+          <div>
+            <p className="text-sm font-semibold text-white">AI deadline reminders</p>
+            <p className="mt-1 text-xs text-slate-500">{reminder.enabled && !reminder.muted ? reminderSummary(reminder) : "Paused for this escrow"}</p>
+          </div>
+        </div>
+        <button type="button" className="secondary-button px-3 py-2 text-xs" onClick={() => onUpdate({enabled: !reminder.enabled, muted: reminder.enabled ? true : false})} disabled={busy || disabled}>
+          {busy ? <Loader2 size={13} className="animate-spin" /> : null}
+          {reminder.enabled && !reminder.muted ? "Pause" : "Resume"}
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+        <label className="grid gap-1.5 text-xs font-semibold text-slate-400">
+          Deadline
+          <input type="datetime-local" className="field text-sm" value={deadline} onChange={(event) => setDeadline(event.target.value)} disabled={disabled} />
+        </label>
+        <button type="button" className="action-button self-end" onClick={saveDeadline} disabled={busy || disabled}>
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Bell size={15} />}
+          Save
+        </button>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Reminder timing</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {[72, 24, 1, 0].map((offset) => (
+            <button key={offset} type="button" onClick={() => toggleOffset(offset)} disabled={busy || disabled} className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${offsets.includes(offset) ? "border-mint/35 bg-mint/10 text-mint" : "border-white/[0.1] bg-white/[0.04] text-slate-400"}`}>
+              {formatOffset(offset)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-4">
+        <ReminderChannel icon={Bell} label="In-app" active={reminder.channels.inApp} onClick={() => toggleChannel("inApp")} disabled={busy} />
+        <ReminderChannel icon={Mail} label="Email" active={reminder.channels.email} onClick={() => toggleChannel("email")} disabled={busy} />
+        <ReminderChannel icon={Send} label="Telegram" active={reminder.channels.telegram} onClick={() => toggleChannel("telegram")} disabled={busy} />
+        <ReminderChannel icon={Bell} label={whatsAppAvailable ? "WhatsApp" : "WhatsApp soon"} active={whatsAppAvailable && reminder.channels.whatsapp} onClick={() => toggleChannel("whatsapp")} disabled={busy || !whatsAppAvailable} />
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="secondary-button min-h-8 px-3 py-1.5 text-xs" onClick={() => snooze(24)} disabled={busy || disabled}>Snooze 24h</button>
+        <button type="button" className="secondary-button min-h-8 px-3 py-1.5 text-xs" onClick={() => onUpdate({snoozedUntil: null})} disabled={busy || disabled}>Clear snooze</button>
+        {reminder.lastReminderAt ? <span className="self-center text-xs text-slate-500">Last sent {timeAgo(reminder.lastReminderAt)}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function ReminderChannel({icon: Icon, label, active, onClick, disabled}: {icon: LucideIcon; label: string; active: boolean; onClick: () => void; disabled: boolean}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold transition ${active ? "border-mint/35 bg-mint/10 text-mint" : "border-white/[0.1] bg-white/[0.04] text-slate-500"}`}>
+      <Icon size={14} />
+      {label}
+    </button>
+  );
+}
+
+function defaultReminder(): NonNullable<Escrow["reminder"]> {
+  const now = new Date().toISOString();
+  return {
+    enabled: false,
+    deadlineAt: null,
+    offsetsHours: [72, 24, 1, 0],
+    channels: {inApp: true, email: true, telegram: true, whatsapp: false},
+    muted: false,
+    snoozedUntil: null,
+    lastReminderAt: null,
+    nextReminderAt: null,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function reminderSummary(reminder: NonNullable<Escrow["reminder"]>) {
+  if (!reminder.deadlineAt) return "Add a deadline to schedule reminders";
+  const next = reminder.nextReminderAt ? `next ${timeAgo(reminder.nextReminderAt)}` : "no future reminder due";
+  return `${new Date(reminder.deadlineAt).toLocaleString()} · ${next}`;
+}
+
+function toDateTimeLocal(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function formatOffset(offset: number) {
+  if (offset === 0) return "At deadline";
+  if (offset >= 24) return `${Math.round(offset / 24)}d before`;
+  return `${offset}h before`;
+}
+
+function timeAgo(value: string) {
+  const diff = Date.parse(value) - Date.now();
+  const abs = Math.abs(diff);
+  const suffix = diff >= 0 ? "from now" : "ago";
+  if (abs < 60_000) return diff >= 0 ? "soon" : "just now";
+  const minutes = Math.round(abs / 60_000);
+  if (minutes < 60) return `${minutes}m ${suffix}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ${suffix}`;
+  return `${Math.round(hours / 24)}d ${suffix}`;
 }
 
 function ReceiptActions({receiptId}: {receiptId: string}) {

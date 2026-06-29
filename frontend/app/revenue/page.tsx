@@ -137,7 +137,8 @@ export default function RevenuePage() {
             <p className="text-sm text-slate-400">Latest receipts</p>
             <h2 className="text-xl font-semibold text-white">Fee proof</h2>
           </div>
-          <div className="overflow-x-auto">
+          {/* Desktop table */}
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[680px] text-left text-sm">
               <thead className="border-b border-white/[0.08] text-slate-400">
                 <tr>
@@ -174,10 +175,48 @@ export default function RevenuePage() {
                 ))}
               </tbody>
             </table>
-            {!dashboard || dashboard.feeReceipts.length === 0 ? (
-              <p className="py-5 text-sm text-slate-400">No fee receipts yet. Marketplace settlements and released escrows will appear here.</p>
-            ) : null}
           </div>
+
+          {/* Mobile cards */}
+          <div className="grid gap-3 md:hidden">
+            {(dashboard?.feeReceipts ?? []).map((receipt) => (
+              <div key={receipt.id} className="surface p-4 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium text-white">{receipt.label}</p>
+                    <p className="mt-1 text-xs text-slate-500">{receipt.source}</p>
+                  </div>
+                  <ReceiptActions receiptId={receipt.id} />
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <p className="text-xs text-slate-500">Gross</p>
+                    <p className="mt-1 font-semibold text-white">{usd(receipt.grossUsdc)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Fee</p>
+                    <p className="mt-1 font-semibold text-mint">{usd(receipt.feeUsdc)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Net</p>
+                    <p className="mt-1 font-semibold text-white">{usd(receipt.netUsdc)}</p>
+                  </div>
+                </div>
+                {receipt.txHash ? (
+                  <a className="mt-3 inline-flex items-center gap-1 text-sky hover:text-white" href={`${arcTestnet.explorerUrl}/tx/${receipt.txHash}`} target="_blank" rel="noreferrer">
+                    {shortAddress(receipt.txHash)}
+                    <ExternalLink size={13} />
+                  </a>
+                ) : (
+                  <p className="mt-3 text-xs text-slate-500">recorded</p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {!dashboard || dashboard.feeReceipts.length === 0 ? (
+            <p className="py-5 text-sm text-slate-400">No fee receipts yet. Marketplace settlements and released escrows will appear here.</p>
+          ) : null}
         </div>
       </section>
     </div>

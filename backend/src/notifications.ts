@@ -7,6 +7,7 @@ type DispatchInput = {
   notification: NotificationRecord;
   event: DeliveryEvent;
   receiptId?: string | null;
+  channels?: Partial<NotificationPreferencesRecord["channels"]>;
 };
 
 type DeliveryDraft = Omit<NotificationDeliveryRecord, "id" | "createdAt">;
@@ -17,7 +18,7 @@ export async function dispatchNotification(input: DispatchInput) {
   const preferences = preferencesForOperator(store, input.notification.operatorAddress);
   if (!preferences.events[input.event]) return [];
 
-  const drafts = await Promise.all(enabledTargets(preferences).map(async (target) => {
+  const drafts = await Promise.all(enabledTargets(preferences, input.channels).map(async (target) => {
     const message = notificationMessage(input.notification, input.receiptId);
     try {
       const result = await sendChannelMessage(target.channel, target.target, message);
@@ -46,11 +47,14 @@ export async function dispatchNotification(input: DispatchInput) {
   return recordNotificationDeliveries(drafts);
 }
 
-function enabledTargets(preferences: NotificationPreferencesRecord): Array<{channel: "email" | "whatsapp" | "telegram"; target: string}> {
+function enabledTargets(preferences: NotificationPreferencesRecord, channels?: Partial<NotificationPreferencesRecord["channels"]>): Array<{channel: "email" | "whatsapp" | "telegram"; target: string}> {
   const targets: Array<{channel: "email" | "whatsapp" | "telegram"; target: string}> = [];
-  if (preferences.channels.email && preferences.email) targets.push({channel: "email", target: preferences.email});
-  if (config.notifications.whatsapp.enabled && preferences.channels.whatsapp && preferences.whatsapp) targets.push({channel: "whatsapp", target: preferences.whatsapp});
-  if (preferences.channels.telegram && preferences.telegram) targets.push({channel: "telegram", target: preferences.telegram});
+  const emailEnabled = channels?.email ?? true;
+  const whatsappEnabled = channels?.whatsapp ?? true;
+  const telegramEnabled = channels?.telegram ?? true;
+  if (emailEnabled && preferences.channels.email && preferences.email) targets.push({channel: "email", target: preferences.email});
+  if (whatsappEnabled && config.notifications.whatsapp.enabled && preferences.channels.whatsapp && preferences.whatsapp) targets.push({channel: "whatsapp", target: preferences.whatsapp});
+  if (telegramEnabled && preferences.channels.telegram && preferences.telegram) targets.push({channel: "telegram", target: preferences.telegram});
   return targets;
 }
 
@@ -61,7 +65,7 @@ function notificationMessage(notification: NotificationRecord, receiptId?: strin
     notification.detail ?? "",
     notification.txHash ? `Tx: ${notification.txHash}` : "",
     receipt ? `Receipt: ${receiptUrl(receipt)}` : "",
-    notification.actionHref && !receipt ? `Open: ${appUrl(notification.actionHref)}` : ""
+    notification.actionHref && notification.actionHref !== receiptPath(receipt) ? `Open: ${appUrl(notification.actionHref)}` : ""
   ].filter(Boolean);
   return {
     subject: notification.title,
@@ -163,6 +167,10 @@ function providerForChannel(channel: "email" | "whatsapp" | "telegram") {
 
 function receiptUrl(receiptId: string) {
   return appUrl(`/receipts/${encodeURIComponent(receiptId)}`);
+}
+
+function receiptPath(receiptId?: string | null) {
+  return receiptId ? `/receipts/${encodeURIComponent(receiptId)}` : "";
 }
 
 function appUrl(path: string) {

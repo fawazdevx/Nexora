@@ -14,7 +14,8 @@ export function WalletConnect() {
           return (
             <button type="button" onClick={openConnectModal} className="action-button min-h-10 whitespace-nowrap px-3 text-sm sm:min-h-11 sm:px-5 sm:text-base">
               <Wallet size={16} />
-              Connect wallet
+              <span className="sm:hidden">Connect</span>
+              <span className="hidden sm:inline">Connect wallet</span>
             </button>
           );
         }

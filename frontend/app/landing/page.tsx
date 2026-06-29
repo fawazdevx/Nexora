@@ -112,6 +112,7 @@ app.get("/paid-report",
 );`;
 
 export default function LandingPage() {
+  const heroVideoRef = useRef<HTMLVideoElement>(null);
   const snapshot = usePlatformSnapshot();
   const loading = snapshot.isLoading;
   const stats = snapshot.data?.stats;
@@ -126,16 +127,33 @@ export default function LandingPage() {
   const {scrollYProgress} = useScroll();
   const progress = useSpring(scrollYProgress, {stiffness: 120, damping: 30, mass: 0.3});
 
+  // React doesn't reliably set the `muted` attribute on <video>, which makes browsers
+  // treat it as an unmuted autoplay and block it. Force it muted and start playback here.
+  useEffect(() => {
+    const video = heroVideoRef.current;
+    if (!video) return;
+    video.muted = true;
+    video.play().catch(() => {
+      // Autoplay can still be refused (e.g. data-saver); poster remains as fallback.
+    });
+  }, []);
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#06070b] text-slate-100">
-      <img
-        src="/hero_image.png"
-        alt=""
+      {/* Ambient hero video — always plays (muted, looping). Poster shows while it buffers. */}
+      <video
+        ref={heroVideoRef}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+        poster="/hero_image.png"
         aria-hidden="true"
         className="pointer-events-none fixed inset-0 h-full w-full object-cover object-center opacity-45"
-        loading="eager"
-        decoding="async"
-      />
+      >
+        <source src="https://res.cloudinary.com/dnwepvl90/video/upload/v1782729464/nexora-vid_kuykaw.mp4" type="video/mp4" />
+      </video>
       <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(6,7,11,0.86)_0%,rgba(6,7,11,0.58)_48%,rgba(6,7,11,0.84)_100%),linear-gradient(180deg,rgba(12,16,24,0.64),rgba(6,7,11,0.94))]" />
       <div className="aurora pointer-events-none fixed inset-0" />
       <div className="grain pointer-events-none fixed inset-0" />

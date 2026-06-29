@@ -5,6 +5,7 @@ import {ARC_MEMO_CONTRACT, arcMemoAbi, attachSettlementMemoContext, buildX402Pay
 import {dispatchNotification} from "../notifications.js";
 import {isVisibleAgent, pushNotification, readStore, updateStore, type PaymentRecord, type ServiceRecord} from "../store.js";
 import {evaluateAgentPolicy} from "../policies/engine.js";
+import {evaluateAutomationRecipesForOperator} from "../automation/recipes.js";
 
 type AuthorizeInput = {
   serviceId: string;
@@ -133,6 +134,7 @@ export async function authorizeX402(input: AuthorizeInput) {
     await updateStore((store) => {
       store.payments.push(failedPayment);
     });
+    await evaluateAutomationRecipesForOperator(input.payer).catch(() => undefined);
     throw new Error(policyCheck.reason);
   }
 
@@ -287,6 +289,7 @@ export async function settleX402(input: SettleInput) {
   for (const notification of result.notifications) {
     await dispatchNotification({notification, event: "paymentReceipts", receiptId: result.payment.id}).catch(() => undefined);
   }
+  await evaluateAutomationRecipesForOperator(result.payment.payer).catch(() => undefined);
 
   return {
     authorizationId: input.authorizationId,

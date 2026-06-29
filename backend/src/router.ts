@@ -10,6 +10,8 @@ import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./sw
 import {indexedAnalytics, syncArcIndexer} from "./indexer/arc.js";
 import {normalizeMemo, paymentMemoSummary, publicMemoView} from "./memos.js";
 import {dispatchNotification, handleTelegramWebhookUpdate, syncTelegramNotificationLink, telegramBotStartUrl} from "./notifications.js";
+import {automationRecipeTemplates, createAutomationRecipe, evaluateAutomationRecipes, updateAutomationRecipe} from "./automation/recipes.js";
+import {evaluateEscrowReminders, updateEscrowReminderSettings} from "./escrow/reminders.js";
 import {
   addressArray,
   assertJsonObject,
@@ -229,6 +231,56 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
       assertTokenAddress(auth, operatorAddress, "operatorAddress");
       return ok(await decideAgentApprovalRequest(requestId, operatorAddress, "rejected", optionalLimitedString(body.note, "note", 500)));
+    }
+
+    if (req.method === "GET" && path === "/api/automation/templates") {
+      return ok({templates: automationRecipeTemplates()});
+    }
+
+    if (req.method === "POST" && path === "/api/automation/recipes") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return response(201, await createAutomationRecipe({
+        operatorAddress,
+        agentId: optionalLimitedString(body.agentId, "agentId", 120) ?? null,
+        templateId: optionalLimitedString(body.templateId, "templateId", 120) ?? null,
+        name: optionalLimitedString(body.name, "name", 120) ?? null,
+        description: optionalLimitedString(body.description, "description", 500) ?? null,
+        trigger: optionalAutomationTrigger(body.trigger),
+        action: optionalAutomationAction(body.action),
+        params: optionalAutomationParams(body.params)
+      }));
+    }
+
+    if ((req.method === "PATCH" || req.method === "POST") && path.startsWith("/api/automation/recipes/")) {
+      const recipeId = path.split("/")[4] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await updateAutomationRecipe({
+        id: recipeId,
+        operatorAddress,
+        active: typeof body.active === "boolean" ? body.active : undefined,
+        name: optionalLimitedString(body.name, "name", 120) ?? null,
+        agentId: body.agentId === null ? null : optionalLimitedString(body.agentId, "agentId", 120),
+        params: optionalAutomationParams(body.params)
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/automation/evaluate") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await evaluateAutomationRecipes(operatorAddress));
+    }
+
+    if (req.method === "POST" && path === "/api/escrow-reminders/evaluate") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await evaluateEscrowReminders(operatorAddress));
+    }
+
+    if (req.method === "POST" && path === "/api/escrow-reminders/cron") {
+      assertSharedSecret(header(req, "x-indexer-secret"), config.security.indexerSecret, "escrow reminders");
+      return ok(await evaluateEscrowReminders());
     }
 
     if (req.method === "GET" && path === "/api/marketplace/services") {
@@ -483,6 +535,22 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok(await removeEscrow(escrowId, operatorAddress));
     }
 
+    if ((req.method === "PATCH" || req.method === "POST") && path.startsWith("/api/escrows/") && path.endsWith("/reminder")) {
+      const escrowId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await updateEscrowReminderSettings({
+        escrowId,
+        operatorAddress,
+        enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        deadlineAt: body.deadlineAt === undefined ? undefined : body.deadlineAt === null ? null : optionalIsoDate(body.deadlineAt, "deadlineAt"),
+        offsetsHours: optionalReminderOffsets(body.offsetsHours),
+        channels: optionalReminderChannels(body.channels),
+        muted: typeof body.muted === "boolean" ? body.muted : undefined,
+        snoozedUntil: body.snoozedUntil === undefined ? undefined : body.snoozedUntil === null ? null : optionalIsoDate(body.snoozedUntil, "snoozedUntil")
+      }));
+    }
+
     if (req.method === "POST" && path.startsWith("/api/escrows/") && path.endsWith("/fund")) {
       const escrowId = path.split("/")[3] ?? "";
       return ok(await updateEscrow(escrowId, "funded", {
@@ -679,6 +747,71 @@ function optionalPolicyV2(value: unknown) {
     serviceAllowlist: limitedStringArray(record.serviceAllowlist, "serviceAllowlist", 50, 160),
     requireOnchainPolicy: Boolean(record.requireOnchainPolicy)
   };
+}
+
+function optionalAutomationTrigger(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const trigger = requiredLimitedString(value, "trigger", 80);
+  if (
+    trigger === "daily_spend_threshold"
+    || trigger === "failed_payment_burst"
+    || trigger === "pending_approval_expiring"
+    || trigger === "policy_expiring"
+    || trigger === "large_receipt"
+    || trigger === "weekly_summary"
+  ) return trigger;
+  throw new Error("automation trigger is invalid");
+}
+
+function optionalAutomationAction(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  const action = requiredLimitedString(value, "action", 40);
+  if (action === "notify" || action === "pause_agent") return action;
+  throw new Error("automation action is invalid");
+}
+
+function optionalAutomationParams(value: unknown) {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return {
+    thresholdUsdc: optionalNonNegativeNumber(record.thresholdUsdc, "thresholdUsdc", 1_000_000),
+    thresholdPercent: optionalNonNegativeNumber(record.thresholdPercent, "thresholdPercent", 1000),
+    failureCount: optionalPositiveInteger(record.failureCount, "failureCount", 100),
+    windowHours: optionalPositiveInteger(record.windowHours, "windowHours", 24 * 90),
+    expiresWithinHours: optionalPositiveInteger(record.expiresWithinHours, "expiresWithinHours", 24 * 365),
+    minAmountUsdc: optionalNonNegativeNumber(record.minAmountUsdc, "minAmountUsdc", 1_000_000),
+    cooldownHours: optionalPositiveInteger(record.cooldownHours, "cooldownHours", 24 * 90)
+  };
+}
+
+function optionalReminderChannels(value: unknown) {
+  if (value === undefined || value === null) return undefined;
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return {
+    inApp: record.inApp !== false,
+    email: Boolean(record.email),
+    telegram: Boolean(record.telegram),
+    whatsapp: Boolean(record.whatsapp)
+  };
+}
+
+function optionalReminderOffsets(value: unknown) {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new Error("offsetsHours must be an array");
+  if (value.length > 8) throw new Error("offsetsHours has too many entries");
+  return [...new Set(value.map((item, index) => {
+    const parsed = typeof item === "number" ? item : Number(item);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 24 * 90) {
+      throw new Error(`offsetsHours[${index}] must be a non-negative hour value`);
+    }
+    return parsed;
+  }))].sort((a, b) => b - a);
+}
+
+function optionalNonNegativeNumber(value: unknown, label: string, max: number) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > max) throw new Error(`${label} must be a valid non-negative number`);
+  return Math.round(parsed * 1_000_000) / 1_000_000;
 }
 
 function optionalPositiveInteger(value: unknown, label: string, max: number) {

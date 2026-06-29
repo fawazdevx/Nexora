@@ -75,7 +75,7 @@ export function Shell({children}: {children: React.ReactNode}) {
               N
               <span className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-inset ring-white/20" />
             </span>
-            <img src="/nexora-wordmark-tight.png" alt="Nexora" className={`w-auto transition-all duration-300 ${scrolled ? "h-5" : "h-6 sm:h-7"}`} />
+            <img src="/nexora-wordmark-tight.png" alt="Nexora" className={`hidden w-auto transition-all duration-300 sm:block ${scrolled ? "h-5" : "h-6 sm:h-7"}`} />
           </a>
 
           <HeaderNav pathname={pathname} />

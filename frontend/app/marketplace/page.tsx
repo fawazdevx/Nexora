@@ -1,5 +1,5 @@
 import {useMemo, useState} from "react";
-import {ArrowUpRight, BadgeCheck, CalendarCheck, ExternalLink, FileSearch, GitFork, Globe, MessageSquareText, Plus, Route, Search, ShieldCheck, Sparkles, Star, Store, Twitter, Wallet, Loader2} from "lucide-react";
+import {Activity, ArrowUpRight, BadgeCheck, CalendarCheck, CheckCircle2, ExternalLink, FileSearch, GitFork, Globe, Layers, MessageSquareText, Plus, ReceiptText, Route, Search, ShieldCheck, Sparkles, Star, Store, Twitter, Wallet, Loader2, type LucideIcon} from "lucide-react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
 import {PageHeader} from "@/components/PageHeader";
@@ -12,6 +12,7 @@ import {navigateTo} from "@/lib/router";
 import {arcTestnet, shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {settleX402Request, type NexoraStructuredMemo} from "@/lib/contracts";
+import {executionArgs, formatCategory, formatKind, sampleInputForService, serviceCategory, serviceInputLabel, serviceInputPlaceholder, serviceReadiness, type MarketplaceCategoryKey} from "@/lib/marketplace";
 
 type Service = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["services"][number];
 type SortKey = "featured" | "priceAsc" | "priceDesc" | "name";
@@ -21,6 +22,15 @@ const PRIVACY_OPTIONS: Array<{value: PrivacyScope; label: string; copy: string}>
   {value: "selective", label: "Selective", copy: "Budget, policy, and intent only"},
   {value: "private", label: "Private", copy: "Scope and timestamp only"},
   {value: "public", label: "Public", copy: "Full purchase metadata"}
+];
+
+const CATEGORIES: Array<{key: MarketplaceCategoryKey; label: string; icon: LucideIcon}> = [
+  {key: "all", label: "All", icon: Store},
+  {key: "builder", label: "Builder", icon: FileSearch},
+  {key: "security", label: "Security", icon: ShieldCheck},
+  {key: "wallet", label: "Wallet", icon: Wallet},
+  {key: "content", label: "Content", icon: MessageSquareText},
+  {key: "stablecoin", label: "Stablecoin", icon: Route}
 ];
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
@@ -60,6 +70,7 @@ export default function MarketplacePage() {
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [privacyScope, setPrivacyScope] = useState<PrivacyScope>("selective");
   const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<MarketplaceCategoryKey>("all");
   const [kindFilter, setKindFilter] = useState("all");
   const [sort, setSort] = useState<SortKey>("featured");
   const snapshot = useAppSnapshot();
@@ -68,12 +79,14 @@ export default function MarketplacePage() {
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
 
   const kinds = useMemo(() => Array.from(new Set(services.map((service) => service.manifest.kind))), [services]);
-  const avgPrice = services.length > 0 ? services.reduce((total, service) => total + Number(service.pricePerUnitUsdc || 0), 0) / services.length : 0;
   const settledVolume = snapshot.data?.stats.usdcSettled ?? 0;
+  const onchainServices = services.filter((service) => service.chainServiceId).length;
+  const featuredServices = services.filter((service) => service.featured).length;
 
   const visibleServices = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = services.filter((service) => {
+      if (categoryFilter !== "all" && serviceCategory(service) !== categoryFilter) return false;
       if (kindFilter !== "all" && service.manifest.kind !== kindFilter) return false;
       if (!q) return true;
       return (
@@ -90,7 +103,7 @@ export default function MarketplacePage() {
       return Number(Boolean(b.featured)) - Number(Boolean(a.featured));
     });
     return sorted;
-  }, [services, query, kindFilter, sort]);
+  }, [services, query, categoryFilter, kindFilter, sort]);
 
   async function purchase(service: Service) {
     if (!isConnected || !address) {
@@ -179,9 +192,32 @@ export default function MarketplacePage() {
 
       <div className="grid gap-3 sm:grid-cols-3">
         <StatMetric variant="panel" icon={Store} label="Services" value={services.length} loading={snapshot.isLoading} />
-        <StatMetric variant="panel" icon={Sparkles} label="Avg price" value={avgPrice} prefix="$" decimals={2} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={CheckCircle2} label="On-chain ready" value={onchainServices} loading={snapshot.isLoading} />
         <StatMetric variant="panel" icon={ShieldCheck} label="Settled volume" value={settledVolume} prefix="$" decimals={2} loading={snapshot.isLoading} accent />
       </div>
+
+      <section className="panel grid gap-4 lg:grid-cols-[1fr_0.8fr]">
+        <div>
+          <p className="section-kicker">Agent service directory</p>
+          <h2 className="mt-2 text-2xl font-semibold text-white">Purchase-ready tools with receipts, policy checks, and Arc settlement</h2>
+          <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
+            <TrustFact icon={ReceiptText} label="Receipts" value="Memo-backed" />
+            <TrustFact icon={ShieldCheck} label="Policy" value="Agent guarded" />
+            <TrustFact icon={Sparkles} label="Featured" value={`${featuredServices} curated`} />
+          </div>
+        </div>
+        <div className="surface p-4">
+          <p className="text-sm font-semibold text-white">Marketplace quality gates</p>
+          <div className="mt-3 grid gap-2">
+            {["Published on x402 ledger", "Structured input and output schema", "Receipt link after settlement", "Publisher address visible"].map((item) => (
+              <div key={item} className="flex items-center gap-2 text-sm text-slate-300">
+                <CheckCircle2 size={15} className="text-mint" />
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {snapshot.error ? <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta shadow-[0_0_20px_rgba(236,72,153,0.15)]">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace API unavailable"}</p> : null}
 
@@ -214,6 +250,22 @@ export default function MarketplacePage() {
       </div>
 
       {/* Search + filter + sort */}
+      <div className="flex flex-wrap gap-2">
+        {CATEGORIES.map((category) => {
+          const Icon = category.icon;
+          return (
+            <button
+              key={category.key}
+              type="button"
+              onClick={() => setCategoryFilter(category.key)}
+              className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition ${categoryFilter === category.key ? "border-mint/40 bg-mint/10 text-white" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-mint/30 hover:text-white"}`}
+            >
+              <Icon size={15} />
+              {category.label}
+            </button>
+          );
+        })}
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.04] px-3">
           <Search size={16} className="shrink-0 text-slate-500" />
@@ -279,12 +331,25 @@ export default function MarketplacePage() {
               disabled={!isConnected || !selectedAgent || !service.chainServiceId || Boolean(busyId)}
               input={serviceInputs[service.id] ?? ""}
               onInput={(value) => setServiceInputs((current) => ({...current, [service.id]: value}))}
+              onSample={() => setServiceInputs((current) => ({...current, [service.id]: sampleInputForService(service)}))}
               onPurchase={() => void purchase(service)}
               result={serviceResults[service.id]}
             />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function TrustFact({icon: Icon, label, value}: {icon: LucideIcon; label: string; value: string}) {
+  return (
+    <div className="surface px-3 py-3">
+      <span className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-slate-500">
+        <Icon size={14} className="text-orchid" />
+        {label}
+      </span>
+      <p className="mt-2 text-sm font-semibold text-white">{value}</p>
     </div>
   );
 }
@@ -307,6 +372,7 @@ function ServiceCard({
   disabled,
   input,
   onInput,
+  onSample,
   onPurchase,
   result
 }: {
@@ -315,11 +381,15 @@ function ServiceCard({
   disabled: boolean;
   input: string;
   onInput: (value: string) => void;
+  onSample: () => void;
   onPurchase: () => void;
   result: unknown;
 }) {
   const Icon = kindIcon(service.manifest.kind);
   const inputLabel = serviceInputLabel(service);
+  const category = serviceCategory(service);
+  const readiness = serviceReadiness(service);
+  const trust = service.trust;
   return (
     <article className="group panel relative overflow-hidden transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
       <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-plasma/[0.06] blur-3xl transition-all duration-500 group-hover:bg-plasma/[0.12]" />
@@ -338,6 +408,17 @@ function ServiceCard({
                   Featured
                 </span>
               ) : null}
+              {service.chainServiceId ? (
+                <span className="flex items-center gap-1 rounded-full border border-mint/25 bg-mint/10 px-2 py-0.5 text-[11px] font-bold text-mint">
+                  <CheckCircle2 size={11} />
+                  Verified route
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 rounded-full border border-amber/25 bg-amber/10 px-2 py-0.5 text-[11px] font-bold text-amber">
+                  Publish required
+                </span>
+              )}
+              {trust ? <TrustBadge score={trust.score} tier={trust.tier} /> : null}
             </div>
             <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-400">
               <AgentAvatar seed={service.publisherAddress} size={16} />
@@ -355,13 +436,24 @@ function ServiceCard({
       </div>
 
       <div className="relative mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
-        <span className="surface px-3 py-2.5 font-medium">Settlement <b className="font-bold text-white">{service.chainServiceId ? `Ledger #${service.chainServiceId}` : "Not published"}</b></span>
-        <span className="surface px-3 py-2.5 font-medium">Platform fee <b className="font-bold text-white">{(service.manifest.platformFeeBps / 100).toFixed(2)}%</b></span>
+        <StatusMetric icon={Layers} label="Settlement" value={service.chainServiceId ? `Ledger #${service.chainServiceId}` : "Not published"} tone={service.chainServiceId ? "mint" : "amber"} />
+        <StatusMetric icon={Activity} label="Health" value={readiness.label} tone={readiness.tone} />
+        <StatusMetric icon={ReceiptText} label="Receipt" value="Memo-backed" tone="mint" />
+        <StatusMetric icon={ShieldCheck} label="Trust" value={trust ? `${trust.score}/100` : "New"} tone={trust && trust.score >= 60 ? "mint" : trust && trust.score >= 40 ? "amber" : "slate"} />
       </div>
+
+      {trust ? (
+        <div className="relative mt-4 grid gap-2 text-sm sm:grid-cols-3">
+          <TrustMetric label="Settled" value={`${trust.settledPayments}`} />
+          <TrustMetric label="Buyers" value={`${trust.uniqueBuyers}`} />
+          <TrustMetric label="Volume" value={`$${trust.totalVolumeUsdc.toFixed(2)}`} />
+        </div>
+      ) : null}
 
       <div className="relative mt-4 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
         <p className="text-sm font-semibold leading-6 text-white">{service.manifest.description}</p>
         <div className="mt-4 flex flex-wrap gap-2">
+          <span className="status-pill">{formatCategory(category)}</span>
           <span className="status-pill">{formatKind(service.manifest.kind)}</span>
           <span className="status-pill">v{service.manifest.version}</span>
           {service.manifest.outputSchema.slice(0, 4).map((item) => <span key={item} className="status-pill">{item}</span>)}
@@ -370,7 +462,12 @@ function ServiceCard({
 
       {inputLabel ? (
         <label className="relative mt-4 grid gap-2.5 text-sm font-semibold text-slate-300">
-          {inputLabel}
+          <span className="flex items-center justify-between gap-3">
+            {inputLabel}
+            <button type="button" onClick={onSample} className="text-xs font-bold text-mint transition hover:text-white">
+              Use sample
+            </button>
+          </span>
           <input
             className="field"
             value={input}
@@ -392,6 +489,38 @@ function ServiceCard({
 
       {busy ? <div className="shimmer mt-4 h-20 w-full rounded-xl" /> : <ServiceResult result={result} />}
     </article>
+  );
+}
+
+function TrustBadge({score, tier}: {score: number; tier: string}) {
+  const tone = score >= 78 ? "border-mint/30 bg-mint/10 text-mint" : score >= 60 ? "border-cyan/30 bg-cyan/10 text-cyan" : score >= 40 ? "border-amber/30 bg-amber/10 text-amber" : "border-white/[0.12] bg-white/[0.04] text-slate-400";
+  return (
+    <span className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold capitalize ${tone}`}>
+      <ShieldCheck size={11} />
+      {tier} {score}
+    </span>
+  );
+}
+
+function TrustMetric({label, value}: {label: string; value: string}) {
+  return (
+    <span className="surface px-3 py-2">
+      <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-500">{label}</span>
+      <b className="mt-1 block text-white">{value}</b>
+    </span>
+  );
+}
+
+function StatusMetric({icon: Icon, label, value, tone}: {icon: LucideIcon; label: string; value: string; tone: "mint" | "amber" | "slate"}) {
+  const toneClass = tone === "mint" ? "text-mint" : tone === "amber" ? "text-amber" : "text-slate-300";
+  return (
+    <span className="surface flex items-center gap-2 px-3 py-2.5 font-medium">
+      <Icon size={14} className={toneClass} />
+      <span className="min-w-0">
+        <span className="block text-[11px] uppercase tracking-[0.14em] text-slate-500">{label}</span>
+        <b className={`block truncate font-bold ${toneClass}`}>{value}</b>
+      </span>
+    </span>
   );
 }
 
@@ -577,27 +706,6 @@ function ResultList({title, items}: {title: string; items: unknown[]}) {
       </div>
     </div>
   );
-}
-
-function serviceInputLabel(service: {manifest: {inputSchema: Array<{label: string}>}}) {
-  return service.manifest.inputSchema[0]?.label ?? "";
-}
-
-function serviceInputPlaceholder(service: {manifest: {inputSchema: Array<{placeholder?: string}>}}) {
-  return service.manifest.inputSchema[0]?.placeholder ?? "";
-}
-
-function executionArgs(service: {manifest: {kind: string; inputSchema: Array<{name: string}>}}, value: string) {
-  const field = service.manifest.inputSchema[0]?.name;
-  if (field) return {[field]: value};
-  if (service.manifest.kind === "x_account_analyzer") return {handle: value};
-  if (service.manifest.kind === "website_analyzer") return {url: value};
-  if (service.manifest.kind === "github_repo_analyzer") return {repo: value};
-  return {};
-}
-
-function formatKind(value: string) {
-  return value.replaceAll("_", " ");
 }
 
 function stringValue(value: unknown) {

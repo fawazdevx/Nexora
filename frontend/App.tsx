@@ -2,6 +2,7 @@ import {useEffect, useMemo, useState} from "react";
 import LandingPage from "@/app/landing/page";
 import HomePage from "@/app/page";
 import AgentsPage from "@/app/agents/page";
+import AutomationPage from "@/app/automation/page";
 import AgentMemoryPage from "@/app/memory/page";
 import EarnPage from "@/app/earn/page";
 import SwapPage from "@/app/swap/page";
@@ -30,6 +31,7 @@ const routes: Record<string, React.ComponentType> = {
   "/home": HomePage,
   "/app": HomePage,
   "/agents": AgentsPage,
+  "/automation": AutomationPage,
   "/memory": AgentMemoryPage,
   "/earn": EarnPage,
   "/swap": SwapPage,

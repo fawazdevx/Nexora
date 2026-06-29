@@ -11,6 +11,7 @@ import {
   KeyRound,
   Landmark,
   Network,
+  PlayCircle,
   RadioTower,
   ShieldCheck,
   Store,
@@ -30,6 +31,7 @@ export const navGroups: NavGroup[] = [
     label: "Platform",
     items: [
       {href: "/agents", label: "Agents", icon: Bot, description: "Create and manage agent wallets"},
+      {href: "/automation", label: "Automation", icon: PlayCircle, description: "Agent recipes and safety actions"},
       {href: "/memory", label: "Memory", icon: Brain, description: "Memo-backed agent spend context"},
       {href: "/marketplace", label: "Marketplace", icon: Store, description: "Discover and buy paid APIs"},
       {href: "/escrow", label: "Escrow", icon: BriefcaseBusiness, description: "USDC work agreements"},
