@@ -1,13 +1,15 @@
 import {useEffect, useMemo, useState} from "react";
-import {Activity, CheckCircle2, Copy, ExternalLink, KeyRound, Play, RadioTower, RefreshCw, Search, Server, ShieldCheck, Users, XCircle} from "lucide-react";
+import {Activity, CheckCircle2, Copy, ExternalLink, KeyRound, PenLine, Play, RadioTower, RefreshCw, Search, Server, ShieldCheck, Users, XCircle} from "lucide-react";
 import toast from "react-hot-toast";
+import {isAddress, parseUnits, type Address, type Hex} from "viem";
+import {useAccount, useSignTypedData} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
 import {EmptyState} from "@/components/EmptyState";
 import {JsonViewer, type JsonStatus} from "@/components/JsonViewer";
 import {apiGet, apiPost, apiUrlFor} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
-import {arcTestnet, shortAddress} from "@/lib/arc";
+import {arcTestnet, shortAddress, switchToArc} from "@/lib/arc";
 import {timeAgo} from "@/lib/time";
 
 type Analytics = {
@@ -99,8 +101,11 @@ app.get("/paid-report",
 );`;
 
 type EventFilter = "all" | "verify" | "settle" | "success" | "failed";
+const ARC_USDC_ADDRESS = "0x3600000000000000000000000000000000000000" as const;
 
 export default function X402PlaygroundPage() {
+  const {address, chain, isConnected} = useAccount();
+  const {signTypedDataAsync, isPending: signing} = useSignTypedData();
   const [supported, setSupported] = useState<unknown>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
@@ -116,6 +121,8 @@ export default function X402PlaygroundPage() {
   const [settling, setSettling] = useState(false);
   const [filter, setFilter] = useState<EventFilter>("all");
   const [query, setQuery] = useState("");
+  const [signAmount, setSignAmount] = useState("0.01");
+  const [signPayTo, setSignPayTo] = useState("");
 
   const jsonError = useMemo(() => {
     try {
@@ -178,6 +185,93 @@ export default function X402PlaygroundPage() {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!signPayTo && address) setSignPayTo(address);
+  }, [address, signPayTo]);
+
+  async function signRealSample() {
+    if (!isConnected || !address) {
+      toast.error("Connect a wallet before signing an x402 sample.");
+      return;
+    }
+    const payTo = signPayTo.trim() || address;
+    if (!isAddress(payTo)) {
+      toast.error("Enter a valid payTo wallet address.");
+      return;
+    }
+    let value: bigint;
+    try {
+      value = parseUnits(signAmount.trim(), 6);
+    } catch {
+      toast.error("Enter a valid USDC amount.");
+      return;
+    }
+    if (value <= 0n) {
+      toast.error("Amount must be greater than 0 USDC.");
+      return;
+    }
+
+    if (chain?.id !== arcTestnet.id) {
+      await switchToArc();
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const validAfter = Math.max(0, now - 30).toString();
+    const validBefore = (now + 30 * 60).toString();
+    const nonce = randomBytes32();
+    const message = {
+      from: address as Address,
+      to: payTo as Address,
+      value,
+      validAfter: BigInt(validAfter),
+      validBefore: BigInt(validBefore),
+      nonce
+    };
+
+    const toastId = toast.loading("Requesting wallet signature...");
+    try {
+      const signature = await signTypedDataAsync({
+        domain: {
+          name: "USDC",
+          version: "2",
+          chainId: arcTestnet.id,
+          verifyingContract: ARC_USDC_ADDRESS
+        },
+        types: {
+          TransferWithAuthorization: [
+            {name: "from", type: "address"},
+            {name: "to", type: "address"},
+            {name: "value", type: "uint256"},
+            {name: "validAfter", type: "uint256"},
+            {name: "validBefore", type: "uint256"},
+            {name: "nonce", type: "bytes32"}
+          ]
+        },
+        primaryType: "TransferWithAuthorization",
+        message
+      });
+      const signedBody = createSignedSampleBody({
+        from: address,
+        to: payTo,
+        value: value.toString(),
+        validAfter,
+        validBefore,
+        nonce,
+        signature
+      });
+      const text = JSON.stringify(signedBody, null, 2);
+      setRequestText(text);
+      setSettleText(text);
+      setVerifyResult(null);
+      setSettleResult(null);
+      setVerifyStatus(undefined);
+      setSettleStatus(undefined);
+      toast.success("Signed x402 sample filled into verify and settle requests.", {id: toastId});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Signature rejected", {id: toastId});
+    }
+  }
 
   async function runSampleVerify() {
     if (jsonError) {
@@ -332,6 +426,49 @@ export default function X402PlaygroundPage() {
       </section>
 
       {/* Request → Response */}
+      <section className="panel">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="section-kicker">Signed demo</p>
+            <h2 className="mt-2 text-2xl font-semibold text-white">Generate a real x402 authorization</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+              Sign a small Arc USDC authorization with your connected wallet. Verify should pass immediately. Settle will submit the transferWithAuthorization transaction, so the signing wallet must hold at least this ERC-20 USDC amount.
+            </p>
+          </div>
+          <span className="rounded-full border border-amber/25 bg-amber/10 px-3 py-1 text-xs font-semibold text-amber">Testnet USDC</span>
+        </div>
+
+        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">payTo</span>
+            <input
+              value={signPayTo}
+              onChange={(event) => setSignPayTo(event.target.value)}
+              placeholder={address ?? "0xPublisherOrYourWallet"}
+              className="field mt-2 w-full font-mono text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Amount</span>
+            <input
+              value={signAmount}
+              onChange={(event) => setSignAmount(event.target.value)}
+              inputMode="decimal"
+              className="field mt-2 w-full"
+            />
+          </label>
+          <div className="flex items-end">
+            <button type="button" className="action-button min-h-12 w-full whitespace-nowrap" onClick={() => void signRealSample()} disabled={!isConnected || signing}>
+              {signing ? <RefreshCw size={16} className="animate-spin" /> : <PenLine size={16} />}
+              {signing ? "Signing..." : "Sign real sample"}
+            </button>
+          </div>
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-500">
+          For a no-recipient demo, leave payTo as your own wallet address. Verify proves the signature path. Settle consumes the nonce and creates an Arc transaction.
+        </p>
+      </section>
+
       <section className="grid gap-5 xl:grid-cols-2">
         <div className="panel">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -519,6 +656,54 @@ function MiniFact({icon, label, value}: {icon: React.ReactNode; label: string; v
       <p className="mt-2 font-semibold text-white">{value}</p>
     </div>
   );
+}
+
+function createSignedSampleBody(input: {
+  from: string;
+  to: string;
+  value: string;
+  validAfter: string;
+  validBefore: string;
+  nonce: Hex;
+  signature: Hex;
+}) {
+  return {
+    paymentRequirements: {
+      scheme: "exact",
+      network: "arc-testnet",
+      maxAmountRequired: input.value,
+      resource: "https://api.example.com/nexora-showcase-report",
+      description: "Nexora signed x402 showcase report",
+      payTo: input.to,
+      asset: ARC_USDC_ADDRESS,
+      extra: {
+        name: "USDC",
+        version: "2"
+      }
+    },
+    paymentPayload: {
+      x402Version: 1,
+      scheme: "exact",
+      network: "arc-testnet",
+      payload: {
+        authorization: {
+          from: input.from,
+          to: input.to,
+          value: input.value,
+          validAfter: input.validAfter,
+          validBefore: input.validBefore,
+          nonce: input.nonce
+        },
+        signature: input.signature
+      }
+    }
+  };
+}
+
+function randomBytes32() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `0x${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}` as Hex;
 }
 
 function CopyMini({value}: {value: string}) {
