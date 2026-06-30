@@ -1,16 +1,20 @@
 import {useState} from "react";
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   Bot,
   BriefcaseBusiness,
+  CheckCircle2,
   CircleDollarSign,
   Clock,
   Code2,
+  ExternalLink,
   Gauge,
   Landmark,
   Loader2,
   RadioTower,
+  ReceiptText,
   ShieldCheck,
   Sparkles,
   Store,
@@ -18,6 +22,7 @@ import {
 } from "lucide-react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
+import {AgentAvatar} from "@/components/AgentAvatar";
 import {ArcNameLabel} from "@/components/ArcNameLabel";
 import {StatMetric} from "@/components/StatMetric";
 import {navigateTo} from "@/lib/router";
@@ -25,6 +30,10 @@ import {apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
 import {timeAgo} from "@/lib/time";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
+
+type Snapshot = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>;
+type Agent = Snapshot["agents"][number];
+type Payment = Snapshot["payments"][number];
 
 export default function HomePage() {
   const {address, isConnected} = useAccount();
@@ -37,12 +46,16 @@ export default function HomePage() {
   const pendingAgents = agents.length - readyAgents;
   const services = snapshot.data?.services ?? [];
   const payments = snapshot.data?.payments ?? [];
-  const recentPayments = payments.slice(0, 5);
+  const recentReceipts = payments.slice(0, 4);
   const needsContracts = snapshot.data ? !snapshot.data.readiness.onchainConfigured : false;
   const needsCircle = snapshot.data ? !snapshot.data.readiness.circleConfigured : false;
   const settledVolume = snapshot.data?.stats.usdcSettled ?? 0;
   const policySaves = snapshot.data?.stats.policySaves ?? 0;
   const earnActions = snapshot.data?.stats.earnRoutes ?? 0;
+  const activePolicies = agents.filter((agent) => agent.policy.active).length;
+  const onchainPolicies = agents.filter((agent) => Boolean(agent.policy.txHash)).length;
+  const activeAutomations = snapshot.data?.automationRecipes.filter((recipe) => recipe.active).length ?? 0;
+  const activeRiskAlerts = snapshot.data?.riskAlerts.filter((alert) => alert.severity !== "info").length ?? 0;
 
   async function createAgentWallet() {
     if (!walletReady || !address) {
@@ -90,6 +103,45 @@ export default function HomePage() {
     {title: "Escrow", copy: "Fund work agreements in USDC and release after verification.", href: "/escrow", icon: BriefcaseBusiness},
     {title: "Revenue", copy: "Compare on-chain treasury balance with app-recorded fees and volume.", href: "/revenue", icon: Landmark},
     {title: "Developer docs", copy: "Install the SDK or test the x402 playground.", href: "/docs/api", icon: Code2}
+  ];
+
+  const actionQueue = [
+    {label: recommendedAction.label, copy: recommendedAction.copy, href: recommendedAction.href || "/home", icon: Gauge, primary: true},
+    {label: "Check agents", copy: `${readyAgents}/${agents.length} wallets ready for policy-gated payments.`, href: "/agents", icon: WalletCards},
+    {label: "Open receipts", copy: `${recentReceipts.length} recent payment receipt${recentReceipts.length === 1 ? "" : "s"} available.`, href: "/payments", icon: ReceiptText}
+  ];
+
+  const policyHealth = [
+    {
+      label: "Agent wallets",
+      value: `${readyAgents}/${agents.length || 0} ready`,
+      healthy: agents.length > 0 && readyAgents === agents.length,
+      href: "/agents"
+    },
+    {
+      label: "Active policies",
+      value: `${activePolicies}/${agents.length || 0} active`,
+      healthy: agents.length > 0 && activePolicies === agents.length,
+      href: "/settings/policies"
+    },
+    {
+      label: "On-chain saves",
+      value: `${onchainPolicies}/${agents.length || 0} saved`,
+      healthy: agents.length > 0 && onchainPolicies === agents.length,
+      href: "/settings/policies"
+    },
+    {
+      label: "Automation",
+      value: activeAutomations > 0 ? `${activeAutomations} active` : "No recipes",
+      healthy: activeAutomations > 0,
+      href: "/automation"
+    },
+    {
+      label: "Risk alerts",
+      value: activeRiskAlerts > 0 ? `${activeRiskAlerts} need review` : "Clear",
+      healthy: activeRiskAlerts === 0,
+      href: activeRiskAlerts > 0 ? "/settings/policies" : "/automation"
+    }
   ];
 
   return (
@@ -169,6 +221,124 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="panel flex flex-col gap-4 p-4 md:flex-row md:items-center md:justify-between md:p-5">
+        <div className="min-w-0">
+          <p className="section-kicker">Next action</p>
+          <h3 className="mt-2 text-xl font-semibold text-white">Operator queue</h3>
+        </div>
+        <div className="grid w-full gap-3 md:w-auto md:flex md:min-w-[68%]">
+          {actionQueue.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.label}
+                type="button"
+                onClick={() => navigateTo(action.href)}
+                className={`surface group flex min-w-0 flex-1 items-center justify-between gap-4 px-4 py-3 text-left ${action.primary ? "border-mint/25 bg-mint/10" : ""}`}
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${action.primary ? "border-mint/25 bg-mint/10 text-mint" : "border-white/[0.1] bg-white/[0.04] text-orchid"}`}>
+                    <Icon size={18} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-white">{action.label}</span>
+                    <span className="mt-0.5 block line-clamp-2 text-xs leading-5 text-slate-500">{action.copy}</span>
+                  </span>
+                </span>
+                <ArrowRight size={15} className="shrink-0 text-slate-600 transition group-hover:translate-x-0.5 group-hover:text-white" />
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+        <div className="panel">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="section-kicker">Agent readiness</p>
+              <h3 className="mt-2 text-xl font-bold text-white">Ready to spend under policy</h3>
+            </div>
+            <button type="button" onClick={() => navigateTo("/agents")} className="secondary-button min-h-10 px-4 py-2 text-sm">
+              Manage agents
+              <ArrowRight size={15} />
+            </button>
+          </div>
+          {loading ? (
+            <div className="grid gap-3 lg:grid-cols-3">
+              {[0, 1, 2].map((item) => (
+                <div key={item} className="surface space-y-4 p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="shimmer h-11 w-11 rounded-xl" />
+                    <div className="flex-1 space-y-2">
+                      <div className="shimmer h-4 w-28 rounded" />
+                      <div className="shimmer h-3 w-20 rounded" />
+                    </div>
+                  </div>
+                  <div className="shimmer h-2 w-full rounded-full" />
+                  <div className="shimmer h-9 w-full rounded-lg" />
+                </div>
+              ))}
+            </div>
+          ) : agents.length > 0 ? (
+            <>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {agents.slice(0, 3).map((agent) => (
+                  <AgentReadinessCard key={agent.id} agent={agent} payments={payments} />
+                ))}
+              </div>
+              {agents.length > 3 ? (
+                <button type="button" onClick={() => navigateTo("/agents")} className="mt-4 text-sm font-semibold text-orchid transition hover:text-white">
+                  View {agents.length - 3} more agent wallet{agents.length - 3 === 1 ? "" : "s"}
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <div className="surface flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold text-white">No agent wallet yet</p>
+                <p className="mt-1 text-sm text-slate-400">Create an agent wallet before buying services or saving spending policy.</p>
+              </div>
+              <button type="button" onClick={createAgentWallet} className="action-button" disabled={!walletReady || creating}>
+                {creating ? <Loader2 size={16} className="animate-spin" /> : <Bot size={16} />}
+                {walletReady ? "Create agent" : "Connect wallet first"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="panel">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <p className="section-kicker">Policy health</p>
+              <h3 className="mt-2 text-xl font-bold text-white">Controls status</h3>
+            </div>
+            <ShieldCheck size={20} className="text-mint" />
+          </div>
+          <div className="grid gap-2.5">
+            {policyHealth.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => navigateTo(item.href)}
+                className="surface flex items-center justify-between gap-3 px-4 py-3 text-left"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${item.healthy ? "border-mint/25 bg-mint/10 text-mint" : "border-amber/25 bg-amber/10 text-amber"}`}>
+                    {item.healthy ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-white">{item.label}</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">{item.value}</span>
+                  </span>
+                </span>
+                <ArrowRight size={14} className="shrink-0 text-slate-600" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section>
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
@@ -209,29 +379,56 @@ export default function HomePage() {
       <section className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="panel">
           <div className="mb-5 flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold text-white">Recent activity</h3>
+            <div>
+              <p className="section-kicker">Receipts</p>
+              <h3 className="mt-2 text-lg font-bold text-white">Recent payment receipts</h3>
+            </div>
             <button onClick={() => navigateTo("/payments")} className="secondary-button min-h-10 px-4 py-2 text-sm">Payments</button>
           </div>
-          {recentPayments.length > 0 ? (
+          {recentReceipts.length > 0 ? (
             <ol className="relative ml-1.5 border-l border-white/[0.1]">
-              {recentPayments.map((payment) => {
+              {recentReceipts.map((payment) => {
                 const tone = statusTone(payment.status);
                 return (
                   <li key={payment.id} className="relative mb-4 pl-6 last:mb-0">
                     <span className={`absolute -left-[7px] top-1.5 h-3 w-3 rounded-full border-2 border-[#12101b] ${tone.dot}`} />
-                    <div className="surface flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-white">{payment.serviceName}</p>
-                        <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
-                          <Clock size={12} />
-                          {timeAgo(payment.createdAt)}
-                          <span className="text-slate-700">·</span>
-                          {shortAddress(payment.txHash ?? payment.requestHash)}
-                        </p>
+                    <div className="surface px-4 py-3">
+                      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-white">{payment.serviceName}</p>
+                          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                            <Clock size={12} />
+                            {timeAgo(payment.createdAt)}
+                            <span className="text-slate-700">·</span>
+                            {shortAddress(payment.txHash ?? payment.requestHash)}
+                            {payment.memo ? (
+                              <>
+                                <span className="text-slate-700">·</span>
+                                <span className="text-mint">memo</span>
+                              </>
+                            ) : null}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-white">${payment.amountUsdc}</span>
+                          <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize ${tone.pill}`}>{payment.status.replaceAll("_", " ")}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-bold text-white">${payment.amountUsdc}</span>
-                        <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize ${tone.pill}`}>{payment.status}</span>
+                      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                        <ReceiptMeta label="Platform fee" value={usd(payment.platformFeeUsdc)} />
+                        <ReceiptMeta label="Publisher net" value={usd(payment.publisherNetUsdc)} />
+                        <ReceiptMeta label="Agent" value={payment.agentWallet ? shortAddress(payment.agentWallet) : payment.agentId ? shortAddress(payment.agentId) : "wallet"} />
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button type="button" onClick={() => navigateTo(`/receipts/${encodeURIComponent(payment.id)}`)} className="secondary-button min-h-9 px-3 py-1.5 text-xs">
+                          View receipt
+                          <ExternalLink size={13} />
+                        </button>
+                        {payment.txHash ? (
+                          <span className="rounded-full border border-mint/20 bg-mint/10 px-3 py-1 text-xs font-semibold text-mint">On-chain settlement</span>
+                        ) : (
+                          <span className="rounded-full border border-amber/20 bg-amber/10 px-3 py-1 text-xs font-semibold text-amber">Receipt pending tx</span>
+                        )}
                       </div>
                     </div>
                   </li>
@@ -299,6 +496,79 @@ function statusTone(status: string) {
     return {dot: "bg-magenta", pill: "border-magenta/25 bg-magenta/10 text-magenta"};
   }
   return {dot: "bg-slate-500", pill: "border-white/[0.12] bg-white/[0.04] text-slate-300"};
+}
+
+function AgentReadinessCard({agent, payments}: {agent: Agent; payments: Payment[]}) {
+  const ready = Boolean(agent.address);
+  const activePolicy = agent.policy.active;
+  const onchainPolicy = Boolean(agent.policy.txHash);
+  const agentPayments = payments.filter((payment) => payment.agentId === agent.id || (agent.address && payment.agentWallet?.toLowerCase() === agent.address.toLowerCase()));
+  const settledSpend = agentPayments
+    .filter((payment) => payment.status === "settled")
+    .reduce((sum, payment) => sum + Number(payment.amountUsdc || 0), 0);
+  const lastPayment = agentPayments[0];
+  const dailyLimit = Number(agent.policy.dailyLimitUsdc || 0);
+  const spendPercent = dailyLimit > 0 ? Math.min(100, Math.round((settledSpend / dailyLimit) * 100)) : 0;
+  const name = agent.arcName ?? agent.address ?? shortAddress(agent.operatorAddress);
+  const status = !ready ? "Wallet pending" : !activePolicy ? "Policy inactive" : !onchainPolicy ? "Save on-chain" : "Ready";
+  const statusClass = ready && activePolicy && onchainPolicy
+    ? "border-mint/25 bg-mint/10 text-mint"
+    : "border-amber/25 bg-amber/10 text-amber";
+
+  return (
+    <article className="surface p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <AgentAvatar seed={agent.address ?? agent.id} label={agent.arcName ?? agent.address} />
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-white">{name}</p>
+            <p className="mt-0.5 text-xs text-slate-500">{agent.address ? shortAddress(agent.address) : "Circle address pending"}</p>
+          </div>
+        </div>
+        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass}`}>{status}</span>
+      </div>
+
+      <div className="mt-4">
+        <div className="mb-2 flex items-center justify-between text-xs">
+          <span className="text-slate-500">Daily spend</span>
+          <span className="font-semibold text-white">{usd(settledSpend)} / {usd(dailyLimit)}</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
+          <div className={`h-full rounded-full ${spendPercent >= 90 ? "bg-amber" : "bg-mint"}`} style={{width: `${spendPercent}%`}} />
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.035] px-3 py-2">
+          <p className="text-slate-500">Tx cap</p>
+          <p className="mt-1 font-semibold text-white">{usd(agent.policy.transactionCapUsdc)}</p>
+        </div>
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.035] px-3 py-2">
+          <p className="text-slate-500">Last receipt</p>
+          <p className="mt-1 font-semibold text-white">{lastPayment ? timeAgo(lastPayment.createdAt) : "None"}</p>
+        </div>
+      </div>
+
+      <button type="button" onClick={() => navigateTo("/settings/policies")} className="secondary-button mt-4 min-h-9 w-full px-3 py-1.5 text-xs">
+        Review controls
+        <ArrowRight size={13} />
+      </button>
+    </article>
+  );
+}
+
+function ReceiptMeta({label, value}: {label: string; value: string}) {
+  return (
+    <div className="rounded-lg border border-white/[0.08] bg-white/[0.035] px-3 py-2">
+      <p className="uppercase tracking-[0.12em] text-slate-600">{label}</p>
+      <p className="mt-1 truncate font-semibold text-slate-200">{value}</p>
+    </div>
+  );
+}
+
+function usd(value: number | undefined | null) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  return `$${Number(value).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: Number(value) % 1 === 0 ? 0 : 2})}`;
 }
 
 function nextAction(input: {
