@@ -1,5 +1,6 @@
 import {NexoraX402Client, parseXPaymentHeader} from "./client.js";
 import {createPaymentRequirements, paymentRequiredResponse} from "./requirements.js";
+import {dispatchReceiptCallback} from "./webhook.js";
 import type {NexoraX402Config, X402Context} from "./types.js";
 
 export type NexoraNextHandler = (request: Request, context: X402Context) => Response | Promise<Response>;
@@ -28,6 +29,7 @@ export function withNexoraX402(config: NexoraX402Config, handler: NexoraNextHand
       return paymentRequired(paymentRequirements, settlement.errorReason);
     }
 
+    await dispatchReceiptCallback(config.onReceipt, {paymentRequirements, verification, settlement});
     return handler(request, {payment, paymentRequirements, verification, settlement});
   };
 }

@@ -1132,6 +1132,7 @@ export async function writeAgentPolicy(input: {
     serviceAllowlist?: string[];
     previousServiceAllowlist?: string[];
     requireOnchainPolicy?: boolean;
+    writeServiceAllowlist?: boolean;
   };
 }): Promise<Hash> {
   const {client, chainId, contracts} = await walletClient();
@@ -1179,26 +1180,28 @@ export async function writeAgentPolicy(input: {
     });
     await reader.waitForTransactionReceipt({hash: v2Hash});
 
-    const current = new Set(serviceAllowlist);
-    const staleServiceIds = previousServiceAllowlist.filter((serviceId) => !current.has(serviceId));
-    for (const serviceId of staleServiceIds) {
-      const serviceHash = await client.writeContract({
-        address,
-        abi: policyRegistryAbi,
-        functionName: "setAllowedService",
-        args: [input.agentWallet as Address, serviceId, false]
-      });
-      await reader.waitForTransactionReceipt({hash: serviceHash});
-    }
+    if (input.policyV2.writeServiceAllowlist !== false) {
+      const current = new Set(serviceAllowlist);
+      const staleServiceIds = previousServiceAllowlist.filter((serviceId) => !current.has(serviceId));
+      for (const serviceId of staleServiceIds) {
+        const serviceHash = await client.writeContract({
+          address,
+          abi: policyRegistryAbi,
+          functionName: "setAllowedService",
+          args: [input.agentWallet as Address, serviceId, false]
+        });
+        await reader.waitForTransactionReceipt({hash: serviceHash});
+      }
 
-    for (const serviceId of serviceAllowlist) {
-      const serviceHash = await client.writeContract({
-        address,
-        abi: policyRegistryAbi,
-        functionName: "setAllowedService",
-        args: [input.agentWallet as Address, serviceId, true]
-      });
-      await reader.waitForTransactionReceipt({hash: serviceHash});
+      for (const serviceId of serviceAllowlist) {
+        const serviceHash = await client.writeContract({
+          address,
+          abi: policyRegistryAbi,
+          functionName: "setAllowedService",
+          args: [input.agentWallet as Address, serviceId, true]
+        });
+        await reader.waitForTransactionReceipt({hash: serviceHash});
+      }
     }
   }
 

@@ -6,6 +6,97 @@ import {shortAddress} from "@/lib/arc";
 
 const serviceTemplates = [
   {
+    kind: "wallet_risk_approval_scan",
+    name: "Wallet Risk + Approval Scan",
+    endpointHash: "wallet-risk-approval-scan-v1",
+    price: "0.05",
+    description: "Scan a wallet for risky approvals, spend patterns, counterparties, and suggested policy limits before an agent pays or interacts."
+  },
+  {
+    kind: "stablecoin_route_report",
+    name: "Stablecoin Treasury Route",
+    endpointHash: "stablecoin-treasury-route-v1",
+    price: "0.04",
+    description: "Compare USDC and EURC routing, balances, fees, and settlement readiness for treasury or agent payment operations."
+  },
+  {
+    kind: "policy_risk_review",
+    name: "Agent Policy Guard Review",
+    endpointHash: "agent-policy-guard-review-v1",
+    price: "0.035",
+    description: "Review agent caps, allowlists, cooldowns, expiry, and automation rules before enabling autonomous spend."
+  },
+  {
+    kind: "invoice_collection_agent",
+    name: "Invoice Collection Agent",
+    endpointHash: "invoice-collection-agent-v1",
+    price: "0.05",
+    description: "Create a USDC invoice workflow with payment reminders, receipt checks, settlement status, and follow-up actions."
+  },
+  {
+    kind: "escrow_milestone_monitor",
+    name: "Escrow Milestone Monitor",
+    endpointHash: "escrow-milestone-monitor-v1",
+    price: "0.06",
+    description: "Monitor escrow deadlines, milestone evidence, dispute risk, and recommended release or refund actions for user approval."
+  },
+  {
+    kind: "contract_interaction_risk_scan",
+    name: "Contract Interaction Risk Scan",
+    endpointHash: "contract-interaction-risk-scan-v1",
+    price: "0.04",
+    description: "Check a target contract before an agent signs, approves, swaps, pays, or adds it to policy allowlists."
+  },
+  {
+    kind: "counterparty_compliance_screen",
+    name: "Counterparty Compliance Screen",
+    endpointHash: "counterparty-compliance-screen-v1",
+    price: "0.08",
+    description: "Screen a wallet or business counterparty for sanctions, scam exposure, transaction history, and payment suitability."
+  },
+  {
+    kind: "liquidation_risk_monitor",
+    name: "Liquidation Risk Monitor",
+    endpointHash: "liquidation-risk-monitor-v1",
+    price: "0.07",
+    description: "Monitor DeFi positions and alert users when liquidation, margin, or collateral risk rises above a policy threshold."
+  },
+  {
+    kind: "vault_apy_monitor",
+    name: "Vault APY Monitor",
+    endpointHash: "vault-apy-monitor-v1",
+    price: "0.04",
+    description: "Track vault APYs, TVL, strategy changes, and rebalance opportunities before users enable Save/Earn automation."
+  },
+  {
+    kind: "subscription_payment_agent",
+    name: "Subscription Payment Agent",
+    endpointHash: "subscription-payment-agent-v1",
+    price: "0.05",
+    description: "Create a policy-controlled recurring USDC payment plan with approval rules and receipt expectations."
+  },
+  {
+    kind: "publisher_revenue_intelligence",
+    name: "Publisher Revenue Intelligence",
+    endpointHash: "publisher-revenue-intelligence-v1",
+    price: "0.04",
+    description: "Analyze publisher x402 revenue, failed payments, pricing signals, and service conversion opportunities."
+  },
+  {
+    kind: "dao_grant_payout_agent",
+    name: "DAO / Grant Payout Agent",
+    endpointHash: "dao-grant-payout-agent-v1",
+    price: "0.06",
+    description: "Plan USDC milestone payouts with recipient allowlists, approval rules, and receipt tracking."
+  },
+  {
+    kind: "swap_route_quote_agent",
+    name: "Swap / Route Quote Agent",
+    endpointHash: "swap-route-quote-agent-v1",
+    price: "0.04",
+    description: "Review swap routes for slippage, quote freshness, token decimals, and execution safety."
+  },
+  {
     kind: "website_analyzer",
     name: "Website Growth Analyzer",
     endpointHash: "website-analyzer-v1",
@@ -177,12 +268,12 @@ export function PublishServiceForm() {
       <label className="grid gap-2 text-sm text-slate-300">
         Service name
         <input className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Website Analyzer" />
-        <span className="text-xs leading-5 text-slate-500">Examples: Website Analyzer, GitHub Repo Analyzer, Meeting Brief Agent, x402 Integration Planner.</span>
+        <span className="text-xs leading-5 text-slate-500">Strong mainnet examples: Wallet Risk Scan, Invoice Collection Agent, Escrow Milestone Monitor, Treasury Route, Compliance Screen.</span>
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Endpoint hash / manifest URI
         <input className="field" value={endpointHash} onChange={(event) => setEndpointHash(event.target.value)} placeholder="website-analyzer-v1" />
-        <span className="text-xs leading-5 text-slate-500">Use a built-in endpoint hash like website-analyzer-v1, meeting-brief-v1, or x402-integration-planner-v1 for Nexora execution.</span>
+        <span className="text-xs leading-5 text-slate-500">Use a stable endpoint hash or manifest URI. Built-in hashes execute in Nexora; custom hashes should point to your SDK-protected API.</span>
       </label>
       <label className="grid gap-2 text-sm text-slate-300">
         Manifest type
@@ -203,6 +294,17 @@ export function PublishServiceForm() {
           <option value="policy_risk_review">Agent Policy Risk Review</option>
           <option value="launch_readiness_check">Launch Readiness Check</option>
           <option value="x402_integration_planner">x402 Integration Planner</option>
+          <option value="wallet_risk_approval_scan">Wallet Risk + Approval Scan</option>
+          <option value="contract_interaction_risk_scan">Contract Interaction Risk Scan</option>
+          <option value="invoice_collection_agent">Invoice Collection Agent</option>
+          <option value="escrow_milestone_monitor">Escrow Milestone Monitor</option>
+          <option value="counterparty_compliance_screen">Counterparty Compliance Screen</option>
+          <option value="liquidation_risk_monitor">Liquidation Risk Monitor</option>
+          <option value="vault_apy_monitor">Vault APY Monitor</option>
+          <option value="subscription_payment_agent">Subscription Payment Agent</option>
+          <option value="publisher_revenue_intelligence">Publisher Revenue Intelligence</option>
+          <option value="dao_grant_payout_agent">DAO / Grant Payout Agent</option>
+          <option value="swap_route_quote_agent">Swap / Route Quote Agent</option>
         </select>
         <span className="text-xs leading-5 text-slate-500">Choose the kind of API you are publishing. Nexora uses this to show the right input and result layout.</span>
       </label>

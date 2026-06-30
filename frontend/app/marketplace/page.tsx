@@ -1,5 +1,5 @@
 import {useMemo, useState} from "react";
-import {Activity, ArrowUpRight, BadgeCheck, CalendarCheck, CheckCircle2, ExternalLink, FileSearch, GitFork, Globe, Layers, MessageSquareText, Plus, ReceiptText, Route, Search, ShieldCheck, Sparkles, Star, Store, Twitter, Wallet, Loader2, type LucideIcon} from "lucide-react";
+import {Activity, ArrowUpRight, BadgeCheck, Banknote, BarChart3, BriefcaseBusiness, CalendarCheck, CheckCircle2, ExternalLink, FileSearch, GitFork, Globe, Layers, Landmark, LineChart, MessageSquareText, Plus, ReceiptText, Route, Search, ShieldCheck, Sparkles, Star, Store, TrendingUp, Wallet, Loader2, type LucideIcon} from "lucide-react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
 import {PageHeader} from "@/components/PageHeader";
@@ -12,7 +12,7 @@ import {navigateTo} from "@/lib/router";
 import {arcTestnet, shortAddress} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {settleX402Request, type NexoraStructuredMemo} from "@/lib/contracts";
-import {executionArgs, formatCategory, formatKind, sampleInputForService, serviceCategory, serviceInputLabel, serviceInputPlaceholder, serviceReadiness, type MarketplaceCategoryKey} from "@/lib/marketplace";
+import {MARKETPLACE_CATEGORY_DESCRIPTIONS, executionArgs, formatCategory, formatKind, sampleInputForService, serviceCategory, serviceInputLabel, serviceInputPlaceholder, serviceReadiness, type MarketplaceCategoryKey} from "@/lib/marketplace";
 
 type Service = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["services"][number];
 type SortKey = "featured" | "priceAsc" | "priceDesc" | "name";
@@ -26,11 +26,15 @@ const PRIVACY_OPTIONS: Array<{value: PrivacyScope; label: string; copy: string}>
 
 const CATEGORIES: Array<{key: MarketplaceCategoryKey; label: string; icon: LucideIcon}> = [
   {key: "all", label: "All", icon: Store},
-  {key: "builder", label: "Builder", icon: FileSearch},
-  {key: "security", label: "Security", icon: ShieldCheck},
-  {key: "wallet", label: "Wallet", icon: Wallet},
-  {key: "content", label: "Content", icon: MessageSquareText},
-  {key: "stablecoin", label: "Stablecoin", icon: Route}
+  {key: "risk", label: "Risk", icon: ShieldCheck},
+  {key: "payments", label: "Payments", icon: ReceiptText},
+  {key: "treasury", label: "Treasury", icon: Landmark},
+  {key: "escrow", label: "Escrow", icon: BriefcaseBusiness},
+  {key: "trading", label: "Trading", icon: LineChart},
+  {key: "yield", label: "Yield", icon: TrendingUp},
+  {key: "compliance", label: "Compliance", icon: BadgeCheck},
+  {key: "data", label: "Data", icon: BarChart3},
+  {key: "builder", label: "Builder", icon: FileSearch}
 ];
 
 function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
@@ -41,11 +45,13 @@ function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
 function kindIcon(kind: string) {
   if (kind.includes("website")) return Globe;
   if (kind.includes("github")) return GitFork;
-  if (kind.includes("x_account") || kind.includes("twitter")) return Twitter;
+  if (kind.includes("x_account") || kind.includes("twitter")) return MessageSquareText;
   if (kind.includes("meeting")) return CalendarCheck;
   if (kind.includes("domain")) return BadgeCheck;
   if (kind.includes("social")) return MessageSquareText;
   if (kind.includes("route")) return Route;
+  if (kind.includes("wallet")) return Wallet;
+  if (kind.includes("stablecoin")) return Banknote;
   if (kind.includes("launch") || kind.includes("integration") || kind.includes("builder")) return FileSearch;
   return ShieldCheck;
 }
@@ -82,6 +88,12 @@ export default function MarketplacePage() {
   const settledVolume = snapshot.data?.stats.usdcSettled ?? 0;
   const onchainServices = services.filter((service) => service.chainServiceId).length;
   const featuredServices = services.filter((service) => service.featured).length;
+  const categoryCounts = useMemo(() => {
+    const counts = Object.fromEntries(CATEGORIES.map((category) => [category.key, 0])) as Record<MarketplaceCategoryKey, number>;
+    counts.all = services.length;
+    for (const service of services) counts[serviceCategory(service)] += 1;
+    return counts;
+  }, [services]);
 
   const visibleServices = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -250,18 +262,25 @@ export default function MarketplacePage() {
       </div>
 
       {/* Search + filter + sort */}
-      <div className="flex flex-wrap gap-2">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
         {CATEGORIES.map((category) => {
           const Icon = category.icon;
+          const active = categoryFilter === category.key;
           return (
             <button
               key={category.key}
               type="button"
               onClick={() => setCategoryFilter(category.key)}
-              className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition ${categoryFilter === category.key ? "border-mint/40 bg-mint/10 text-white" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-mint/30 hover:text-white"}`}
+              className={`min-h-[86px] rounded-xl border px-3 py-3 text-left transition ${active ? "border-mint/40 bg-mint/10 text-white shadow-[0_0_24px_rgba(110,231,183,0.08)]" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-mint/30 hover:text-white"}`}
             >
-              <Icon size={15} />
-              {category.label}
+              <span className="flex items-center justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-2 text-sm font-bold">
+                  <Icon size={15} className={active ? "text-mint" : "text-slate-400"} />
+                  {category.label}
+                </span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${active ? "bg-mint/15 text-mint" : "bg-white/[0.06] text-slate-400"}`}>{categoryCounts[category.key] ?? 0}</span>
+              </span>
+              <span className="mt-2 block text-xs leading-5 text-slate-500">{MARKETPLACE_CATEGORY_DESCRIPTIONS[category.key]}</span>
             </button>
           );
         })}
@@ -541,7 +560,7 @@ function ServiceResult({result}: {result: unknown}) {
   if ("headings" in data || "wordCount" in data || "canonical" in data) return <WebsiteResult data={data} />;
   if ("stars" in data || "forks" in data || "readmeSummary" in data) return <GitHubResult data={data} />;
   if ("account" in data || "score" in data) return <XResult data={data} />;
-  if ("agenda" in data || "questions" in data || "followUps" in data || "integrationIdeas" in data || "steps" in data || "requirements" in data || "securityNotes" in data || "checks" in data || "recommendations" in data || "recommendedPolicy" in data || "gaps" in data || "risks" in data || "suggestions" in data) return <StructuredServiceResult data={data} />;
+  if ("agenda" in data || "questions" in data || "followUps" in data || "integrationIdeas" in data || "steps" in data || "requirements" in data || "securityNotes" in data || "checks" in data || "recommendations" in data || "recommendedPolicy" in data || "gaps" in data || "risks" in data || "suggestions" in data || "approvalRules" in data || "reminders" in data || "thresholds" in data || "providerStatus" in data || "pricingSignals" in data || "rebalanceTriggers" in data) return <StructuredServiceResult data={data} />;
 
   return (
     <div className="relative mt-5 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
@@ -566,6 +585,17 @@ function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
   const securityNotes = arrayValue(data.securityNotes);
   const risks = arrayValue(data.risks);
   const suggestions = arrayValue(data.suggestions);
+  const approvals = arrayValue(data.approvals);
+  const reminders = arrayValue(data.reminders);
+  const recommendedActions = arrayValue(data.recommendedActions);
+  const approvalRules = arrayValue(data.approvalRules);
+  const alerts = arrayValue(data.alerts);
+  const pricingSignals = arrayValue(data.pricingSignals);
+  const rebalanceTriggers = arrayValue(data.rebalanceTriggers);
+  const providerStatus = objectValue(data.providerStatus);
+  const recommendedPolicy = objectValue(data.recommendedPolicy);
+  const metrics = objectValue(data.metrics);
+  const thresholds = objectValue(data.thresholds);
   return (
     <div className="surface mt-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -576,9 +606,14 @@ function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
         {numberValue(data.score) !== null ? <span className="status-pill">Score {numberValue(data.score)}</span> : null}
       </div>
       {stringValue(data.summary) ? <p className="mt-3 text-sm leading-6 text-slate-300">{stringValue(data.summary)}</p> : null}
+      {Object.keys(providerStatus).length > 0 ? <ResultObject title="Provider status" value={providerStatus} /> : null}
+      {Object.keys(metrics).length > 0 ? <ResultObject title="Metrics" value={metrics} /> : null}
+      {Object.keys(thresholds).length > 0 ? <ResultObject title="Thresholds" value={thresholds} /> : null}
+      {Object.keys(recommendedPolicy).length > 0 ? <ResultObject title="Recommended policy" value={recommendedPolicy} /> : null}
       <ResultList title="Checks" items={checks} />
       <ResultList title="Issues" items={issues} />
       <ResultList title="Risks" items={risks} />
+      <ResultList title="Approvals" items={approvals} />
       <ResultList title="Strengths" items={strengths} />
       <ResultList title="Gaps" items={gaps} />
       <ResultList title="Agenda" items={agenda} />
@@ -588,6 +623,12 @@ function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
       <ResultList title="Steps" items={steps} />
       <ResultList title="Requirements" items={requirements} />
       <ResultList title="Security notes" items={securityNotes} />
+      <ResultList title="Reminders" items={reminders} />
+      <ResultList title="Recommended actions" items={recommendedActions} />
+      <ResultList title="Approval rules" items={approvalRules} />
+      <ResultList title="Alerts" items={alerts} />
+      <ResultList title="Pricing signals" items={pricingSignals} />
+      <ResultList title="Rebalance triggers" items={rebalanceTriggers} />
       <ResultList title="Recommendations" items={recommendations} />
       <ResultList title="Suggestions" items={suggestions} />
     </div>
@@ -701,11 +742,33 @@ function ResultList({title, items}: {title: string; items: unknown[]}) {
       <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{title}</p>
       <div className="mt-2 grid gap-2">
         {items.slice(0, 5).map((item, index) => (
-          <div key={`${title}-${index}`} className="surface px-3 py-2 text-sm text-slate-300">{String(item)}</div>
+          <div key={`${title}-${index}`} className="surface px-3 py-2 text-sm text-slate-300">{renderResultValue(item)}</div>
         ))}
       </div>
     </div>
   );
+}
+
+function ResultObject({title, value}: {title: string; value: Record<string, unknown>}) {
+  return (
+    <div className="mt-4">
+      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{title}</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {Object.entries(value).slice(0, 8).map(([key, item]) => (
+          <div key={key} className="surface px-3 py-2 text-sm">
+            <span className="block text-xs uppercase tracking-[0.12em] text-slate-500">{key}</span>
+            <span className="mt-1 block text-slate-300">{renderResultValue(item)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function renderResultValue(value: unknown): string {
+  if (value === null || value === undefined) return "N/A";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
 }
 
 function stringValue(value: unknown) {

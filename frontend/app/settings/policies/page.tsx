@@ -1,5 +1,5 @@
 import {useMemo, useState} from "react";
-import {Bot, ClipboardCheck, ExternalLink, Gauge, ShieldCheck, Wallet} from "lucide-react";
+import {Bot, ClipboardCheck, ExternalLink, Gauge, ScrollText, ShieldCheck, Wallet} from "lucide-react";
 import {useAccount} from "wagmi";
 import {PolicyForm} from "@/components/PolicyForm";
 import {PageHeader} from "@/components/PageHeader";
@@ -8,6 +8,7 @@ import {AgentAvatar} from "@/components/AgentAvatar";
 import {EmptyState} from "@/components/EmptyState";
 import {PolicySimulationPanel} from "@/components/PolicySimulationPanel";
 import {RiskAlertsPanel} from "@/components/RiskAlertsPanel";
+import {AgentCommandModal} from "@/components/AgentCommandModal";
 import {arcTestnet, shortAddress} from "@/lib/arc";
 import {timeAgo} from "@/lib/time";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
@@ -28,6 +29,7 @@ export default function PoliciesPage() {
   const pendingApprovals = (snapshot.data?.approvalRequests ?? []).filter((request) => request.status === "pending");
   const riskAlerts = snapshot.data?.riskAlerts ?? [];
   const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [commandOpen, setCommandOpen] = useState(false);
 
   // Derive each agent's USD spend today from settled payments it made.
   const spentByAgent = useMemo(() => {
@@ -52,7 +54,15 @@ export default function PoliciesPage() {
         kicker="Agent controls"
         title="Wallet policy cockpit"
         description="Set daily spend limits, transaction caps, and autonomous payment controls."
+        action={
+          <button type="button" className="action-button" onClick={() => setCommandOpen(true)}>
+            <ScrollText size={16} />
+            Command agent
+          </button>
+        }
       />
+
+      <AgentCommandModal open={commandOpen} selectedAgentId={selectedAgentId} onSelectAgent={setSelectedAgentId} onClose={() => setCommandOpen(false)} />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatMetric variant="panel" icon={ShieldCheck} label="Active policies" value={activePolicies.length} loading={snapshot.isLoading} accent />

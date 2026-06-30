@@ -1,5 +1,6 @@
 import {NexoraX402Client, parseXPaymentHeader} from "./client.js";
 import {createPaymentRequirements, paymentRequiredResponse} from "./requirements.js";
+import {dispatchReceiptCallback} from "./webhook.js";
 import type {NexoraX402Config, X402Context} from "./types.js";
 
 type ExpressLikeRequest = {
@@ -42,6 +43,7 @@ export function nexoraX402(config: NexoraX402Config) {
       return sendPaymentRequired(res, paymentRequirements, settlement.errorReason);
     }
 
+    await dispatchReceiptCallback(config.onReceipt, {paymentRequirements, verification, settlement});
     req.x402 = {payment, paymentRequirements, verification, settlement};
     return next();
   };

@@ -223,7 +223,10 @@ export async function executeMarketplaceService(input: {
     serviceId: service.id,
     kind,
     input: args,
-    result: await executeBuiltInService(kind, args)
+    result: await executeServiceHandler(service, args, {
+      authorizationId: input.authorizationId,
+      payer: input.payer
+    })
   };
   const notification = await updateStore((store) => pushNotification(store, {
     operatorAddress: input.payer,
@@ -235,6 +238,47 @@ export async function executeMarketplaceService(input: {
   }));
   await dispatchNotification({notification, event: "agentActions", receiptId: input.authorizationId}).catch(() => undefined);
   return execution;
+}
+
+async function executeServiceHandler(service: ServiceRecord, args: Record<string, unknown>, context: {authorizationId?: string | null; payer: string}) {
+  if (service.manifest.webhookUrl) {
+    return executeWebhookService(service, args, context);
+  }
+  return executeBuiltInService(service.manifest.kind, args);
+}
+
+async function executeWebhookService(service: ServiceRecord, args: Record<string, unknown>, context: {authorizationId?: string | null; payer: string}) {
+  const url = safeHttpUrl(service.manifest.webhookUrl, "webhookUrl");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": "NexoraMarketplaceWebhook/1.0"
+    },
+    body: JSON.stringify({
+      service: {
+        id: service.id,
+        chainServiceId: service.chainServiceId,
+        endpointHash: service.endpointHash,
+        kind: service.manifest.kind,
+        name: service.name
+      },
+      payer: context.payer,
+      authorizationId: context.authorizationId ?? null,
+      args
+    }),
+    signal: AbortSignal.timeout(15_000)
+  });
+  const text = await response.text();
+  const data = text ? parseWebhookJson(text) : {};
+  if (!response.ok) {
+    return {
+      status: "error",
+      message: `Service webhook returned ${response.status}`,
+      detail: typeof data?.error === "string" ? data.error : text.slice(0, 240)
+    };
+  }
+  return data;
 }
 
 export async function executeBuiltInService(kind: ServiceManifest["kind"], args: Record<string, unknown>) {
@@ -301,6 +345,50 @@ export async function executeBuiltInService(kind: ServiceManifest["kind"], args:
     return planX402Integration(requiredString(args.api ?? args.endpoint, "api"));
   }
 
+  if (kind === "wallet_risk_approval_scan") {
+    return scanWalletRiskApprovals(requiredString(args.wallet ?? args.address, "wallet"));
+  }
+
+  if (kind === "contract_interaction_risk_scan") {
+    return scanContractInteraction(requiredString(args.interaction ?? args.contract ?? args.action, "interaction"));
+  }
+
+  if (kind === "invoice_collection_agent") {
+    return createInvoiceCollectionPlan(requiredString(args.invoice ?? args.details, "invoice"));
+  }
+
+  if (kind === "escrow_milestone_monitor") {
+    return monitorEscrowMilestones(requiredString(args.escrow ?? args.terms, "escrow"));
+  }
+
+  if (kind === "counterparty_compliance_screen") {
+    return screenCounterpartyCompliance(requiredString(args.counterparty ?? args.wallet ?? args.address, "counterparty"));
+  }
+
+  if (kind === "liquidation_risk_monitor") {
+    return monitorLiquidationRisk(requiredString(args.position ?? args.details, "position"));
+  }
+
+  if (kind === "vault_apy_monitor") {
+    return monitorVaultApy(requiredString(args.vault ?? args.strategy, "vault"));
+  }
+
+  if (kind === "subscription_payment_agent") {
+    return createSubscriptionPaymentPlan(requiredString(args.subscription ?? args.terms, "subscription"));
+  }
+
+  if (kind === "publisher_revenue_intelligence") {
+    return analyzePublisherRevenue(requiredString(args.publisher ?? args.service ?? args.details, "publisher"));
+  }
+
+  if (kind === "dao_grant_payout_agent") {
+    return createDaoGrantPayoutPlan(requiredString(args.payout ?? args.plan, "payout"));
+  }
+
+  if (kind === "swap_route_quote_agent") {
+    return reviewSwapRouteQuote(requiredString(args.quote ?? args.route, "quote"));
+  }
+
   return {
     summary: "Service executed",
     note: "Define a backend execution handler for this endpointHash to return structured output."
@@ -343,6 +431,17 @@ export function inferServiceKind(service: Pick<ServiceRecord, "name" | "endpoint
   if (marker.includes("policy risk") || marker.includes("agent policy review")) return "policy_risk_review";
   if (marker.includes("launch readiness") || marker.includes("launch check")) return "launch_readiness_check";
   if (marker.includes("x402 integration") || marker.includes("integration planner")) return "x402_integration_planner";
+  if (marker.includes("wallet risk") || marker.includes("approval scan")) return "wallet_risk_approval_scan";
+  if (marker.includes("contract interaction") || marker.includes("interaction risk")) return "contract_interaction_risk_scan";
+  if (marker.includes("invoice") || marker.includes("collection agent")) return "invoice_collection_agent";
+  if (marker.includes("escrow milestone") || marker.includes("milestone monitor")) return "escrow_milestone_monitor";
+  if (marker.includes("counterparty") || marker.includes("compliance screen")) return "counterparty_compliance_screen";
+  if (marker.includes("liquidation") || marker.includes("margin risk")) return "liquidation_risk_monitor";
+  if (marker.includes("vault apy") || marker.includes("apy monitor")) return "vault_apy_monitor";
+  if (marker.includes("subscription payment") || marker.includes("recurring payment")) return "subscription_payment_agent";
+  if (marker.includes("publisher revenue") || marker.includes("revenue intelligence")) return "publisher_revenue_intelligence";
+  if (marker.includes("dao") || marker.includes("grant payout")) return "dao_grant_payout_agent";
+  if (marker.includes("swap route") || marker.includes("quote agent")) return "swap_route_quote_agent";
   return "generic";
 }
 
@@ -508,6 +607,127 @@ function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
       description: "Creates a practical x402 integration checklist for a paid API, including requirements, SDK wiring, and settlement flow.",
       inputSchema: [{name: "api", label: "API description", type: "text", required: true, placeholder: "Paid repo analyzer endpoint in Next.js"}],
       outputSchema: ["summary", "steps", "requirements", "securityNotes"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "wallet_risk_approval_scan") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Scans a wallet for risky approval patterns, counterparty exposure, and policy recommendations before an agent pays or interacts.",
+      inputSchema: [{name: "wallet", label: "Wallet address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["wallet", "riskLevel", "checks", "approvals", "recommendedPolicy", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "contract_interaction_risk_scan") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a target contract and intended action before an agent signs, approves, swaps, pays, or adds it to allowlists.",
+      inputSchema: [{name: "interaction", label: "Contract and action", type: "text", required: true, placeholder: "0x... approve 25 USDC for x402 settlement"}],
+      outputSchema: ["contract", "action", "riskLevel", "checks", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "invoice_collection_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Turns invoice details into a USDC collection workflow with reminders, receipt checks, and follow-up actions.",
+      inputSchema: [{name: "invoice", label: "Invoice details", type: "text", required: true, placeholder: "Client, amount, due date, wallet, and deliverable"}],
+      outputSchema: ["invoice", "amountUsdc", "dueDate", "actions", "reminders", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "escrow_milestone_monitor") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Monitors escrow milestones, evidence, deadline risk, and release/refund recommendations while keeping final approval with users.",
+      inputSchema: [{name: "escrow", label: "Escrow terms", type: "text", required: true, placeholder: "Milestones, due dates, amount, parties, and evidence links"}],
+      outputSchema: ["milestones", "riskLevel", "reminders", "recommendedActions", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "counterparty_compliance_screen") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Screens a wallet or counterparty for payment suitability, risk indicators, and compliance-provider readiness.",
+      inputSchema: [{name: "counterparty", label: "Wallet or counterparty", type: "text", required: true, placeholder: "0x... or company/payment context"}],
+      outputSchema: ["counterparty", "riskLevel", "checks", "providerStatus", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "liquidation_risk_monitor") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews DeFi position details and produces liquidation-risk triggers, alert thresholds, and agent-safe recommendations.",
+      inputSchema: [{name: "position", label: "Position details", type: "text", required: true, placeholder: "Protocol, wallet, collateral, debt, health factor, chain"}],
+      outputSchema: ["riskLevel", "healthFactor", "thresholds", "alerts", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "vault_apy_monitor") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Checks vault opportunity details for APY, TVL, strategy-risk, rebalance triggers, and Save/Earn readiness.",
+      inputSchema: [{name: "vault", label: "Vault or strategy details", type: "text", required: true, placeholder: "Vault name, APY, TVL, asset, chain, withdrawal terms"}],
+      outputSchema: ["vault", "apy", "riskLevel", "checks", "rebalanceTriggers", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "subscription_payment_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Creates a policy-controlled recurring USDC payment plan with spend caps, approval rules, and receipt expectations.",
+      inputSchema: [{name: "subscription", label: "Subscription terms", type: "text", required: true, placeholder: "Vendor, amount, interval, payee wallet, approval threshold"}],
+      outputSchema: ["payee", "amountUsdc", "interval", "policy", "approvalRules", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "publisher_revenue_intelligence") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Analyzes publisher service revenue, conversion, failed payments, fees, and pricing opportunities for x402 APIs.",
+      inputSchema: [{name: "publisher", label: "Publisher or service details", type: "text", required: true, placeholder: "Publisher wallet, service id, or revenue notes"}],
+      outputSchema: ["publisher", "metrics", "pricingSignals", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "dao_grant_payout_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Builds a DAO or grant payout plan with milestone checks, recipient policy, approval requirements, and receipt tracking.",
+      inputSchema: [{name: "payout", label: "Payout plan", type: "text", required: true, placeholder: "Recipients, amounts, milestones, due dates, approval rules"}],
+      outputSchema: ["recipients", "totalUsdc", "milestones", "approvalRules", "risks", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "swap_route_quote_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Prepares a same-chain swap or route quote review with slippage, quote freshness, asset decimals, and execution checks.",
+      inputSchema: [{name: "quote", label: "Swap or route request", type: "text", required: true, placeholder: "Swap 100 USDC to EURC on Arc with 1% slippage"}],
+      outputSchema: ["route", "amount", "slippageBps", "riskLevel", "checks", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };
@@ -782,6 +1002,318 @@ function planX402Integration(api: string) {
   };
 }
 
+function scanWalletRiskApprovals(wallet: string) {
+  const valid = /^0x[a-fA-F0-9]{40}$/.test(wallet);
+  return {
+    status: valid ? "ok" : "warning",
+    wallet,
+    riskLevel: valid ? "medium" : "high",
+    providerStatus: {
+      approvals: "not_configured",
+      note: "Live allowance history requires an indexer or approval-risk provider. This built-in scan returns policy-safe checks until a provider is configured."
+    },
+    approvals: valid ? [
+      {spender: "unknown", risk: "review_required", action: "Connect an allowance indexer before high-value automation."}
+    ] : [],
+    checks: [
+      valid ? "Wallet address format is valid." : "Wallet address format is invalid or incomplete.",
+      "Review ERC-20 approvals before funding an agent wallet.",
+      "Avoid unlimited approvals for agent-operated wallets.",
+      "Require recipient and service allowlists for new counterparties.",
+      "Start with small caps until wallet history has been reviewed."
+    ],
+    recommendedPolicy: {
+      transactionCapUsdc: valid ? 10 : 0,
+      dailyLimitUsdc: valid ? 50 : 0,
+      weeklyLimitUsdc: valid ? 150 : 0,
+      requireOnchainPolicy: true,
+      recipientAllowlist: valid ? [wallet] : []
+    },
+    summary: valid
+      ? "Wallet format is valid. Treat this as a preflight policy scan and connect an allowance/history provider before relying on it for large balances."
+      : "The wallet input is not valid. Do not fund or allowlist this address."
+  };
+}
+
+function scanContractInteraction(interaction: string) {
+  const contract = interaction.match(/0x[a-fA-F0-9]{40}/)?.[0] ?? "";
+  const amount = numericHint(interaction, /(\d+(\.\d+)?)\s*(usdc|eurc|usd)/i);
+  const action = /approve/i.test(interaction) ? "approve" : /swap/i.test(interaction) ? "swap" : /transfer|pay|settle/i.test(interaction) ? "payment" : "contract_call";
+  const highRisk = !contract || /unlimited|max|infinite/i.test(interaction) || amount > 100;
+  return {
+    status: contract ? "ok" : "warning",
+    contract: contract || null,
+    action,
+    amountUsdc: amount || null,
+    riskLevel: highRisk ? "high" : amount > 25 ? "medium" : "low",
+    checks: [
+      contract ? "Target contract address found." : "No valid contract address found.",
+      action === "approve" ? "Approval actions should use exact spend amounts where possible." : "Action does not look like an ERC-20 approval.",
+      amount > 0 ? `Amount hint detected: ${amount}.` : "No amount detected; require explicit amount before execution.",
+      "Verify source code, proxy admin, pause roles, and upgrade authority.",
+      "Run a small test transaction before enabling automation."
+    ],
+    recommendations: [
+      "Use exact allowance instead of unlimited allowance.",
+      "Add the contract to policy allowlist only after source verification.",
+      "Require human approval for first interaction with a new contract."
+    ],
+    summary: highRisk
+      ? "Interaction requires manual review before an agent should execute it."
+      : "Interaction looks suitable for a low-limit test after contract verification."
+  };
+}
+
+function createInvoiceCollectionPlan(invoice: string) {
+  const amount = amountFromText(invoice);
+  const dueDate = dateHint(invoice);
+  const wallet = invoice.match(/0x[a-fA-F0-9]{40}/)?.[0] ?? null;
+  return {
+    status: "ok",
+    invoice: clip(invoice, 180),
+    amountUsdc: amount || null,
+    dueDate,
+    payTo: wallet,
+    actions: [
+      "Create invoice request with USDC amount, payer, payee wallet, due date, and deliverable.",
+      "Send reminder 72 hours before due date and again on due date.",
+      "Check settlement receipt before marking invoice paid.",
+      "Escalate to human approval before refunds, discounts, or dispute actions."
+    ],
+    reminders: [
+      {when: "T-72h", channel: "email/telegram", message: "Invoice due soon."},
+      {when: "T+0", channel: "email/telegram", message: "Invoice due today."},
+      {when: "T+48h", channel: "email/telegram", message: "Invoice overdue; review collection action."}
+    ],
+    recommendedPolicy: {
+      transactionCapUsdc: amount ? Math.min(amount, 250) : 100,
+      dailyLimitUsdc: amount ? Math.min(amount * 2, 1000) : 250,
+      requireOnchainPolicy: true
+    },
+    summary: "Invoice workflow prepared. The agent should remind, verify receipts, and request user approval before any non-standard action."
+  };
+}
+
+function monitorEscrowMilestones(escrow: string) {
+  const amount = amountFromText(escrow);
+  const dueDate = dateHint(escrow);
+  const milestones = extractMilestones(escrow);
+  const riskLevel = /dispute|late|overdue|unclear|missing/i.test(escrow) ? "high" : dueDate ? "medium" : "low";
+  return {
+    status: "ok",
+    milestones,
+    amountUsdc: amount || null,
+    riskLevel,
+    reminders: [
+      "Remind both parties before each milestone deadline.",
+      "Request evidence links or deliverable notes before recommending release.",
+      "Notify both parties when milestone status changes."
+    ],
+    recommendedActions: [
+      "Summarize evidence for user review.",
+      "Flag missing evidence or ambiguous acceptance terms.",
+      "Require user approval or contract-defined rules before release/refund."
+    ],
+    summary: "Escrow monitor prepared. The agent can remind and recommend, but final money movement should remain user-approved or contract-defined."
+  };
+}
+
+function screenCounterpartyCompliance(counterparty: string) {
+  const wallet = counterparty.match(/0x[a-fA-F0-9]{40}/)?.[0] ?? null;
+  return {
+    status: "ok",
+    counterparty: wallet ?? clip(counterparty, 180),
+    riskLevel: wallet ? "medium" : "review",
+    providerStatus: {
+      sanctions: "not_configured",
+      note: "No sanctions/KYT provider is configured. Integrate a licensed compliance provider before presenting this as definitive screening."
+    },
+    checks: [
+      wallet ? "Wallet address format detected." : "No wallet address detected; screen business identity and payout wallet separately.",
+      "Check sanctions and illicit-finance exposure with a licensed provider.",
+      "Check wallet age, counterparties, and transaction history before high-value payments.",
+      "Keep receipts and approval notes for audit trail."
+    ],
+    recommendations: [
+      "Use low transaction caps until a compliance provider clears the counterparty.",
+      "Require manual approval for first payment.",
+      "Store screening result references with the receipt."
+    ],
+    summary: "Counterparty workflow prepared. This is a readiness screen, not a legal compliance determination."
+  };
+}
+
+function monitorLiquidationRisk(position: string) {
+  const healthFactor = numericHint(position, /health[^0-9]*(\d+(\.\d+)?)/i);
+  const riskLevel = healthFactor > 0 && healthFactor < 1.15 ? "high" : healthFactor > 0 && healthFactor < 1.5 ? "medium" : "review";
+  return {
+    status: "ok",
+    providerStatus: {
+      marketData: "not_configured",
+      note: "Live liquidation monitoring requires protocol and oracle data. This handler prepares alert policy from supplied position details."
+    },
+    healthFactor: healthFactor || null,
+    riskLevel,
+    thresholds: {
+      criticalHealthFactor: 1.1,
+      warningHealthFactor: 1.35,
+      checkIntervalMinutes: riskLevel === "high" ? 5 : 30
+    },
+    alerts: [
+      "Notify user when health factor falls below warning threshold.",
+      "Require approval before any deleverage, collateral add, or repay action.",
+      "Send repeated alerts only after cooldown to avoid notification spam."
+    ],
+    recommendations: [
+      "Connect protocol-specific position data before automation.",
+      "Keep agent spend limits below emergency-repay budget.",
+      "Use human approval for first live mainnet action."
+    ],
+    summary: `Liquidation monitoring policy prepared with ${riskLevel} risk based on supplied details.`
+  };
+}
+
+function monitorVaultApy(vault: string) {
+  const apy = numericHint(vault, /(\d+(\.\d+)?)\s*%?\s*(apy|apr)/i);
+  const tvl = numericHint(vault, /tvl[^0-9]*(\d+(\.\d+)?)/i);
+  const riskLevel = /new|unaudited|experimental|lock/i.test(vault) ? "high" : apy > 20 ? "medium" : "review";
+  return {
+    status: "ok",
+    vault: clip(vault, 180),
+    apy: apy || null,
+    tvl: tvl || null,
+    riskLevel,
+    providerStatus: {
+      vaultData: "not_configured",
+      note: "Live APY/TVL checks require vault provider APIs. This handler prepares Save/Earn monitoring rules from supplied vault details."
+    },
+    checks: [
+      "Confirm APY source and update timestamp.",
+      "Check withdrawal delay, fees, strategy risk, and audit status.",
+      "Avoid auto-rebalance into unaudited or low-liquidity vaults.",
+      "Require user approval before first deposit."
+    ],
+    rebalanceTriggers: [
+      "Better vault APY exceeds current APY by configured spread.",
+      "Current vault risk rating worsens.",
+      "TVL or liquidity falls below minimum threshold."
+    ],
+    summary: "Vault monitoring plan prepared. Use live vault APIs before enabling automated deposits or rebalances."
+  };
+}
+
+function createSubscriptionPaymentPlan(subscription: string) {
+  const amount = amountFromText(subscription);
+  const interval = /weekly/i.test(subscription) ? "weekly" : /yearly|annual/i.test(subscription) ? "yearly" : "monthly";
+  const payee = subscription.match(/0x[a-fA-F0-9]{40}/)?.[0] ?? null;
+  return {
+    status: "ok",
+    payee,
+    amountUsdc: amount || null,
+    interval,
+    policy: {
+      transactionCapUsdc: amount ? Math.min(amount, 250) : 50,
+      monthlyLimitUsdc: amount && interval === "monthly" ? amount * 2 : 250,
+      requireOnchainPolicy: true
+    },
+    approvalRules: [
+      "Require approval when amount changes.",
+      "Require approval when payee wallet changes.",
+      "Pause after repeated failed settlements.",
+      "Send receipt notification after every payment."
+    ],
+    summary: "Subscription payment plan prepared with policy caps and approval rules."
+  };
+}
+
+async function analyzePublisherRevenue(publisher: string) {
+  const store = await readStore();
+  const marker = publisher.trim().toLowerCase();
+  const services = visibleServicesForStore(store.services).filter((service) =>
+    service.publisherAddress.toLowerCase() === marker ||
+    service.id.toLowerCase() === marker ||
+    service.endpointHash.toLowerCase() === marker ||
+    service.name.toLowerCase().includes(marker)
+  );
+  const serviceIds = new Set(services.map((service) => service.id));
+  const payments = store.payments.filter((payment) =>
+    serviceIds.has(payment.serviceId) ||
+    payment.publisherAddress.toLowerCase() === marker
+  );
+  const settled = payments.filter((payment) => payment.status === "settled");
+  const failed = payments.filter((payment) => payment.status === "failed" || payment.status === "policy_blocked");
+  const gross = settled.reduce((sum, payment) => sum + Number(payment.grossAmountUsdc ?? payment.amountUsdc ?? 0), 0);
+  return {
+    status: "ok",
+    publisher: publisher.trim(),
+    metrics: {
+      services: services.length,
+      settledPayments: settled.length,
+      failedPayments: failed.length,
+      grossUsdc: roundUsdc(gross),
+      averageOrderUsdc: settled.length ? roundUsdc(gross / settled.length) : 0
+    },
+    pricingSignals: [
+      settled.length === 0 ? "No settled purchases yet; start with low friction pricing." : "Settled purchase history exists.",
+      failed.length > settled.length ? "Failure count is high; review pricing, policy compatibility, and service readiness." : "Failure count is within normal demo range.",
+      services.length > 1 ? "Publisher has multiple services; bundle or cross-promote related endpoints." : "Add a second complementary service to improve publisher trust."
+    ],
+    recommendations: [
+      "Show receipt links and successful settlement count on service pages.",
+      "Use category-specific pricing rather than one flat demo price.",
+      "Add webhook-backed execution for services that need live external data."
+    ],
+    summary: "Publisher revenue intelligence generated from Nexora marketplace records."
+  };
+}
+
+function createDaoGrantPayoutPlan(payout: string) {
+  const total = amountFromText(payout);
+  const recipients = [...payout.matchAll(/0x[a-fA-F0-9]{40}/g)].map((match) => match[0]);
+  return {
+    status: "ok",
+    recipients,
+    totalUsdc: total || null,
+    milestones: extractMilestones(payout),
+    approvalRules: [
+      "Require reviewer approval before each milestone payout.",
+      "Require recipient allowlist before any transfer.",
+      "Attach receipt link and memo to every payout.",
+      "Pause payouts if evidence is missing or dispute risk is flagged."
+    ],
+    risks: [
+      recipients.length === 0 ? "No recipient wallet detected." : "Recipient wallet list detected; verify each one before payout.",
+      total === 0 ? "No total amount detected." : "Total amount detected; enforce per-recipient caps.",
+      "Grant payments need clear milestone evidence and audit trail."
+    ],
+    summary: "DAO/grant payout workflow prepared with approval and receipt controls."
+  };
+}
+
+function reviewSwapRouteQuote(quote: string) {
+  const amount = amountFromText(quote);
+  const slippage = numericHint(quote, /(\d+(\.\d+)?)\s*%?\s*slippage/i);
+  const riskLevel = slippage > 2 || /unknown|illiquid|new pool/i.test(quote) ? "high" : amount > 1000 ? "medium" : "low";
+  return {
+    status: "ok",
+    route: clip(quote, 180),
+    amount: amount || null,
+    slippageBps: slippage ? Math.round(slippage * 100) : null,
+    riskLevel,
+    providerStatus: {
+      quote: config.integrations.synthraApiKey ? "configured" : "not_configured",
+      note: config.integrations.synthraApiKey ? "Synthra API key is configured for route quotes." : "Live quote execution requires a configured swap provider."
+    },
+    checks: [
+      "Confirm token decimals before signing.",
+      "Refresh quote immediately before execution.",
+      "Display minimum output and route provider.",
+      "Require approval for first interaction with a new router."
+    ],
+    summary: "Swap route review prepared. Use live quotes before submitting a transaction."
+  };
+}
+
 async function assertSettledAuthorization(authorizationId: string, serviceId: string, payer: string) {
   const store = await readStore();
   const payment = store.payments.find((item) => item.authorizationId === authorizationId || item.id === authorizationId);
@@ -997,6 +1529,48 @@ function numericHint(value: string, pattern: RegExp) {
   const match = value.match(pattern);
   const numeric = Number(match?.[1] ?? match?.[2] ?? 0);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function amountFromText(value: string) {
+  return numericHint(value, /(?:\$|usdc|eurc|amount|total)?\s*(\d+(\.\d+)?)\s*(?:usdc|eurc|usd)?/i);
+}
+
+function dateHint(value: string) {
+  const iso = value.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1];
+  if (iso) return iso;
+  const relative = value.match(/\b(\d+)\s*(day|days|week|weeks|month|months)\b/i);
+  if (!relative) return null;
+  const amount = Number(relative[1]);
+  const unit = relative[2].toLowerCase();
+  const date = new Date();
+  if (unit.startsWith("day")) date.setDate(date.getDate() + amount);
+  if (unit.startsWith("week")) date.setDate(date.getDate() + amount * 7);
+  if (unit.startsWith("month")) date.setMonth(date.getMonth() + amount);
+  return date.toISOString().slice(0, 10);
+}
+
+function extractMilestones(value: string) {
+  const explicit = [...value.matchAll(/(?:milestone|phase|deliverable)\s*[:#-]?\s*([^.;\n]+)/gi)]
+    .map((match) => match[1]?.trim())
+    .filter((item): item is string => Boolean(item));
+  if (explicit.length > 0) return explicit.slice(0, 6);
+  return value
+    .split(/\n|;|\.\s+/)
+    .map((item) => item.trim())
+    .filter((item) => /deliver|milestone|phase|due|deadline|evidence|release/i.test(item))
+    .slice(0, 6);
+}
+
+function parseWebhookJson(text: string) {
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return {summary: text.slice(0, 2_000)};
+  }
+}
+
+function roundUsdc(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 function extractTagContent(html: string, tag: string) {

@@ -88,6 +88,17 @@ export type ServiceManifest = {
     | "policy_risk_review"
     | "launch_readiness_check"
     | "x402_integration_planner"
+    | "wallet_risk_approval_scan"
+    | "contract_interaction_risk_scan"
+    | "invoice_collection_agent"
+    | "escrow_milestone_monitor"
+    | "counterparty_compliance_screen"
+    | "liquidation_risk_monitor"
+    | "vault_apy_monitor"
+    | "subscription_payment_agent"
+    | "publisher_revenue_intelligence"
+    | "dao_grant_payout_agent"
+    | "swap_route_quote_agent"
     | "generic";
   version: string;
   description: string;
@@ -415,7 +426,18 @@ const SEEDED_SERVICE_IDS = new Set([
   "nexora-stablecoin-route-report",
   "nexora-policy-risk-review",
   "nexora-launch-readiness-check",
-  "nexora-x402-integration-planner"
+  "nexora-x402-integration-planner",
+  "nexora-wallet-risk-approval-scan",
+  "nexora-contract-interaction-risk-scan",
+  "nexora-invoice-collection-agent",
+  "nexora-escrow-milestone-monitor",
+  "nexora-counterparty-compliance-screen",
+  "nexora-liquidation-risk-monitor",
+  "nexora-vault-apy-monitor",
+  "nexora-subscription-payment-agent",
+  "nexora-publisher-revenue-intelligence",
+  "nexora-dao-grant-payout-agent",
+  "nexora-swap-route-quote-agent"
 ]);
 
 const SEEDED_ENDPOINT_HASHES = new Set([
@@ -433,7 +455,18 @@ const SEEDED_ENDPOINT_HASHES = new Set([
   "stablecoin-route-report-v1",
   "policy-risk-review-v1",
   "launch-readiness-check-v1",
-  "x402-integration-planner-v1"
+  "x402-integration-planner-v1",
+  "wallet-risk-approval-scan-v1",
+  "contract-interaction-risk-scan-v1",
+  "invoice-collection-agent-v1",
+  "escrow-milestone-monitor-v1",
+  "counterparty-compliance-screen-v1",
+  "liquidation-risk-monitor-v1",
+  "vault-apy-monitor-v1",
+  "subscription-payment-agent-v1",
+  "publisher-revenue-intelligence-v1",
+  "dao-grant-payout-agent-v1",
+  "swap-route-quote-agent-v1"
 ]);
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
@@ -1468,7 +1501,18 @@ function seededServices(): ServiceRecord[] {
     {id: "nexora-stablecoin-route-report", name: "Stablecoin Route Report", endpointHash: "stablecoin-route-report-v1", pricePerUnitUsdc: 0.02, kind: "stablecoin_route_report", featured: true},
     {id: "nexora-policy-risk-review", name: "Agent Policy Risk Review", endpointHash: "policy-risk-review-v1", pricePerUnitUsdc: 0.025, kind: "policy_risk_review"},
     {id: "nexora-launch-readiness-check", name: "Launch Readiness Check", endpointHash: "launch-readiness-check-v1", pricePerUnitUsdc: 0.03, kind: "launch_readiness_check"},
-    {id: "nexora-x402-integration-planner", name: "x402 Integration Planner", endpointHash: "x402-integration-planner-v1", pricePerUnitUsdc: 0.025, kind: "x402_integration_planner", featured: true}
+    {id: "nexora-x402-integration-planner", name: "x402 Integration Planner", endpointHash: "x402-integration-planner-v1", pricePerUnitUsdc: 0.025, kind: "x402_integration_planner", featured: true},
+    {id: "nexora-wallet-risk-approval-scan", name: "Wallet Risk + Approval Scan", endpointHash: "wallet-risk-approval-scan-v1", pricePerUnitUsdc: 0.05, kind: "wallet_risk_approval_scan", featured: true},
+    {id: "nexora-contract-interaction-risk-scan", name: "Contract Interaction Risk Scan", endpointHash: "contract-interaction-risk-scan-v1", pricePerUnitUsdc: 0.04, kind: "contract_interaction_risk_scan", featured: true},
+    {id: "nexora-invoice-collection-agent", name: "Invoice Collection Agent", endpointHash: "invoice-collection-agent-v1", pricePerUnitUsdc: 0.05, kind: "invoice_collection_agent", featured: true},
+    {id: "nexora-escrow-milestone-monitor", name: "Escrow Milestone Monitor", endpointHash: "escrow-milestone-monitor-v1", pricePerUnitUsdc: 0.06, kind: "escrow_milestone_monitor", featured: true},
+    {id: "nexora-counterparty-compliance-screen", name: "Counterparty Compliance Screen", endpointHash: "counterparty-compliance-screen-v1", pricePerUnitUsdc: 0.08, kind: "counterparty_compliance_screen"},
+    {id: "nexora-liquidation-risk-monitor", name: "Liquidation Risk Monitor", endpointHash: "liquidation-risk-monitor-v1", pricePerUnitUsdc: 0.07, kind: "liquidation_risk_monitor"},
+    {id: "nexora-vault-apy-monitor", name: "Vault APY Monitor", endpointHash: "vault-apy-monitor-v1", pricePerUnitUsdc: 0.04, kind: "vault_apy_monitor"},
+    {id: "nexora-subscription-payment-agent", name: "Subscription Payment Agent", endpointHash: "subscription-payment-agent-v1", pricePerUnitUsdc: 0.05, kind: "subscription_payment_agent"},
+    {id: "nexora-publisher-revenue-intelligence", name: "Publisher Revenue Intelligence", endpointHash: "publisher-revenue-intelligence-v1", pricePerUnitUsdc: 0.04, kind: "publisher_revenue_intelligence"},
+    {id: "nexora-dao-grant-payout-agent", name: "DAO / Grant Payout Agent", endpointHash: "dao-grant-payout-agent-v1", pricePerUnitUsdc: 0.06, kind: "dao_grant_payout_agent"},
+    {id: "nexora-swap-route-quote-agent", name: "Swap / Route Quote Agent", endpointHash: "swap-route-quote-agent-v1", pricePerUnitUsdc: 0.04, kind: "swap_route_quote_agent"}
   ];
 
   return seeds.map((seed, index) => ({
@@ -1590,6 +1634,17 @@ function defaultManifestForService(name: string, endpointHash: string): ServiceM
   if (marker.includes("policy risk") || marker.includes("agent policy review")) return manifestTemplateForKind("policy_risk_review");
   if (marker.includes("launch readiness") || marker.includes("launch check")) return manifestTemplateForKind("launch_readiness_check");
   if (marker.includes("x402 integration") || marker.includes("integration planner")) return manifestTemplateForKind("x402_integration_planner");
+  if (marker.includes("wallet risk") || marker.includes("approval scan")) return manifestTemplateForKind("wallet_risk_approval_scan");
+  if (marker.includes("contract interaction") || marker.includes("interaction risk")) return manifestTemplateForKind("contract_interaction_risk_scan");
+  if (marker.includes("invoice") || marker.includes("collection agent")) return manifestTemplateForKind("invoice_collection_agent");
+  if (marker.includes("escrow milestone") || marker.includes("milestone monitor")) return manifestTemplateForKind("escrow_milestone_monitor");
+  if (marker.includes("counterparty") || marker.includes("compliance screen")) return manifestTemplateForKind("counterparty_compliance_screen");
+  if (marker.includes("liquidation") || marker.includes("margin risk")) return manifestTemplateForKind("liquidation_risk_monitor");
+  if (marker.includes("vault apy") || marker.includes("apy monitor")) return manifestTemplateForKind("vault_apy_monitor");
+  if (marker.includes("subscription payment") || marker.includes("recurring payment")) return manifestTemplateForKind("subscription_payment_agent");
+  if (marker.includes("publisher revenue") || marker.includes("revenue intelligence")) return manifestTemplateForKind("publisher_revenue_intelligence");
+  if (marker.includes("dao") || marker.includes("grant payout")) return manifestTemplateForKind("dao_grant_payout_agent");
+  if (marker.includes("swap route") || marker.includes("quote agent")) return manifestTemplateForKind("swap_route_quote_agent");
   return manifestTemplateForKind("generic");
 }
 
@@ -1755,6 +1810,127 @@ function manifestTemplateForKind(kind: ServiceManifest["kind"]): ServiceManifest
       description: "Creates a practical x402 integration checklist for a paid API, including requirements, SDK wiring, and settlement flow.",
       inputSchema: [{name: "api", label: "API description", type: "text", required: true, placeholder: "Paid repo analyzer endpoint in Next.js"}],
       outputSchema: ["summary", "steps", "requirements", "securityNotes"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "wallet_risk_approval_scan") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Scans a wallet for risky approval patterns, counterparty exposure, and policy recommendations before an agent pays or interacts.",
+      inputSchema: [{name: "wallet", label: "Wallet address", type: "text", required: true, placeholder: "0x..."}],
+      outputSchema: ["wallet", "riskLevel", "checks", "approvals", "recommendedPolicy", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "contract_interaction_risk_scan") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews a target contract and intended action before an agent signs, approves, swaps, pays, or adds it to allowlists.",
+      inputSchema: [{name: "interaction", label: "Contract and action", type: "text", required: true, placeholder: "0x... approve 25 USDC for x402 settlement"}],
+      outputSchema: ["contract", "action", "riskLevel", "checks", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "invoice_collection_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Turns invoice details into a USDC collection workflow with reminders, receipt checks, and follow-up actions.",
+      inputSchema: [{name: "invoice", label: "Invoice details", type: "text", required: true, placeholder: "Client, amount, due date, wallet, and deliverable"}],
+      outputSchema: ["invoice", "amountUsdc", "dueDate", "actions", "reminders", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "escrow_milestone_monitor") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Monitors escrow milestones, evidence, deadline risk, and release/refund recommendations while keeping final approval with users.",
+      inputSchema: [{name: "escrow", label: "Escrow terms", type: "text", required: true, placeholder: "Milestones, due dates, amount, parties, and evidence links"}],
+      outputSchema: ["milestones", "riskLevel", "reminders", "recommendedActions", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "counterparty_compliance_screen") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Screens a wallet or counterparty for payment suitability, risk indicators, and compliance-provider readiness.",
+      inputSchema: [{name: "counterparty", label: "Wallet or counterparty", type: "text", required: true, placeholder: "0x... or company/payment context"}],
+      outputSchema: ["counterparty", "riskLevel", "checks", "providerStatus", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "liquidation_risk_monitor") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Reviews DeFi position details and produces liquidation-risk triggers, alert thresholds, and agent-safe recommendations.",
+      inputSchema: [{name: "position", label: "Position details", type: "text", required: true, placeholder: "Protocol, wallet, collateral, debt, health factor, chain"}],
+      outputSchema: ["riskLevel", "healthFactor", "thresholds", "alerts", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "vault_apy_monitor") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Checks vault opportunity details for APY, TVL, strategy-risk, rebalance triggers, and Save/Earn readiness.",
+      inputSchema: [{name: "vault", label: "Vault or strategy details", type: "text", required: true, placeholder: "Vault name, APY, TVL, asset, chain, withdrawal terms"}],
+      outputSchema: ["vault", "apy", "riskLevel", "checks", "rebalanceTriggers", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "subscription_payment_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Creates a policy-controlled recurring USDC payment plan with spend caps, approval rules, and receipt expectations.",
+      inputSchema: [{name: "subscription", label: "Subscription terms", type: "text", required: true, placeholder: "Vendor, amount, interval, payee wallet, approval threshold"}],
+      outputSchema: ["payee", "amountUsdc", "interval", "policy", "approvalRules", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "publisher_revenue_intelligence") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Analyzes publisher service revenue, conversion, failed payments, fees, and pricing opportunities for x402 APIs.",
+      inputSchema: [{name: "publisher", label: "Publisher or service details", type: "text", required: true, placeholder: "Publisher wallet, service id, or revenue notes"}],
+      outputSchema: ["publisher", "metrics", "pricingSignals", "recommendations", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "dao_grant_payout_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Builds a DAO or grant payout plan with milestone checks, recipient policy, approval requirements, and receipt tracking.",
+      inputSchema: [{name: "payout", label: "Payout plan", type: "text", required: true, placeholder: "Recipients, amounts, milestones, due dates, approval rules"}],
+      outputSchema: ["recipients", "totalUsdc", "milestones", "approvalRules", "risks", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "swap_route_quote_agent") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Prepares a same-chain swap or route quote review with slippage, quote freshness, asset decimals, and execution checks.",
+      inputSchema: [{name: "quote", label: "Swap or route request", type: "text", required: true, placeholder: "Swap 100 USDC to EURC on Arc with 1% slippage"}],
+      outputSchema: ["route", "amount", "slippageBps", "riskLevel", "checks", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };

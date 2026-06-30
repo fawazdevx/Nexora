@@ -127,14 +127,13 @@ export default function LandingPage() {
   const {scrollYProgress} = useScroll();
   const progress = useSpring(scrollYProgress, {stiffness: 120, damping: 30, mass: 0.3});
 
-  // React doesn't reliably set the `muted` attribute on <video>, which makes browsers
-  // treat it as an unmuted autoplay and block it. Force it muted and start playback here.
+  
   useEffect(() => {
     const video = heroVideoRef.current;
     if (!video) return;
     video.muted = true;
     video.play().catch(() => {
-      // Autoplay can still be refused (e.g. data-saver); poster remains as fallback.
+      
     });
   }, []);
 

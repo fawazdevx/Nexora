@@ -75,6 +75,36 @@ export const GET = withNexoraX402(
 );`
   },
   {
+    key: "manifest",
+    label: "Manifest",
+    language: "ts" as const,
+    code: `import { createNexoraServiceManifest } from "@nexorafi/x402";
+
+const manifest = createNexoraServiceManifest({
+  name: "Wallet Risk + Approval Scan",
+  endpointHash: "wallet-risk-approval-scan-v1",
+  kind: "wallet_risk_approval_scan",
+  price: "0.05",
+  outputSchema: ["wallet", "riskLevel", "checks", "recommendedPolicy"]
+});
+
+console.log(manifest.policyHints);`
+  },
+  {
+    key: "webhook",
+    label: "Webhook",
+    language: "ts" as const,
+    code: `import { createWebhookExecutor } from "@nexorafi/x402";
+
+export const POST = createWebhookExecutor(async ({ args }) => {
+  return {
+    status: "ok",
+    summary: "Paid execution complete",
+    input: args
+  };
+});`
+  },
+  {
     key: "curl",
     label: "curl",
     language: "bash" as const,
@@ -100,7 +130,8 @@ const securityNotes = [
   "Keep payout wallets explicit per service.",
   "Use stable resource identifiers for paid routes.",
   "Do not serve paid content before verification succeeds.",
-  "Use settle: false only for intentional verify-only flows."
+  "Use settle: false only for intentional verify-only flows.",
+  "Use live provider APIs before advertising compliance, liquidation, APY, or market-data results as definitive."
 ];
 
 export default function ApiDocsPage() {
