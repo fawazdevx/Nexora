@@ -17,6 +17,7 @@ const KIND_CATEGORY: Record<NexoraServiceKind, string> = {
   launch_readiness_check: "builder",
   x402_integration_planner: "builder",
   wallet_risk_approval_scan: "risk",
+  agent_transaction_preflight: "risk",
   contract_interaction_risk_scan: "risk",
   invoice_collection_agent: "payments",
   escrow_milestone_monitor: "escrow",
@@ -46,13 +47,14 @@ const DEFAULT_DESCRIPTIONS: Record<NexoraServiceKind, string> = {
   policy_risk_review: "Review agent policy settings and suggest safer caps.",
   launch_readiness_check: "Check a launch plan for docs, demo, proof, and security notes.",
   x402_integration_planner: "Create an x402 integration checklist for a paid API.",
-  wallet_risk_approval_scan: "Scan wallet approvals and risk before agent payments.",
+  wallet_risk_approval_scan: "Scan full historical USDC Approval logs and current allowance exposure before agent payments.",
+  agent_transaction_preflight: "Run a live transaction preflight before an agent signs or submits a contract call.",
   contract_interaction_risk_scan: "Review a contract interaction before an agent signs.",
   invoice_collection_agent: "Prepare a USDC invoice collection workflow.",
   escrow_milestone_monitor: "Monitor escrow milestones, evidence, and deadline risk.",
-  counterparty_compliance_screen: "Prepare counterparty screening and payment suitability checks.",
+  counterparty_compliance_screen: "Screen counterparty wallets with live telemetry and explicit KYT readiness.",
   liquidation_risk_monitor: "Monitor DeFi liquidation risk thresholds and alerts.",
-  vault_apy_monitor: "Monitor vault APY, TVL, risk, and rebalance triggers.",
+  vault_apy_monitor: "Monitor USDC yield APY, TVL, and risk from live market data.",
   subscription_payment_agent: "Prepare recurring USDC payment policy and approvals.",
   publisher_revenue_intelligence: "Analyze x402 publisher revenue and pricing signals.",
   dao_grant_payout_agent: "Prepare DAO or grant payout workflow with approvals.",
@@ -86,6 +88,7 @@ export function policyHintsForKind(kind: NexoraServiceKind, price = "0.05"): Nex
     "subscription_payment_agent",
     "dao_grant_payout_agent",
     "swap_route_quote_agent",
+    "agent_transaction_preflight",
     "contract_interaction_risk_scan"
   ]);
   const mediumRisk = new Set<NexoraServiceKind>([
@@ -116,6 +119,7 @@ export function policyHintsForKind(kind: NexoraServiceKind, price = "0.05"): Nex
 export function inferServiceKind(name: string, endpointHash = ""): NexoraServiceKind {
   const marker = `${name} ${endpointHash}`.toLowerCase();
   if (marker.includes("wallet risk") || marker.includes("approval scan")) return "wallet_risk_approval_scan";
+  if (marker.includes("transaction preflight") || marker.includes("agent preflight") || marker.includes("preflight simulation")) return "agent_transaction_preflight";
   if (marker.includes("contract interaction")) return "contract_interaction_risk_scan";
   if (marker.includes("invoice")) return "invoice_collection_agent";
   if (marker.includes("escrow")) return "escrow_milestone_monitor";

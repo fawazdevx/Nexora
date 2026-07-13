@@ -1,5 +1,5 @@
-import {useMemo, useState} from "react";
-import {Activity, ArrowUpRight, BadgeCheck, Banknote, BarChart3, BriefcaseBusiness, CalendarCheck, CheckCircle2, ExternalLink, FileSearch, GitFork, Globe, Layers, Landmark, LineChart, MessageSquareText, Plus, ReceiptText, Route, Search, ShieldCheck, Sparkles, Star, Store, TrendingUp, Wallet, Loader2, type LucideIcon} from "lucide-react";
+import {useEffect, useMemo, useState} from "react";
+import {Activity, ArrowUpRight, BadgeCheck, Banknote, BarChart3, BriefcaseBusiness, CalendarCheck, CheckCircle2, ExternalLink, FileSearch, GitFork, Globe, Layers, Landmark, LineChart, MessageSquareText, Plus, ReceiptText, Route, Search, ShieldCheck, Sparkles, Star, Store, TrendingUp, Wallet, Loader2, X, type LucideIcon} from "lucide-react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
 import {PageHeader} from "@/components/PageHeader";
@@ -72,6 +72,7 @@ export default function MarketplacePage() {
   const {address, isConnected} = useAccount();
   const [serviceInputs, setServiceInputs] = useState<Record<string, string>>({});
   const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
+  const [resultDialog, setResultDialog] = useState<{service: Service; result: unknown} | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [privacyScope, setPrivacyScope] = useState<PrivacyScope>("selective");
@@ -181,6 +182,7 @@ export default function MarketplacePage() {
       });
       await snapshot.refetch();
       setServiceResults((current) => ({...current, [service.id]: execution.result}));
+      setResultDialog({service, result: execution.result});
       if (settlement.txHash) {
         toast.success(txToast(`Purchased ${service.name}`, settlement.txHash), {id: toastId});
       } else {
@@ -353,10 +355,16 @@ export default function MarketplacePage() {
               onSample={() => setServiceInputs((current) => ({...current, [service.id]: sampleInputForService(service)}))}
               onPurchase={() => void purchase(service)}
               result={serviceResults[service.id]}
+              onViewResult={() => {
+                const result = serviceResults[service.id];
+                if (result) setResultDialog({service, result});
+              }}
             />
           ))}
         </div>
       )}
+
+      <ServiceResultDialog dialog={resultDialog} onClose={() => setResultDialog(null)} />
     </div>
   );
 }
@@ -393,7 +401,8 @@ function ServiceCard({
   onInput,
   onSample,
   onPurchase,
-  result
+  result,
+  onViewResult
 }: {
   service: Service;
   busy: boolean;
@@ -403,12 +412,15 @@ function ServiceCard({
   onSample: () => void;
   onPurchase: () => void;
   result: unknown;
+  onViewResult: () => void;
 }) {
   const Icon = kindIcon(service.manifest.kind);
   const inputLabel = serviceInputLabel(service);
   const category = serviceCategory(service);
   const readiness = serviceReadiness(service);
   const trust = service.trust;
+  const multilineInput = service.manifest.kind === "agent_transaction_preflight";
+  const sampleEnabled = service.manifest.kind !== "agent_transaction_preflight";
   return (
     <article className="group panel relative overflow-hidden transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
       <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-plasma/[0.06] blur-3xl transition-all duration-500 group-hover:bg-plasma/[0.12]" />
@@ -456,8 +468,8 @@ function ServiceCard({
 
       <div className="relative mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
         <StatusMetric icon={Layers} label="Settlement" value={service.chainServiceId ? `Ledger #${service.chainServiceId}` : "Not published"} tone={service.chainServiceId ? "mint" : "amber"} />
-        <StatusMetric icon={Activity} label="Health" value={readiness.label} tone={readiness.tone} />
-        <StatusMetric icon={ReceiptText} label="Receipt" value="Memo-backed" tone="mint" />
+        <StatusMetric icon={Activity} label="Status" value={readiness.label} tone={readiness.tone} />
+        <StatusMetric icon={ReceiptText} label="Receipt" value={service.chainServiceId ? "Memo-backed" : "After publish"} tone={service.chainServiceId ? "mint" : "slate"} />
         <StatusMetric icon={ShieldCheck} label="Trust" value={trust ? `${trust.score}/100` : "New"} tone={trust && trust.score >= 60 ? "mint" : trust && trust.score >= 40 ? "amber" : "slate"} />
       </div>
 
@@ -483,16 +495,27 @@ function ServiceCard({
         <label className="relative mt-4 grid gap-2.5 text-sm font-semibold text-slate-300">
           <span className="flex items-center justify-between gap-3">
             {inputLabel}
-            <button type="button" onClick={onSample} className="text-xs font-bold text-mint transition hover:text-white">
-              Use sample
-            </button>
+            {sampleEnabled ? (
+              <button type="button" onClick={onSample} className="text-xs font-bold text-mint transition hover:text-white">
+                Use sample
+              </button>
+            ) : null}
           </span>
-          <input
-            className="field"
-            value={input}
-            onChange={(event) => onInput(event.target.value)}
-            placeholder={serviceInputPlaceholder(service)}
-          />
+          {multilineInput ? (
+            <textarea
+              className="field min-h-[120px] resize-y font-mono text-xs leading-5"
+              value={input}
+              onChange={(event) => onInput(event.target.value)}
+              placeholder={serviceInputPlaceholder(service)}
+            />
+          ) : (
+            <input
+              className="field"
+              value={input}
+              onChange={(event) => onInput(event.target.value)}
+              placeholder={serviceInputPlaceholder(service)}
+            />
+          )}
         </label>
       ) : null}
 
@@ -506,8 +529,99 @@ function ServiceCard({
         </button>
       </div>
 
-      {busy ? <div className="shimmer mt-4 h-20 w-full rounded-xl" /> : <ServiceResult result={result} />}
+      {busy ? (
+        <div className="shimmer mt-4 h-20 w-full rounded-xl" />
+      ) : result ? (
+        <div className="surface mt-4 flex flex-wrap items-center justify-between gap-3 p-3">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-[0.16em] text-orchid">Latest result</p>
+            <p className="mt-1 truncate text-sm font-semibold text-white">{resultTitle(result)}</p>
+          </div>
+          <button type="button" onClick={onViewResult} className="secondary-button px-3 py-2 text-xs">
+            View result
+          </button>
+        </div>
+      ) : null}
     </article>
+  );
+}
+
+function ServiceResultDialog({dialog, onClose}: {dialog: {service: Service; result: unknown} | null; onClose: () => void}) {
+  useEffect(() => {
+    if (!dialog) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = overflow;
+    };
+  }, [dialog, onClose]);
+
+  if (!dialog) return null;
+
+  const {service, result} = dialog;
+  const resultObject = objectValue(result);
+  const rawJson = JSON.stringify(result, null, 2);
+
+  async function copyResult() {
+    await navigator.clipboard.writeText(rawJson);
+    toast.success("Result JSON copied.");
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto px-3 py-5 sm:px-5">
+      <button type="button" className="fixed inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} aria-label="Close service result" />
+      <section className="relative z-10 w-full max-w-5xl overflow-hidden rounded-2xl border border-white/[0.12] bg-slate-950 shadow-[0_28px_90px_rgba(0,0,0,0.55)]">
+        <div className="sticky top-0 z-10 border-b border-white/[0.08] bg-slate-950/95 px-4 py-4 backdrop-blur sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="section-kicker">Service result</p>
+              <h2 className="mt-2 truncate text-xl font-bold text-white sm:text-2xl">{service.name}</h2>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="status-pill">{formatCategory(serviceCategory(service))}</span>
+                <span className="status-pill">{formatKind(service.manifest.kind)}</span>
+                <span className="status-pill">${service.pricePerUnitUsdc} / request</span>
+                {stringValue(resultObject.status) ? <span className="status-pill">Status {stringValue(resultObject.status)}</span> : null}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => void copyResult()} className="secondary-button px-3 py-2 text-xs">
+                Copy JSON
+              </button>
+              <button type="button" onClick={onClose} className="secondary-button px-3 py-2" aria-label="Close service result">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 p-4 sm:p-6 lg:grid-cols-[1fr_280px]">
+          <div className="min-w-0">
+            <ServiceResult result={result} />
+            <details className="surface mt-4 p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-white">Raw response JSON</summary>
+              <pre className="mt-4 max-h-[360px] overflow-auto rounded-xl border border-white/[0.08] bg-black/30 p-3 text-xs leading-5 text-slate-300">{rawJson}</pre>
+            </details>
+          </div>
+
+          <aside className="surface h-fit p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Output schema</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {service.manifest.outputSchema.map((item) => <span key={item} className="status-pill">{item}</span>)}
+            </div>
+            <div className="mt-4 grid gap-2 text-sm">
+              <ResultMetric label="Publisher" value={shortAddress(service.publisherAddress)} />
+              <ResultMetric label="Version" value={service.manifest.version} />
+              <ResultMetric label="Ledger" value={service.chainServiceId ? `#${service.chainServiceId}` : "Not published"} />
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -548,6 +662,8 @@ function ServiceResult({result}: {result: unknown}) {
   const data = result as Record<string, unknown>;
   const status = stringValue(data.status) ?? "ok";
 
+  if ("decision" in data || "live" in data) return <StructuredServiceResult data={data} />;
+
   if (status !== "ok") {
     return (
       <div className="relative mt-5 rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-5 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
@@ -560,7 +676,7 @@ function ServiceResult({result}: {result: unknown}) {
   if ("headings" in data || "wordCount" in data || "canonical" in data) return <WebsiteResult data={data} />;
   if ("stars" in data || "forks" in data || "readmeSummary" in data) return <GitHubResult data={data} />;
   if ("account" in data || "score" in data) return <XResult data={data} />;
-  if ("agenda" in data || "questions" in data || "followUps" in data || "integrationIdeas" in data || "steps" in data || "requirements" in data || "securityNotes" in data || "checks" in data || "recommendations" in data || "recommendedPolicy" in data || "gaps" in data || "risks" in data || "suggestions" in data || "approvalRules" in data || "reminders" in data || "thresholds" in data || "providerStatus" in data || "pricingSignals" in data || "rebalanceTriggers" in data) return <StructuredServiceResult data={data} />;
+  if ("agenda" in data || "questions" in data || "followUps" in data || "integrationIdeas" in data || "steps" in data || "requirements" in data || "securityNotes" in data || "checks" in data || "recommendations" in data || "recommendedPolicy" in data || "gaps" in data || "risks" in data || "suggestions" in data || "approvalRules" in data || "reminders" in data || "thresholds" in data || "providerStatus" in data || "pricingSignals" in data || "rebalanceTriggers" in data || "exposure" in data || "monitoring" in data || "localActivity" in data || "candidates" in data) return <StructuredServiceResult data={data} />;
 
   return (
     <div className="relative mt-5 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
@@ -592,24 +708,44 @@ function StructuredServiceResult({data}: {data: Record<string, unknown>}) {
   const alerts = arrayValue(data.alerts);
   const pricingSignals = arrayValue(data.pricingSignals);
   const rebalanceTriggers = arrayValue(data.rebalanceTriggers);
+  const candidates = arrayValue(data.candidates);
+  const chains = arrayValue(data.chains);
   const providerStatus = objectValue(data.providerStatus);
   const recommendedPolicy = objectValue(data.recommendedPolicy);
   const metrics = objectValue(data.metrics);
   const thresholds = objectValue(data.thresholds);
+  const request = objectValue(data.request);
+  const exposure = objectValue(data.exposure);
+  const monitoring = objectValue(data.monitoring);
+  const localActivity = objectValue(data.localActivity);
   return (
     <div className="surface mt-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-orchid">Service result</p>
-          <h4 className="mt-2 text-base font-semibold text-white">{stringValue(data.riskLevel) ? `Risk: ${stringValue(data.riskLevel)}` : stringValue(data.summary) ?? "Analysis complete"}</h4>
+          <h4 className="mt-2 text-base font-semibold text-white">{stringValue(data.decision) ? `Decision: ${stringValue(data.decision)}` : stringValue(data.riskLevel) ? `Risk: ${stringValue(data.riskLevel)}` : stringValue(data.summary) ?? "Analysis complete"}</h4>
         </div>
         {numberValue(data.score) !== null ? <span className="status-pill">Score {numberValue(data.score)}</span> : null}
       </div>
       {stringValue(data.summary) ? <p className="mt-3 text-sm leading-6 text-slate-300">{stringValue(data.summary)}</p> : null}
+      {"decision" in data || "provider" in data || "gasUsed" in data ? (
+        <div className="mt-4 grid gap-2 text-sm sm:grid-cols-4">
+          <ResultMetric label="Status" value={stringValue(data.status)} />
+          <ResultMetric label="Decision" value={stringValue(data.decision)} />
+          <ResultMetric label="Provider" value={stringValue(data.provider) ?? (data.provider === null ? "None" : null)} />
+          <ResultMetric label="Gas" value={numberValue(data.gasUsed)} />
+        </div>
+      ) : null}
       {Object.keys(providerStatus).length > 0 ? <ResultObject title="Provider status" value={providerStatus} /> : null}
+      {Object.keys(request).length > 0 ? <ResultObject title="Transaction request" value={request} /> : null}
       {Object.keys(metrics).length > 0 ? <ResultObject title="Metrics" value={metrics} /> : null}
+      {Object.keys(exposure).length > 0 ? <ResultObject title="Exposure" value={exposure} /> : null}
+      {Object.keys(monitoring).length > 0 ? <ResultObject title="Monitoring" value={monitoring} /> : null}
+      {Object.keys(localActivity).length > 0 ? <ResultObject title="Local activity" value={localActivity} /> : null}
       {Object.keys(thresholds).length > 0 ? <ResultObject title="Thresholds" value={thresholds} /> : null}
       {Object.keys(recommendedPolicy).length > 0 ? <ResultObject title="Recommended policy" value={recommendedPolicy} /> : null}
+      <ResultList title="Candidates" items={candidates} />
+      <ResultList title="Chains" items={chains} />
       <ResultList title="Checks" items={checks} />
       <ResultList title="Issues" items={issues} />
       <ResultList title="Risks" items={risks} />
@@ -769,6 +905,16 @@ function renderResultValue(value: unknown): string {
   if (value === null || value === undefined) return "N/A";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function resultTitle(result: unknown) {
+  const data = objectValue(result);
+  return stringValue(data.summary)
+    ?? stringValue(data.repo)
+    ?? stringValue(data.title)
+    ?? stringValue(data.message)
+    ?? stringValue(data.status)
+    ?? "Analysis ready";
 }
 
 function stringValue(value: unknown) {

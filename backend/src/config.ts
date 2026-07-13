@@ -27,7 +27,8 @@ export const config = {
     oneRpcUrl: process.env.ARB_ONE_RPC_URL ?? process.env.ARBITRUM_ONE_RPC_URL ?? "https://arb1.arbitrum.io/rpc",
     oneChainId: Number(process.env.ARB_ONE_CHAIN_ID ?? 42161),
     oneExplorerUrl: process.env.ARB_ONE_EXPLORER_URL ?? "https://arbiscan.io",
-    oneUsdc: process.env.ARB_ONE_USDC_ADDRESS ?? "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+    oneUsdc: process.env.ARB_ONE_USDC_ADDRESS ?? "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    oneX402Ledger: process.env.ARB_ONE_X402_LEDGER_ADDRESS ?? ""
   },
   base: {
     sepoliaRpcUrl: process.env.BASE_SEPOLIA_RPC_URL ?? "https://base-sepolia-rpc.publicnode.com",
@@ -39,13 +40,25 @@ export const config = {
     sepoliaReputation: process.env.BASE_SEPOLIA_REPUTATION_ADDRESS ?? "",
     sepoliaYieldRouter: process.env.BASE_SEPOLIA_YIELD_ROUTER_ADDRESS ?? "",
     sepoliaSaveEarnVault: process.env.BASE_SEPOLIA_SAVE_EARN_VAULT_ADDRESS ?? "",
-    sepoliaEscrow: process.env.BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS ?? ""
+    sepoliaEscrow: process.env.BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS ?? "",
+    mainnetRpcUrl: process.env.BASE_MAINNET_RPC_URL ?? process.env.BASE_RPC_URL ?? "https://mainnet.base.org",
+    mainnetChainId: Number(process.env.BASE_MAINNET_CHAIN_ID ?? 8453),
+    mainnetExplorerUrl: process.env.BASE_MAINNET_EXPLORER_URL ?? "https://basescan.org",
+    mainnetUsdc: process.env.BASE_MAINNET_USDC_ADDRESS ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    mainnetX402Ledger: process.env.BASE_MAINNET_X402_LEDGER_ADDRESS ?? ""
   },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
     entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? "",
     walletSetId: process.env.CIRCLE_WALLET_SET_ID ?? "",
-    agentWalletAccountType: normalizeCircleAccountType(process.env.CIRCLE_AGENT_WALLET_ACCOUNT_TYPE)
+    agentWalletAccountType: normalizeCircleAccountType(process.env.CIRCLE_AGENT_WALLET_ACCOUNT_TYPE),
+    agentMarketplace: {
+      enabled: (process.env.NEXORA_CIRCLE_AGENT_MARKETPLACE_ENABLED ?? "false").toLowerCase() === "true",
+      cliPath: process.env.NEXORA_CIRCLE_CLI_PATH ?? "circle",
+      defaultChain: process.env.NEXORA_CIRCLE_DEFAULT_CHAIN ?? "BASE",
+      requireConfirmation: (process.env.NEXORA_CIRCLE_PAYMENT_REQUIRE_CONFIRMATION ?? "true").toLowerCase() !== "false",
+      maxPaymentUsdc: normalizeOptionalPositiveNumber(process.env.NEXORA_CIRCLE_PAYMENT_MAX_USDC, 5)
+    }
   },
   contracts: {
     usdc: process.env.USDC_ADDRESS ?? "",
@@ -74,8 +87,13 @@ export const config = {
   },
   integrations: {
     xBearerToken: process.env.X_BEARER_TOKEN ?? "",
+    githubToken: process.env.GITHUB_TOKEN ?? "",
     synthraApiKey: process.env.SYNTHRA_API_KEY ?? "",
-    synthraApiUrl: process.env.SYNTHRA_API_URL ?? "https://trading-api.synthra.org"
+    synthraApiUrl: process.env.SYNTHRA_API_URL ?? "https://trading-api.synthra.org",
+    tenderlyAccessKey: process.env.TENDERLY_ACCESS_KEY ?? "",
+    tenderlyAccountSlug: process.env.TENDERLY_ACCOUNT_SLUG ?? "",
+    tenderlyProjectSlug: process.env.TENDERLY_PROJECT_SLUG ?? "",
+    tenderlyApiUrl: process.env.TENDERLY_API_URL ?? "https://api.tenderly.co/api/v1"
   },
   notifications: {
     publicAppUrl: process.env.NEXORA_PUBLIC_APP_URL ?? process.env.FRONTEND_PUBLIC_URL ?? "https://nexorafi.app",
@@ -123,4 +141,10 @@ function unquoteEnvValue(value: string) {
 
 function normalizeCircleAccountType(value: string | undefined): "EOA" | "SCA" {
   return value?.toUpperCase() === "SCA" ? "SCA" : "EOA";
+}
+
+function normalizeOptionalPositiveNumber(value: string | undefined, fallback: number) {
+  if (value === undefined || value === null || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

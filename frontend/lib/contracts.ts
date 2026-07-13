@@ -848,9 +848,12 @@ export async function readSwapTokenBalance(input: {owner: string; token: XyloNet
   };
 }
 
+export type SwapProgressStep = "approving" | "swapping";
+
 export async function executeXyloNetSwap(input: {
   quote: XyloNetSwapQuote;
   slippageBps: number;
+  onStep?: (step: SwapProgressStep) => void;
 }): Promise<{approveHash: Hash; swapHash: Hash}> {
   const {client, account, chainId} = await walletClient();
   if (chainId !== arcTestnet.id) {
@@ -861,6 +864,7 @@ export async function executeXyloNetSwap(input: {
   const minAmountOut = input.quote.amountOutRaw * BigInt(10_000 - input.slippageBps) / 10_000n;
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
 
+  input.onStep?.("approving");
   const approveHash = await client.writeContract({
     address: tokenIn.address,
     abi: erc20Abi,
@@ -869,6 +873,7 @@ export async function executeXyloNetSwap(input: {
   });
   await waitForSuccessfulReceipt(chainId, approveHash, "Token approval");
 
+  input.onStep?.("swapping");
   const swapHash = await client.writeContract({
     address: input.quote.router,
     abi: xylonetRouterAbi,
@@ -890,6 +895,7 @@ export async function executeXyloNetSwap(input: {
 export async function executeSynthraSwap(input: {
   quote: SynthraSwapQuote;
   slippageBps: number;
+  onStep?: (step: SwapProgressStep) => void;
 }): Promise<{approveHash?: Hash; swapHash: Hash}> {
   const {client, account, chainId} = await walletClient();
   if (chainId !== arcTestnet.id) {
@@ -898,6 +904,7 @@ export async function executeSynthraSwap(input: {
 
   const tokenIn = xylonetSwapTokens[input.quote.tokenIn];
   const tokenOut = xylonetSwapTokens[input.quote.tokenOut];
+  input.onStep?.("approving");
   await ensureTokenAllowance({
     chainId,
     client,
@@ -916,6 +923,7 @@ export async function executeSynthraSwap(input: {
     amount: input.quote.amountInRaw
   });
 
+  input.onStep?.("swapping");
   const tx = synthraUniversalRouterTransaction({quote: input.quote, account, slippageBps: input.slippageBps});
   const swapHash = await client.sendTransaction(tx);
 

@@ -161,12 +161,16 @@ export default function NotificationsSettingsPage() {
         <section className="panel space-y-5">
           <div className="grid gap-3 md:grid-cols-3">
             <ContactField icon={<Mail size={17} />} label="Email" value={form.email} placeholder="you@nexorafi.app" onChange={(email) => setForm((current) => ({...current, email}))} />
-            <DisabledContactField
-              icon={<MessageCircle size={17} />}
-              label="WhatsApp"
-              value="Coming soon"
-              help="Production WhatsApp requires an approved paid WhatsApp Business sender. Telegram and email are available now."
-            />
+            {whatsAppAvailable ? (
+              <ContactField
+                icon={<MessageCircle size={17} />}
+                label="WhatsApp"
+                value={form.whatsapp}
+                placeholder="+1 555 010 0100"
+                help="Include country code. Delivered through the configured WhatsApp Business sender."
+                onChange={(whatsapp) => setForm((current) => ({...current, whatsapp}))}
+              />
+            ) : null}
             <TelegramConnectField
               value={form.telegram}
               pending={telegramLink}
@@ -184,6 +188,7 @@ export default function NotificationsSettingsPage() {
               items={[
                 ["inApp", "In-app"],
                 ["email", "Email"],
+                ...(whatsAppAvailable ? [["whatsapp", "WhatsApp"] as ["inApp" | "email" | "whatsapp" | "telegram", string]] : []),
                 ["telegram", "Telegram"]
               ]}
               values={form.channels}
@@ -232,16 +237,6 @@ function ContactField({icon, label, value, placeholder, help, onChange}: {icon: 
       <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-300">{icon}{label}</span>
       <input className="field w-full" value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
       {help ? <span className="mt-2 block text-xs leading-relaxed text-slate-500">{help}</span> : null}
-    </label>
-  );
-}
-
-function DisabledContactField({icon, label, value, help}: {icon: ReactNode; label: string; value: string; help: string}) {
-  return (
-    <label className="block opacity-60">
-      <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-300">{icon}{label}</span>
-      <input className="field w-full cursor-not-allowed" value={value} disabled readOnly />
-      <span className="mt-2 block text-xs leading-relaxed text-slate-500">{help}</span>
     </label>
   );
 }

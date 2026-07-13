@@ -1,5 +1,7 @@
+import {useEffect, useState} from "react";
 import {ArrowRight, Github, Mail} from "lucide-react";
 import {navigateTo} from "@/lib/router";
+import {apiGet} from "@/lib/api";
 
 type FooterLink = {label: string; href: string};
 
@@ -33,11 +35,6 @@ const linkGroups: Array<{title: string; links: FooterLink[]}> = [
   }
 ];
 
-const legalLinks: FooterLink[] = [
-  {label: "Privacy", href: "/docs/api"},
-  {label: "Terms", href: "/docs/api"}
-];
-
 function XGlyph({size = 16}: {size?: number}) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -59,6 +56,32 @@ function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
 }
 
 export function Footer() {
+  const [apiReachable, setApiReachable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    function check() {
+      apiGet("/api/readiness")
+        .then(() => !cancelled && setApiReachable(true))
+        .catch(() => !cancelled && setApiReachable(false));
+    }
+    check();
+    const id = window.setInterval(check, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  const statusOnline = apiReachable === true;
+  const statusLabel = apiReachable === null ? "Checking…" : statusOnline ? "Operational" : "Unreachable";
+  const statusClass = statusOnline
+    ? "border-mint/25 bg-mint/10 text-mint"
+    : apiReachable === false
+      ? "border-amber/25 bg-amber/10 text-amber"
+      : "border-white/[0.12] bg-white/[0.04] text-slate-400";
+  const dotClass = statusOnline ? "bg-mint" : apiReachable === false ? "bg-amber" : "bg-slate-500";
+
   return (
     <footer className="relative overflow-hidden border-t border-white/[0.1] bg-gradient-to-b from-void/90 to-void/95 px-4 pb-10 pt-12 text-slate-300 backdrop-blur-xl md:px-6">
       {/* Top accent line + ambient glow + oversized wordmark watermark. */}
@@ -77,12 +100,12 @@ export function Footer() {
           <p className="max-w-xs text-sm font-medium leading-6 text-slate-400">
             Agent-native USDC payments and earning infrastructure, built Arc-first.
           </p>
-          <span className="status-pill w-fit border-mint/25 bg-mint/10 text-mint">
+          <span className={`status-pill w-fit ${statusClass}`}>
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-mint" />
+              {statusOnline ? <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${dotClass} opacity-75`} /> : null}
+              <span className={`relative inline-flex h-2 w-2 rounded-full ${dotClass}`} />
             </span>
-            Arc Testnet · Operational
+            Arc Testnet · {statusLabel}
           </span>
           <div className="mt-1 flex gap-2.5">
             {socialLinks.map((link) => {
@@ -126,11 +149,6 @@ export function Footer() {
       <div className="relative mx-auto mt-10 flex max-w-[1440px] flex-col gap-4 border-t border-white/[0.08] pt-6 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-medium text-slate-500">
           <span>© {new Date().getFullYear()} Nexora Finance</span>
-          {legalLinks.map((link) => (
-            <a key={link.label} href={link.href} onClick={(event) => navigate(event, link.href)} className="transition-colors hover:text-slate-300">
-              {link.label}
-            </a>
-          ))}
           <span className="hidden text-slate-700 sm:inline">·</span>
           <span className="hidden sm:inline">Arc Testnet · USDC · x402 · Agent Wallets</span>
         </div>

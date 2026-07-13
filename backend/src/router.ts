@@ -2,6 +2,7 @@ import {config} from "./config.js";
 import {createPublicClient, formatUnits, http, isAddress, parseAbi} from "viem";
 import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
 import {createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy} from "./circle/agent-wallets.js";
+import {approveCircleAgentPaymentIntent, circleAgentMarketplaceReadiness, createCircleAgentPaymentIntent, executeCircleAgentPaymentIntent, inspectCircleAgentService, payCircleAgentService, preflightCircleAgentPayment, rejectCircleAgentPaymentIntent, searchCircleAgentServices} from "./circle/agent-marketplace.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
 import {activatePlan, executeBuiltInService, executeMarketplaceService, featureService, getService, listServices, platformPlans, publishService, requirePlatformPlan, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
@@ -12,6 +13,9 @@ import {normalizeMemo, paymentMemoSummary, publicMemoView} from "./memos.js";
 import {dispatchNotification, handleTelegramWebhookUpdate, syncTelegramNotificationLink, telegramBotStartUrl} from "./notifications.js";
 import {automationRecipeTemplates, createAutomationRecipe, evaluateAutomationRecipes, updateAutomationRecipe} from "./automation/recipes.js";
 import {evaluateEscrowReminders, updateEscrowReminderSettings} from "./escrow/reminders.js";
+import {fetchDefiLlamaUsdcYields} from "./providers/defillama.js";
+import {prepareTransactionPreflightArgs, runAgentTransactionPreflight} from "./providers/preflight.js";
+import {simulateWithTenderly, tenderlyReadiness} from "./providers/tenderly.js";
 import {
   addressArray,
   assertJsonObject,
@@ -287,6 +291,88 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({services: await listServices()});
     }
 
+    if (req.method === "GET" && path === "/api/circle/agent-marketplace/readiness") {
+      return ok(await circleAgentMarketplaceReadiness());
+    }
+
+    if (req.method === "GET" && path === "/api/circle/agent-marketplace/search") {
+      return ok(await searchCircleAgentServices(requiredLimitedString(url.searchParams.get("query"), "query", 160)));
+    }
+
+    if (req.method === "POST" && path === "/api/circle/agent-marketplace/inspect") {
+      return ok(await inspectCircleAgentService(requiredLimitedString(body.serviceUrl ?? body.url, "serviceUrl", 2_048)));
+    }
+
+    if (req.method === "POST" && path === "/api/circle/agent-marketplace/guard") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await preflightCircleAgentPayment({
+        operatorAddress,
+        agentId: optionalLimitedString(body.agentId, "agentId", 120) ?? null,
+        walletAddress: requiredAddress(body.walletAddress, "walletAddress"),
+        serviceUrl: requiredLimitedString(body.serviceUrl ?? body.url, "serviceUrl", 2_048),
+        chain: optionalLimitedString(body.chain, "chain", 40) ?? null,
+        data: assertJsonObject(body.data)
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/circle/agent-marketplace/intents") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return response(201, await createCircleAgentPaymentIntent({
+        operatorAddress,
+        agentId: optionalLimitedString(body.agentId, "agentId", 120) ?? null,
+        walletAddress: requiredAddress(body.walletAddress, "walletAddress"),
+        serviceUrl: requiredLimitedString(body.serviceUrl ?? body.url, "serviceUrl", 2_048),
+        chain: optionalLimitedString(body.chain, "chain", 40) ?? null,
+        data: assertJsonObject(body.data)
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/circle/agent-marketplace/pay") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await payCircleAgentService({
+        operatorAddress,
+        agentId: optionalLimitedString(body.agentId, "agentId", 120) ?? null,
+        walletAddress: requiredAddress(body.walletAddress, "walletAddress"),
+        serviceUrl: requiredLimitedString(body.serviceUrl ?? body.url, "serviceUrl", 2_048),
+        chain: optionalLimitedString(body.chain, "chain", 40) ?? null,
+        data: assertJsonObject(body.data),
+        confirmed: Boolean(body.confirmed)
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/payment-intents/") && path.endsWith("/approve")) {
+      const intentId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await approveCircleAgentPaymentIntent(intentId, {
+        operatorAddress,
+        note: optionalLimitedString(body.note, "note", 500) ?? null
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/payment-intents/") && path.endsWith("/reject")) {
+      const intentId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await rejectCircleAgentPaymentIntent(intentId, {
+        operatorAddress,
+        note: optionalLimitedString(body.note, "note", 500) ?? null
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/payment-intents/") && path.endsWith("/execute")) {
+      const intentId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await executeCircleAgentPaymentIntent(intentId, {
+        operatorAddress,
+        confirmed: Boolean(body.confirmed)
+      }));
+    }
+
     if (req.method === "GET" && path === "/api/public/builders") {
       return ok(await publicBuilderDirectory());
     }
@@ -309,6 +395,32 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path === "/api/synthra/readiness") {
       return ok(synthraReadiness());
+    }
+
+    if (req.method === "GET" && path === "/api/providers/defillama/yields") {
+      return ok({
+        opportunities: await fetchDefiLlamaUsdcYields({
+          limit: optionalNumber(url.searchParams.get("limit")) ?? 12,
+          minTvlUsd: optionalNumber(url.searchParams.get("minTvlUsd")) ?? 250_000
+        })
+      });
+    }
+
+    if (req.method === "GET" && path === "/api/providers/tenderly/readiness") {
+      return ok(tenderlyReadiness(tenderlyConfig()));
+    }
+
+    if (req.method === "POST" && path === "/api/providers/tenderly/simulate") {
+      const from = requiredAddress(body.from, "from");
+      assertTokenAddress(auth, from, "from");
+      return ok(await simulateWithTenderly({...body, from}, tenderlyConfig()));
+    }
+
+    if (req.method === "POST" && (path === "/api/providers/transaction-preflight" || path === "/api/providers/preflight/transaction")) {
+      const args = assertJsonObject(body);
+      const request = prepareTransactionPreflightArgs(args);
+      assertTokenAddress(auth, request.from, "from");
+      return ok(await runAgentTransactionPreflight(args, preflightConfig()));
     }
 
     if (req.method === "POST" && path === "/api/synthra/quote") {
@@ -586,12 +698,12 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
     }
 
     if (req.method === "GET" && path === "/api/earn/opportunities") {
-      return ok({opportunities: listEarnOpportunities()});
+      return ok({opportunities: await listEarnOpportunities()});
     }
 
     if (req.method === "POST" && path.startsWith("/api/earn/opportunities/") && path.endsWith("/activate")) {
       const id = path.split("/")[4] ?? "";
-      const opportunity = listEarnOpportunities().find((item) => item.id === id);
+      const opportunity = (await listEarnOpportunities()).find((item) => item.id === id);
       if (!opportunity) return response(404, {error: "opportunity_not_found"});
       const activation = await updateStore((store) => {
         const record = {
@@ -684,6 +796,35 @@ function optionalNumber(value: unknown) {
   const numberValue = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numberValue)) throw new Error("optional number is invalid");
   return numberValue;
+}
+
+function tenderlyConfig() {
+  return {
+    accessKey: config.integrations.tenderlyAccessKey,
+    accountSlug: config.integrations.tenderlyAccountSlug,
+    projectSlug: config.integrations.tenderlyProjectSlug,
+    apiUrl: config.integrations.tenderlyApiUrl
+  };
+}
+
+function preflightConfig() {
+  return {
+    tenderly: tenderlyConfig(),
+    rpcUrls: preflightRpcUrls()
+  };
+}
+
+function preflightRpcUrls() {
+  const rpcUrls: Record<number, string> = {};
+  addPreflightRpcUrl(rpcUrls, config.arc.chainId, config.arc.rpcUrl);
+  addPreflightRpcUrl(rpcUrls, config.base.sepoliaChainId, config.base.sepoliaRpcUrl);
+  addPreflightRpcUrl(rpcUrls, config.arbitrum.sepoliaChainId, config.arbitrum.sepoliaRpcUrl);
+  addPreflightRpcUrl(rpcUrls, config.arbitrum.oneChainId, config.arbitrum.oneRpcUrl);
+  return rpcUrls;
+}
+
+function addPreflightRpcUrl(target: Record<number, string>, chainId: number, rpcUrl: string) {
+  if (Number.isInteger(chainId) && chainId > 0 && rpcUrl.trim()) target[chainId] = rpcUrl;
 }
 
 function optionalEmail(value: unknown) {
@@ -1422,15 +1563,19 @@ async function publicReceipt(id: string) {
 
 function paymentReceipt(payment: PaymentRecord) {
   const status = payment.status;
+  const external = payment.external ?? null;
+  const chainId = external?.chainId ?? config.arc.chainId;
   const publicNote = payment.policyReason
-    ?? (!payment.txHash && status === "settled"
+    ?? (external
+      ? "This receipt records a Circle Agent Marketplace x402 payment executed by the Circle CLI. The paid service response is visible only to the payer at execution time."
+      : !payment.txHash && status === "settled"
       ? "This receipt records an off-chain/test x402 settlement. No Arc transaction hash was attached, so no treasury transfer can be verified on Arc Explorer."
       : null);
   return {
     id: payment.id,
-    kind: "x402_payment",
+    kind: external ? "circle_agent_marketplace_payment" : "x402_payment",
     title: payment.serviceName,
-    description: receiptDescription(status, "x402 marketplace payment"),
+    description: receiptDescription(status, external ? "Circle agent marketplace payment" : "x402 marketplace payment"),
     status,
     amountUsdc: roundUsdc(payment.grossAmountUsdc ?? payment.amountUsdc),
     feeUsdc: roundUsdc(payment.platformFeeUsdc ?? 0),
@@ -1442,9 +1587,16 @@ function paymentReceipt(payment: PaymentRecord) {
     serviceId: payment.serviceId,
     requestHash: payment.requestHash,
     txHash: payment.txHash ?? null,
-    chainId: config.arc.chainId,
-    network: "Arc Testnet",
-    explorerUrl: explorerTxUrl(config.arc.explorerUrl, payment.txHash),
+    chainId,
+    network: external?.network ?? chainName(chainId),
+    explorerUrl: explorerTxUrl(explorerForChain(chainId), payment.txHash),
+    external: external ? {
+      provider: external.provider,
+      serviceUrl: external.serviceUrl,
+      chain: external.chain,
+      paymentScheme: external.paymentScheme ?? null,
+      resultSummary: external.resultSummary ?? null
+    } : null,
     memo: publicMemoView(payment.memo),
     memoBacked: Boolean(payment.memo?.arc.memoIndex !== null && payment.memo?.arc.memoIndex !== undefined),
     createdAt: payment.createdAt,
@@ -1462,7 +1614,7 @@ async function agentFinancialMemory(operatorAddress: string) {
   const visibleServiceIds = new Set(visibleServicesForStore(store.services).map((service) => service.id));
   const payments = store.payments
     .filter((payment) => (
-      visibleServiceIds.has(payment.serviceId)
+      (payment.external || visibleServiceIds.has(payment.serviceId))
       && (
         payment.payer.toLowerCase() === operator
         || Boolean(payment.agentId && agentIds.has(payment.agentId))
@@ -1641,13 +1793,25 @@ function receiptDescription(status: string, fallback: string) {
 
 function explorerForChain(chainId: number) {
   if (chainId === config.base.sepoliaChainId) return config.base.sepoliaExplorerUrl;
+  if (chainId === config.base.mainnetChainId) return config.base.mainnetExplorerUrl;
   if (chainId === config.arbitrum.sepoliaChainId) return config.arbitrum.sepoliaExplorerUrl;
+  if (chainId === config.arbitrum.oneChainId) return config.arbitrum.oneExplorerUrl;
+  if (chainId === 137) return "https://polygonscan.com";
+  if (chainId === 1) return "https://etherscan.io";
+  if (chainId === 10) return "https://optimistic.etherscan.io";
+  if (chainId === 43114) return "https://snowtrace.io";
   return config.arc.explorerUrl;
 }
 
 function chainName(chainId: number) {
   if (chainId === config.base.sepoliaChainId) return "Base Sepolia";
+  if (chainId === config.base.mainnetChainId) return "Base";
   if (chainId === config.arbitrum.sepoliaChainId) return "Arbitrum Sepolia";
+  if (chainId === config.arbitrum.oneChainId) return "Arbitrum One";
+  if (chainId === 137) return "Polygon";
+  if (chainId === 1) return "Ethereum";
+  if (chainId === 10) return "Optimism";
+  if (chainId === 43114) return "Avalanche";
   return "Arc Testnet";
 }
 

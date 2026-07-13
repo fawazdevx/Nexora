@@ -55,7 +55,7 @@ export default function MaintenancePage() {
   const countdown = `0:${String(secondsLeft).padStart(2, "0")}`;
   const statusCards = [
     {icon: Activity, label: "Status", value: "Upgrade window", tone: "warn" as const},
-    {icon: ShieldCheck, label: "Contracts", value: "Protected", tone: "good" as const},
+    {icon: ShieldCheck, label: "Contracts", value: "On-chain", tone: "good" as const},
     {icon: Clock, label: "Services", value: apiReachable === null ? "Checking…" : apiReachable ? "Responding" : "Offline", tone: apiReachable ? ("good" as const) : ("warn" as const)}
   ];
 

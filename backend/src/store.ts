@@ -89,6 +89,7 @@ export type ServiceManifest = {
     | "launch_readiness_check"
     | "x402_integration_planner"
     | "wallet_risk_approval_scan"
+    | "agent_transaction_preflight"
     | "contract_interaction_risk_scan"
     | "invoice_collection_agent"
     | "escrow_milestone_monitor"
@@ -129,8 +130,70 @@ export type PaymentRecord = {
   policyReason?: string | null;
   memo?: NexoraStructuredMemo | null;
   txHash?: string | null;
+  external?: {
+    provider: "circle_agent_marketplace";
+    serviceUrl: string;
+    chain: string;
+    chainId?: number | null;
+    network?: string | null;
+    paymentScheme?: string | null;
+    resultSummary?: string | null;
+  } | null;
   createdAt: string;
   settledAt?: string | null;
+};
+
+export type PaymentIntentRecord = {
+  id: string;
+  operatorAddress: string;
+  agentId?: string | null;
+  agentWallet?: string | null;
+  requestHash: string;
+  status: "pending_approval" | "approved" | "rejected" | "executing" | "settled" | "failed" | "policy_blocked" | "expired";
+  source: {
+    provider: "circle_agent_marketplace";
+    serviceUrl: string;
+    inspectedAt: string;
+  };
+  normalized: {
+    serviceId: string;
+    serviceName: string;
+    description: string;
+    amountUsdc: number;
+    payTo: string;
+    chain: string;
+    chainId?: number | null;
+    network?: string | null;
+    paymentScheme?: string | null;
+    inputSchema?: unknown;
+  };
+  data: Record<string, unknown>;
+  policy: {
+    allowed: boolean;
+    reason?: string | null;
+    dailySpentUsdc: number;
+    weeklySpentUsdc: number;
+    monthlySpentUsdc: number;
+    checks: Array<{status: "pass" | "fail"; label: string; detail: string}>;
+    riskFlags: Array<{severity: "info" | "warning" | "critical"; label: string; detail: string}>;
+  };
+  approval: {
+    required: boolean;
+    decidedBy?: string | null;
+    decidedAt?: string | null;
+    note?: string | null;
+    expiresAt?: string | null;
+  };
+  execution: {
+    paymentId?: string | null;
+    txHash?: string | null;
+    resultSummary?: string | null;
+    error?: string | null;
+    executedAt?: string | null;
+  };
+  receiptId?: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AgentApprovalRequestRecord = {
@@ -396,6 +459,7 @@ export type StoreShape = {
   agents: AgentWalletRecord[];
   services: ServiceRecord[];
   payments: PaymentRecord[];
+  paymentIntents: PaymentIntentRecord[];
   automationRecipes: AgentAutomationRecipeRecord[];
   automationRuns: AgentAutomationRunRecord[];
   earnActivations: EarnActivationRecord[];
@@ -428,6 +492,7 @@ const SEEDED_SERVICE_IDS = new Set([
   "nexora-launch-readiness-check",
   "nexora-x402-integration-planner",
   "nexora-wallet-risk-approval-scan",
+  "nexora-agent-transaction-preflight",
   "nexora-contract-interaction-risk-scan",
   "nexora-invoice-collection-agent",
   "nexora-escrow-milestone-monitor",
@@ -457,6 +522,7 @@ const SEEDED_ENDPOINT_HASHES = new Set([
   "launch-readiness-check-v1",
   "x402-integration-planner-v1",
   "wallet-risk-approval-scan-v1",
+  "agent-transaction-preflight-v1",
   "contract-interaction-risk-scan-v1",
   "invoice-collection-agent-v1",
   "escrow-milestone-monitor-v1",
@@ -533,6 +599,9 @@ export async function appSnapshot(operatorAddress?: string) {
   const payments = operator
     ? visiblePayments.filter((payment) => payment.payer.toLowerCase() === operator || payment.publisherAddress.toLowerCase() === operator)
     : [];
+  const paymentIntents = operator
+    ? store.paymentIntents.filter((intent) => intent.operatorAddress.toLowerCase() === operator)
+    : [];
   const approvalRequests = operator
     ? store.approvalRequests.filter((request) => request.operatorAddress.toLowerCase() === operator)
     : [];
@@ -574,6 +643,7 @@ export async function appSnapshot(operatorAddress?: string) {
     agents,
     services: servicesWithTrust,
     payments,
+    paymentIntents,
     approvalRequests,
     automationRecipes,
     automationRuns,
@@ -583,7 +653,7 @@ export async function appSnapshot(operatorAddress?: string) {
     notifications: notifications.slice(0, 20),
     notificationPreferences,
     notificationDeliveries,
-    riskAlerts: computeRiskAlerts({agents: scopedAgents, payments, approvalRequests}),
+    riskAlerts: computeRiskAlerts({agents: scopedAgents, payments, paymentIntents, approvalRequests}),
     reputation: {
       successfulPayments,
       completedTasks,
@@ -644,6 +714,7 @@ function summarizeIndexedEvents(events: IndexedChainEventRecord[]) {
 function computeRiskAlerts(input: {
   agents: AgentWalletRecord[];
   payments: PaymentRecord[];
+  paymentIntents: PaymentIntentRecord[];
   approvalRequests: AgentApprovalRequestRecord[];
 }): RiskAlertRecord[] {
   const now = Date.now();
@@ -788,6 +859,30 @@ function computeRiskAlerts(input: {
         agentId: request.agentId,
         serviceId: request.serviceId,
         actionHref: "/settings/policies"
+      }));
+    }
+  }
+
+  for (const intent of input.paymentIntents.filter((item) => item.status === "pending_approval" || item.status === "failed" || item.status === "policy_blocked")) {
+    if (intent.status === "pending_approval") {
+      alerts.push(riskAlert({
+        severity: intent.policy.allowed ? "info" : "warning",
+        category: "approval",
+        title: "Circle payment awaiting approval",
+        detail: `${intent.normalized.serviceName} request for ${intent.normalized.amountUsdc} USDC is waiting in the payments queue.`,
+        agentId: intent.agentId ?? null,
+        serviceId: intent.normalized.serviceId,
+        actionHref: "/payments"
+      }));
+    } else {
+      alerts.push(riskAlert({
+        severity: intent.status === "policy_blocked" ? "critical" : "warning",
+        category: "payment",
+        title: "Circle payment did not execute",
+        detail: `${intent.normalized.serviceName}: ${intent.execution.error ?? intent.policy.reason ?? "execution failed"}`,
+        agentId: intent.agentId ?? null,
+        serviceId: intent.normalized.serviceId,
+        actionHref: "/payments"
       }));
     }
   }
@@ -996,7 +1091,7 @@ function isVisiblePayment(payment: PaymentRecord, scope: {
   visibleAgentIds: Set<string>;
   visibleAgentWallets: Set<string>;
 }) {
-  if (!scope.visibleServiceIds.has(payment.serviceId)) return false;
+  if (!payment.external && !scope.visibleServiceIds.has(payment.serviceId)) return false;
   if (payment.agentId && !scope.visibleAgentIds.has(payment.agentId)) return false;
   if (payment.agentWallet && !scope.visibleAgentWallets.has(payment.agentWallet.toLowerCase())) return false;
   return true;
@@ -1198,6 +1293,7 @@ function emptyStore(): StoreShape {
     facilitatorEvents: [],
     indexedEvents: [],
     indexerCursors: [],
+    paymentIntents: [],
     approvalRequests: []
   };
 }
@@ -1207,6 +1303,7 @@ function normalizeStore(value: unknown): StoreShape {
   store.facilitatorEvents = Array.isArray(store.facilitatorEvents) ? store.facilitatorEvents : [];
   store.indexedEvents = Array.isArray(store.indexedEvents) ? store.indexedEvents : [];
   store.indexerCursors = Array.isArray(store.indexerCursors) ? store.indexerCursors : [];
+  store.paymentIntents = Array.isArray(store.paymentIntents) ? store.paymentIntents.map(normalizePaymentIntent) : [];
   store.notificationPreferences = Array.isArray(store.notificationPreferences) ? store.notificationPreferences.map(normalizeNotificationPreferences) : [];
   store.notificationDeliveries = Array.isArray(store.notificationDeliveries) ? store.notificationDeliveries.map(normalizeNotificationDelivery) : [];
   store.escrowReminderRuns = Array.isArray(store.escrowReminderRuns) ? store.escrowReminderRuns.map(normalizeEscrowReminderRun) : [];
@@ -1238,7 +1335,8 @@ function normalizeStore(value: unknown): StoreShape {
       grossAmountUsdc,
       platformFeeUsdc,
       publisherNetUsdc: payment.publisherNetUsdc ?? roundUsdc(grossAmountUsdc - platformFeeUsdc),
-      memo: normalizeMemo(payment.memo) ?? null
+      memo: normalizeMemo(payment.memo) ?? null,
+      external: payment.external ?? null
     };
   });
   store.subscriptions = store.subscriptions.map((subscription) => ({
@@ -1254,6 +1352,97 @@ function normalizeStore(value: unknown): StoreShape {
   }));
   store.escrows = Array.isArray(store.escrows) ? store.escrows.map(normalizeEscrow) : [];
   return store;
+}
+
+function normalizePaymentIntent(intent: PaymentIntentRecord): PaymentIntentRecord {
+  const now = new Date().toISOString();
+  const status = normalizePaymentIntentStatus(intent.status);
+  const amountUsdc = Number(intent.normalized?.amountUsdc || 0);
+  const checks = Array.isArray(intent.policy?.checks) ? intent.policy.checks : [];
+  const riskFlags = Array.isArray(intent.policy?.riskFlags) ? intent.policy.riskFlags : [];
+  return {
+    id: String(intent.id ?? crypto.randomUUID()),
+    operatorAddress: String(intent.operatorAddress ?? ""),
+    agentId: intent.agentId ?? null,
+    agentWallet: intent.agentWallet ?? null,
+    requestHash: typeof intent.requestHash === "string" ? intent.requestHash : "",
+    status,
+    source: {
+      provider: "circle_agent_marketplace",
+      serviceUrl: String(intent.source?.serviceUrl ?? ""),
+      inspectedAt: validIsoOrNull(intent.source?.inspectedAt) ?? intent.createdAt ?? now
+    },
+    normalized: {
+      serviceId: String(intent.normalized?.serviceId ?? ""),
+      serviceName: String(intent.normalized?.serviceName ?? "Circle marketplace service"),
+      description: String(intent.normalized?.description ?? "Circle x402 paid service"),
+      amountUsdc: Number.isFinite(amountUsdc) ? roundUsdc(amountUsdc) : 0,
+      payTo: String(intent.normalized?.payTo ?? ""),
+      chain: String(intent.normalized?.chain ?? "BASE"),
+      chainId: Number.isFinite(Number(intent.normalized?.chainId)) ? Number(intent.normalized?.chainId) : null,
+      network: intent.normalized?.network ?? null,
+      paymentScheme: intent.normalized?.paymentScheme ?? null,
+      inputSchema: intent.normalized?.inputSchema ?? null
+    },
+    data: intent.data && typeof intent.data === "object" && !Array.isArray(intent.data) ? intent.data : {},
+    policy: {
+      allowed: Boolean(intent.policy?.allowed),
+      reason: intent.policy?.reason ?? null,
+      dailySpentUsdc: Number(intent.policy?.dailySpentUsdc || 0),
+      weeklySpentUsdc: Number(intent.policy?.weeklySpentUsdc || 0),
+      monthlySpentUsdc: Number(intent.policy?.monthlySpentUsdc || 0),
+      checks: checks.map(normalizePaymentIntentCheck),
+      riskFlags: riskFlags.map(normalizePaymentIntentRiskFlag)
+    },
+    approval: {
+      required: intent.approval?.required !== false,
+      decidedBy: intent.approval?.decidedBy ?? null,
+      decidedAt: validIsoOrNull(intent.approval?.decidedAt),
+      note: intent.approval?.note ?? null,
+      expiresAt: validIsoOrNull(intent.approval?.expiresAt)
+    },
+    execution: {
+      paymentId: intent.execution?.paymentId ?? null,
+      txHash: intent.execution?.txHash ?? null,
+      resultSummary: intent.execution?.resultSummary ?? null,
+      error: intent.execution?.error ?? null,
+      executedAt: validIsoOrNull(intent.execution?.executedAt)
+    },
+    receiptId: intent.receiptId ?? intent.execution?.paymentId ?? null,
+    createdAt: intent.createdAt ?? now,
+    updatedAt: intent.updatedAt ?? intent.createdAt ?? now
+  };
+}
+
+function normalizePaymentIntentStatus(value: unknown): PaymentIntentRecord["status"] {
+  if (
+    value === "pending_approval"
+    || value === "approved"
+    || value === "rejected"
+    || value === "executing"
+    || value === "settled"
+    || value === "failed"
+    || value === "policy_blocked"
+    || value === "expired"
+  ) return value;
+  return "pending_approval";
+}
+
+function normalizePaymentIntentCheck(value: PaymentIntentRecord["policy"]["checks"][number]): PaymentIntentRecord["policy"]["checks"][number] {
+  return {
+    status: value?.status === "fail" ? "fail" : "pass",
+    label: String(value?.label ?? "Payment check"),
+    detail: String(value?.detail ?? "")
+  };
+}
+
+function normalizePaymentIntentRiskFlag(value: PaymentIntentRecord["policy"]["riskFlags"][number]): PaymentIntentRecord["policy"]["riskFlags"][number] {
+  const severity = value?.severity === "critical" || value?.severity === "warning" ? value.severity : "info";
+  return {
+    severity,
+    label: String(value?.label ?? "Risk signal"),
+    detail: String(value?.detail ?? "")
+  };
 }
 
 function normalizeEscrow(escrow: EscrowRecord): EscrowRecord {
@@ -1503,6 +1692,7 @@ function seededServices(): ServiceRecord[] {
     {id: "nexora-launch-readiness-check", name: "Launch Readiness Check", endpointHash: "launch-readiness-check-v1", pricePerUnitUsdc: 0.03, kind: "launch_readiness_check"},
     {id: "nexora-x402-integration-planner", name: "x402 Integration Planner", endpointHash: "x402-integration-planner-v1", pricePerUnitUsdc: 0.025, kind: "x402_integration_planner", featured: true},
     {id: "nexora-wallet-risk-approval-scan", name: "Wallet Risk + Approval Scan", endpointHash: "wallet-risk-approval-scan-v1", pricePerUnitUsdc: 0.05, kind: "wallet_risk_approval_scan", featured: true},
+    {id: "nexora-agent-transaction-preflight", name: "Agent Transaction Preflight", endpointHash: "agent-transaction-preflight-v1", pricePerUnitUsdc: 0.035, kind: "agent_transaction_preflight", featured: true},
     {id: "nexora-contract-interaction-risk-scan", name: "Contract Interaction Risk Scan", endpointHash: "contract-interaction-risk-scan-v1", pricePerUnitUsdc: 0.04, kind: "contract_interaction_risk_scan", featured: true},
     {id: "nexora-invoice-collection-agent", name: "Invoice Collection Agent", endpointHash: "invoice-collection-agent-v1", pricePerUnitUsdc: 0.05, kind: "invoice_collection_agent", featured: true},
     {id: "nexora-escrow-milestone-monitor", name: "Escrow Milestone Monitor", endpointHash: "escrow-milestone-monitor-v1", pricePerUnitUsdc: 0.06, kind: "escrow_milestone_monitor", featured: true},
@@ -1601,7 +1791,8 @@ function defaultManifestForService(name: string, endpointHash: string): ServiceM
       platformFeeBps: 200
     };
   }
-  if (marker.includes("wallet activity") || marker.includes("wallet summary") || marker.includes("wallet risk")) {
+  if (marker.includes("wallet risk") || marker.includes("approval scan")) return manifestTemplateForKind("wallet_risk_approval_scan");
+  if (marker.includes("wallet activity") || marker.includes("wallet summary")) {
     return {
       kind: "wallet_activity_summary",
       version: "1.0.0",
@@ -1634,7 +1825,7 @@ function defaultManifestForService(name: string, endpointHash: string): ServiceM
   if (marker.includes("policy risk") || marker.includes("agent policy review")) return manifestTemplateForKind("policy_risk_review");
   if (marker.includes("launch readiness") || marker.includes("launch check")) return manifestTemplateForKind("launch_readiness_check");
   if (marker.includes("x402 integration") || marker.includes("integration planner")) return manifestTemplateForKind("x402_integration_planner");
-  if (marker.includes("wallet risk") || marker.includes("approval scan")) return manifestTemplateForKind("wallet_risk_approval_scan");
+  if (marker.includes("transaction preflight") || marker.includes("agent preflight") || marker.includes("preflight simulation")) return manifestTemplateForKind("agent_transaction_preflight");
   if (marker.includes("contract interaction") || marker.includes("interaction risk")) return manifestTemplateForKind("contract_interaction_risk_scan");
   if (marker.includes("invoice") || marker.includes("collection agent")) return manifestTemplateForKind("invoice_collection_agent");
   if (marker.includes("escrow milestone") || marker.includes("milestone monitor")) return manifestTemplateForKind("escrow_milestone_monitor");
@@ -1818,9 +2009,26 @@ function manifestTemplateForKind(kind: ServiceManifest["kind"]): ServiceManifest
     return {
       kind,
       version: "1.0.0",
-      description: "Scans a wallet for risky approval patterns, counterparty exposure, and policy recommendations before an agent pays or interacts.",
+      description: "Scans full historical USDC Approval logs through configured RPCs, then checks current allowance exposure before an agent pays or interacts.",
       inputSchema: [{name: "wallet", label: "Wallet address", type: "text", required: true, placeholder: "0x..."}],
-      outputSchema: ["wallet", "riskLevel", "checks", "approvals", "recommendedPolicy", "summary"],
+      outputSchema: ["wallet", "riskLevel", "live", "providerStatus", "metrics", "exposure", "chains", "approvals", "recommendedPolicy", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "agent_transaction_preflight") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Runs a live transaction preflight before an agent signs or submits a contract call, using Tenderly when configured or chain RPC simulation for supported networks.",
+      inputSchema: [{
+        name: "transaction",
+        label: "Transaction JSON",
+        type: "text",
+        required: true,
+        placeholder: "{\"chainId\":5042002,\"from\":\"0x...\",\"to\":\"0x...\",\"data\":\"0x\",\"value\":\"0\",\"gas\":\"180000\"}"
+      }],
+      outputSchema: ["status", "decision", "provider", "live", "gasUsed", "checks", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };
@@ -1862,9 +2070,9 @@ function manifestTemplateForKind(kind: ServiceManifest["kind"]): ServiceManifest
     return {
       kind,
       version: "1.0.0",
-      description: "Screens a wallet or counterparty for payment suitability, risk indicators, and compliance-provider readiness.",
+      description: "Screens a wallet or counterparty with live chain telemetry, local Nexora activity, and explicit KYT provider readiness.",
       inputSchema: [{name: "counterparty", label: "Wallet or counterparty", type: "text", required: true, placeholder: "0x... or company/payment context"}],
-      outputSchema: ["counterparty", "riskLevel", "checks", "providerStatus", "recommendations", "summary"],
+      outputSchema: ["counterparty", "wallet", "decision", "live", "riskLevel", "metrics", "localActivity", "providerStatus", "recommendations", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };
@@ -1884,9 +2092,9 @@ function manifestTemplateForKind(kind: ServiceManifest["kind"]): ServiceManifest
     return {
       kind,
       version: "1.0.0",
-      description: "Checks vault opportunity details for APY, TVL, strategy-risk, rebalance triggers, and Save/Earn readiness.",
-      inputSchema: [{name: "vault", label: "Vault or strategy details", type: "text", required: true, placeholder: "Vault name, APY, TVL, asset, chain, withdrawal terms"}],
-      outputSchema: ["vault", "apy", "riskLevel", "checks", "rebalanceTriggers", "summary"],
+      description: "Monitors USDC yield opportunities from live DeFiLlama market data and returns risk notes without enabling execution.",
+      inputSchema: [{name: "vault", label: "Vault or strategy details", type: "text", required: true, placeholder: "USDC yield opportunity on Base, Arbitrum, or Arc"}],
+      outputSchema: ["vault", "apy", "riskLevel", "providerStatus", "monitoring", "candidates", "risks", "checks", "rebalanceTriggers", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };

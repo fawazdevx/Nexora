@@ -1,6 +1,6 @@
 import {useEffect, useState} from "react";
 import {motion} from "framer-motion";
-import {BadgeCheck, CheckCircle2, Coins, ExternalLink, Sparkles, Store} from "lucide-react";
+import {AlertTriangle, BadgeCheck, CheckCircle2, Coins, ExternalLink, Sparkles, Store} from "lucide-react";
 import {useAccount} from "wagmi";
 import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
@@ -59,6 +59,17 @@ export default function ReputationPage() {
         title="Reputation scorecard"
         description="Reputation accumulates from settled payments, completed tasks, marketplace activity, and ecosystem contributions."
       />
+
+      {snapshot.isError && address ? (
+        <div className="flex items-start gap-3 rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-magenta" />
+          <div className="min-w-0 flex-1 text-magenta">
+            <p className="font-semibold">Reputation data could not be loaded</p>
+            <p className="mt-1 text-magenta/80">{snapshot.error instanceof Error ? snapshot.error.message : "Could not reach the Nexora API."} The scorecard below is not showing your real reputation.</p>
+            <button type="button" className="secondary-button mt-2 min-h-8 px-3 py-1 text-xs" onClick={() => snapshot.refetch()}>Retry</button>
+          </div>
+        </div>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[320px_1fr]">
         {/* Score hero */}

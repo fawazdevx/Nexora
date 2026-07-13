@@ -20,7 +20,7 @@ const whatsAppAvailable = import.meta.env.VITE_NEXORA_WHATSAPP_ENABLED === "true
 const escrowTemplates = [
   {title: "Analyze my website and send a growth report", description: "Review https://nexora.finance, list the top conversion issues, summarize SEO problems, and deliver a short action plan in a shared document.", amount: "10", bond: "1"},
   {title: "Review my GitHub repo for grant readiness", description: "Review https://github.com/fawazdev/nexora, summarize architecture clarity, missing docs, deployment risk, and what to improve before a grant demo.", amount: "12", bond: "1"},
-  {title: "Check a contract before agent allowlisting", description: "Review contract 0x0000000000000000000000000000000000000000, list owner/admin risks, proxy concerns, and whether an agent should interact with it.", amount: "8", bond: "1"},
+  {title: "Check a contract before agent allowlisting", description: "Review the contract at the address I provide, list owner/admin risks, proxy concerns, and whether an agent should interact with it.", amount: "8", bond: "1"},
   {title: "Write an API integration checklist", description: "Create a deliverable checklist for integrating a paid x402 API, including input schema, payment settlement, result format, and policy requirements.", amount: "7", bond: "1"}
 ];
 
@@ -472,11 +472,13 @@ function EscrowReminderPanel({escrow, busy, onUpdate}: {escrow: Escrow; busy: bo
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-4">
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
         <ReminderChannel icon={Bell} label="In-app" active={reminder.channels.inApp} onClick={() => toggleChannel("inApp")} disabled={busy} />
         <ReminderChannel icon={Mail} label="Email" active={reminder.channels.email} onClick={() => toggleChannel("email")} disabled={busy} />
         <ReminderChannel icon={Send} label="Telegram" active={reminder.channels.telegram} onClick={() => toggleChannel("telegram")} disabled={busy} />
-        <ReminderChannel icon={Bell} label={whatsAppAvailable ? "WhatsApp" : "WhatsApp soon"} active={whatsAppAvailable && reminder.channels.whatsapp} onClick={() => toggleChannel("whatsapp")} disabled={busy || !whatsAppAvailable} />
+        {whatsAppAvailable ? (
+          <ReminderChannel icon={Bell} label="WhatsApp" active={reminder.channels.whatsapp} onClick={() => toggleChannel("whatsapp")} disabled={busy} />
+        ) : null}
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">

@@ -66,12 +66,13 @@ export function sampleInputForService(service: MarketplaceService) {
   if (kind === "launch_readiness_check") return "Launch Nexora marketplace with on-chain x402 settlement, receipts, Telegram/email alerts, and publisher revenue dashboard.";
   if (kind === "x402_integration_planner") return "Paid GitHub repository analyzer endpoint in a Next.js API route using Arc USDC.";
   if (kind === "wallet_risk_approval_scan") return service.publisherAddress;
+  if (kind === "agent_transaction_preflight") return "";
   if (kind === "contract_interaction_risk_scan") return "0x3600000000000000000000000000000000000000 approve 25 USDC for x402 settlement";
   if (kind === "invoice_collection_agent") return "Client: Arc Studio. Amount: 250 USDC. Due: 2026-07-15. Payee: 0x0000000000000000000000000000000000000000. Deliverable: integration review.";
   if (kind === "escrow_milestone_monitor") return "Milestone 1: UI complete due 2026-07-10. Milestone 2: x402 settlement demo due 2026-07-17. Amount: 500 USDC. Evidence links required before release.";
   if (kind === "counterparty_compliance_screen") return `${service.publisherAddress} payment suitability screen for a 250 USDC vendor payout`;
   if (kind === "liquidation_risk_monitor") return "Protocol: Aave. Chain: Base. Collateral: 2 ETH. Debt: 4200 USDC. Health factor: 1.32.";
-  if (kind === "vault_apy_monitor") return "Arc USDC vault. APY 8.4%. TVL 2500000 USDC. Weekly rebalance allowed. Withdrawal delay 24h.";
+  if (kind === "vault_apy_monitor") return "USDC yield risk monitor for Base, Arbitrum, and Arc opportunities";
   if (kind === "subscription_payment_agent") return "Vendor: API provider. Amount: 49 USDC monthly. Payee: 0x0000000000000000000000000000000000000000. Approval required if price changes.";
   if (kind === "publisher_revenue_intelligence") return service.publisherAddress;
   if (kind === "dao_grant_payout_agent") return "3 recipients, total 1500 USDC. Milestone: demo shipped. Due 2026-07-20. Reviewer approval required before payout.";

@@ -3,6 +3,10 @@ import {pushNotification} from "../store.js";
 import {config} from "../config.js";
 import {dispatchNotification} from "../notifications.js";
 import {safeHttpUrl} from "../security.js";
+import {fetchDefiLlamaUsdcYields, summarizeDefiLlamaVaultQuery} from "../providers/defillama.js";
+import {runAgentTransactionPreflight} from "../providers/preflight.js";
+import {tenderlyReadiness} from "../providers/tenderly.js";
+import {scanWalletApprovalExposure, screenCounterpartyWallet, type CounterpartyLocalActivity, type WalletRiskChainConfig} from "../providers/wallet-risk.js";
 
 export type PlatformPlan = {
   id: "developer_analytics" | "premium_agent_automation" | "enterprise_policy" | "verified_builder";
@@ -349,8 +353,12 @@ export async function executeBuiltInService(kind: ServiceManifest["kind"], args:
     return scanWalletRiskApprovals(requiredString(args.wallet ?? args.address, "wallet"));
   }
 
+  if (kind === "agent_transaction_preflight") {
+    return runAgentTransactionPreflight(args, marketplacePreflightOptions());
+  }
+
   if (kind === "contract_interaction_risk_scan") {
-    return scanContractInteraction(requiredString(args.interaction ?? args.contract ?? args.action, "interaction"));
+    return scanContractInteraction(requiredString(args.interaction ?? args.contract ?? args.action, "interaction"), args);
   }
 
   if (kind === "invoice_collection_agent") {
@@ -420,7 +428,8 @@ export function inferServiceKind(service: Pick<ServiceRecord, "name" | "endpoint
   if (marker.includes("website") || marker.includes("url analyzer") || marker.includes("site analyzer")) return "website_analyzer";
   if (marker.includes("github") || marker.includes("repo analyzer") || marker.includes("repository")) return "github_repo_analyzer";
   if (marker.includes("contract safety") || marker.includes("contract audit") || marker.includes("contract check")) return "contract_safety_check";
-  if (marker.includes("wallet activity") || marker.includes("wallet summary") || marker.includes("wallet risk")) return "wallet_activity_summary";
+  if (marker.includes("wallet risk") || marker.includes("approval scan")) return "wallet_risk_approval_scan";
+  if (marker.includes("wallet activity") || marker.includes("wallet summary")) return "wallet_activity_summary";
   if (marker.includes("landing page") || marker.includes("copy reviewer") || marker.includes("conversion copy")) return "landing_page_copy_reviewer";
   if (marker.includes("grant") || marker.includes("application reviewer")) return "grant_application_reviewer";
   if (marker.includes("meeting") || marker.includes("brief")) return "meeting_brief";
@@ -431,7 +440,7 @@ export function inferServiceKind(service: Pick<ServiceRecord, "name" | "endpoint
   if (marker.includes("policy risk") || marker.includes("agent policy review")) return "policy_risk_review";
   if (marker.includes("launch readiness") || marker.includes("launch check")) return "launch_readiness_check";
   if (marker.includes("x402 integration") || marker.includes("integration planner")) return "x402_integration_planner";
-  if (marker.includes("wallet risk") || marker.includes("approval scan")) return "wallet_risk_approval_scan";
+  if (marker.includes("transaction preflight") || marker.includes("agent preflight") || marker.includes("preflight simulation")) return "agent_transaction_preflight";
   if (marker.includes("contract interaction") || marker.includes("interaction risk")) return "contract_interaction_risk_scan";
   if (marker.includes("invoice") || marker.includes("collection agent")) return "invoice_collection_agent";
   if (marker.includes("escrow milestone") || marker.includes("milestone monitor")) return "escrow_milestone_monitor";
@@ -615,9 +624,26 @@ function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
     return {
       kind,
       version: "1.0.0",
-      description: "Scans a wallet for risky approval patterns, counterparty exposure, and policy recommendations before an agent pays or interacts.",
+      description: "Scans full historical USDC Approval logs through configured RPCs, then checks current allowance exposure before an agent pays or interacts.",
       inputSchema: [{name: "wallet", label: "Wallet address", type: "text", required: true, placeholder: "0x..."}],
-      outputSchema: ["wallet", "riskLevel", "checks", "approvals", "recommendedPolicy", "summary"],
+      outputSchema: ["wallet", "riskLevel", "live", "providerStatus", "metrics", "exposure", "chains", "approvals", "recommendedPolicy", "summary"],
+      revenueMode: "per_execution",
+      platformFeeBps: 200
+    };
+  }
+  if (kind === "agent_transaction_preflight") {
+    return {
+      kind,
+      version: "1.0.0",
+      description: "Runs a live transaction preflight before an agent signs or submits a contract call, using Tenderly when configured or chain RPC simulation for supported networks.",
+      inputSchema: [{
+        name: "transaction",
+        label: "Transaction JSON",
+        type: "text",
+        required: true,
+        placeholder: "{\"chainId\":5042002,\"from\":\"0x...\",\"to\":\"0x...\",\"data\":\"0x\",\"value\":\"0\",\"gas\":\"180000\"}"
+      }],
+      outputSchema: ["status", "decision", "provider", "live", "gasUsed", "checks", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };
@@ -659,9 +685,9 @@ function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
     return {
       kind,
       version: "1.0.0",
-      description: "Screens a wallet or counterparty for payment suitability, risk indicators, and compliance-provider readiness.",
+      description: "Screens a wallet or counterparty with live chain telemetry, local Nexora activity, and explicit KYT provider readiness.",
       inputSchema: [{name: "counterparty", label: "Wallet or counterparty", type: "text", required: true, placeholder: "0x... or company/payment context"}],
-      outputSchema: ["counterparty", "riskLevel", "checks", "providerStatus", "recommendations", "summary"],
+      outputSchema: ["counterparty", "wallet", "decision", "live", "riskLevel", "metrics", "localActivity", "providerStatus", "recommendations", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };
@@ -681,9 +707,9 @@ function manifestTemplate(kind: ServiceManifest["kind"]): ServiceManifest {
     return {
       kind,
       version: "1.0.0",
-      description: "Checks vault opportunity details for APY, TVL, strategy-risk, rebalance triggers, and Save/Earn readiness.",
-      inputSchema: [{name: "vault", label: "Vault or strategy details", type: "text", required: true, placeholder: "Vault name, APY, TVL, asset, chain, withdrawal terms"}],
-      outputSchema: ["vault", "apy", "riskLevel", "checks", "rebalanceTriggers", "summary"],
+      description: "Monitors USDC yield opportunities from live DeFiLlama market data and returns risk notes without enabling execution.",
+      inputSchema: [{name: "vault", label: "Vault or strategy details", type: "text", required: true, placeholder: "USDC yield opportunity on Base, Arbitrum, or Arc"}],
+      outputSchema: ["vault", "apy", "riskLevel", "providerStatus", "monitoring", "candidates", "risks", "checks", "rebalanceTriggers", "summary"],
       revenueMode: "per_execution",
       platformFeeBps: 200
     };
@@ -1002,44 +1028,31 @@ function planX402Integration(api: string) {
   };
 }
 
-function scanWalletRiskApprovals(wallet: string) {
-  const valid = /^0x[a-fA-F0-9]{40}$/.test(wallet);
-  return {
-    status: valid ? "ok" : "warning",
-    wallet,
-    riskLevel: valid ? "medium" : "high",
-    providerStatus: {
-      approvals: "not_configured",
-      note: "Live allowance history requires an indexer or approval-risk provider. This built-in scan returns policy-safe checks until a provider is configured."
-    },
-    approvals: valid ? [
-      {spender: "unknown", risk: "review_required", action: "Connect an allowance indexer before high-value automation."}
-    ] : [],
-    checks: [
-      valid ? "Wallet address format is valid." : "Wallet address format is invalid or incomplete.",
-      "Review ERC-20 approvals before funding an agent wallet.",
-      "Avoid unlimited approvals for agent-operated wallets.",
-      "Require recipient and service allowlists for new counterparties.",
-      "Start with small caps until wallet history has been reviewed."
-    ],
-    recommendedPolicy: {
-      transactionCapUsdc: valid ? 10 : 0,
-      dailyLimitUsdc: valid ? 50 : 0,
-      weeklyLimitUsdc: valid ? 150 : 0,
-      requireOnchainPolicy: true,
-      recipientAllowlist: valid ? [wallet] : []
-    },
-    summary: valid
-      ? "Wallet format is valid. Treat this as a preflight policy scan and connect an allowance/history provider before relying on it for large balances."
-      : "The wallet input is not valid. Do not fund or allowlist this address."
-  };
+async function scanWalletRiskApprovals(wallet: string) {
+  return scanWalletApprovalExposure(wallet, {
+    chains: marketplaceWalletRiskChains()
+  });
 }
 
-function scanContractInteraction(interaction: string) {
+async function scanContractInteraction(interaction: string, args: Record<string, unknown> = {}) {
   const contract = interaction.match(/0x[a-fA-F0-9]{40}/)?.[0] ?? "";
   const amount = numericHint(interaction, /(\d+(\.\d+)?)\s*(usdc|eurc|usd)/i);
   const action = /approve/i.test(interaction) ? "approve" : /swap/i.test(interaction) ? "swap" : /transfer|pay|settle/i.test(interaction) ? "payment" : "contract_call";
   const highRisk = !contract || /unlimited|max|infinite/i.test(interaction) || amount > 100;
+  const preflight = hasPreflightSimulationArgs(args)
+    ? await runAgentTransactionPreflight(args, marketplacePreflightOptions()).catch((error) => ({
+      status: "provider_error",
+      decision: "manual_review",
+      provider: null,
+      live: false,
+      providerStatus: {tenderly: tenderlyReadiness(marketplaceTenderlyConfig())},
+      message: error instanceof Error ? error.message : "Transaction preflight failed"
+    }))
+    : {
+      status: "not_requested",
+      providerStatus: tenderlyReadiness(marketplaceTenderlyConfig()),
+      summary: "Pass chainId, from, to, and data/input to include live transaction preflight simulation."
+    };
   return {
     status: contract ? "ok" : "warning",
     contract: contract || null,
@@ -1058,6 +1071,7 @@ function scanContractInteraction(interaction: string) {
       "Add the contract to policy allowlist only after source verification.",
       "Require human approval for first interaction with a new contract."
     ],
+    preflight,
     summary: highRisk
       ? "Interaction requires manual review before an agent should execute it."
       : "Interaction looks suitable for a low-limit test after contract verification."
@@ -1118,29 +1132,14 @@ function monitorEscrowMilestones(escrow: string) {
   };
 }
 
-function screenCounterpartyCompliance(counterparty: string) {
+async function screenCounterpartyCompliance(counterparty: string) {
   const wallet = counterparty.match(/0x[a-fA-F0-9]{40}/)?.[0] ?? null;
-  return {
-    status: "ok",
-    counterparty: wallet ?? clip(counterparty, 180),
-    riskLevel: wallet ? "medium" : "review",
-    providerStatus: {
-      sanctions: "not_configured",
-      note: "No sanctions/KYT provider is configured. Integrate a licensed compliance provider before presenting this as definitive screening."
-    },
-    checks: [
-      wallet ? "Wallet address format detected." : "No wallet address detected; screen business identity and payout wallet separately.",
-      "Check sanctions and illicit-finance exposure with a licensed provider.",
-      "Check wallet age, counterparties, and transaction history before high-value payments.",
-      "Keep receipts and approval notes for audit trail."
-    ],
-    recommendations: [
-      "Use low transaction caps until a compliance provider clears the counterparty.",
-      "Require manual approval for first payment.",
-      "Store screening result references with the receipt."
-    ],
-    summary: "Counterparty workflow prepared. This is a readiness screen, not a legal compliance determination."
-  };
+  return screenCounterpartyWallet({
+    counterparty,
+    chains: marketplaceWalletRiskChains(),
+    localActivity: await counterpartyLocalActivity(wallet),
+    complianceProviderConfigured: false
+  });
 }
 
 function monitorLiquidationRisk(position: string) {
@@ -1173,32 +1172,73 @@ function monitorLiquidationRisk(position: string) {
   };
 }
 
-function monitorVaultApy(vault: string) {
-  const apy = numericHint(vault, /(\d+(\.\d+)?)\s*%?\s*(apy|apr)/i);
-  const tvl = numericHint(vault, /tvl[^0-9]*(\d+(\.\d+)?)/i);
-  const riskLevel = /new|unaudited|experimental|lock/i.test(vault) ? "high" : apy > 20 ? "medium" : "review";
+async function monitorVaultApy(vault: string) {
+  const opportunities = await fetchDefiLlamaUsdcYields({limit: 8, minTvlUsd: 250_000}).catch((error) => ({
+    error: error instanceof Error ? error.message : "DeFiLlama yield provider request failed"
+  }));
+  if (!Array.isArray(opportunities)) {
+    return {
+      status: "provider_unavailable",
+      vault: clip(vault, 180),
+      live: false,
+      providerStatus: {
+        vaultData: "provider_error",
+        source: "DeFiLlama Yields API",
+        note: opportunities.error
+      },
+      monitoring: {
+        asset: "USDC",
+        source: "DeFiLlama Yields API",
+        automationEnabled: false,
+        executionEnabled: false,
+        candidateCount: 0,
+        updatedAt: null
+      },
+      candidates: [],
+      risks: [
+        "No live market data was available, so Nexora did not generate a yield recommendation.",
+        "Do not enable automated deposits or rebalances until the market data provider is reachable."
+      ],
+      checks: [
+        "Live APY/TVL provider request failed.",
+        "No user-supplied APY was treated as verified market data."
+      ],
+      rebalanceTriggers: [],
+      summary: "USDC yield risk monitor could not fetch live DeFiLlama market data."
+    };
+  }
+  if (opportunities.length > 0) return summarizeDefiLlamaVaultQuery(vault, opportunities);
+
   return {
-    status: "ok",
+    status: "unavailable",
     vault: clip(vault, 180),
-    apy: apy || null,
-    tvl: tvl || null,
-    riskLevel,
+    apy: null,
+    tvlUsd: null,
+    riskLevel: "review",
     providerStatus: {
-      vaultData: "not_configured",
-      note: "Live APY/TVL checks require vault provider APIs. This handler prepares Save/Earn monitoring rules from supplied vault details."
+      vaultData: "live",
+      source: "DeFiLlama Yields API",
+      note: "DeFiLlama returned no USDC yield candidates matching Nexora liquidity filters."
     },
+    monitoring: {
+      asset: "USDC",
+      source: "DeFiLlama Yields API",
+      automationEnabled: false,
+      executionEnabled: false,
+      candidateCount: 0,
+      updatedAt: null
+    },
+    candidates: [],
+    risks: [
+      "No live market data candidate passed the current USDC liquidity filters.",
+      "Do not infer vault safety from user-supplied APY or TVL text."
+    ],
     checks: [
-      "Confirm APY source and update timestamp.",
-      "Check withdrawal delay, fees, strategy risk, and audit status.",
-      "Avoid auto-rebalance into unaudited or low-liquidity vaults.",
-      "Require user approval before first deposit."
+      "DeFiLlama was reachable but returned no eligible USDC candidates.",
+      "No executable deposit route is enabled."
     ],
-    rebalanceTriggers: [
-      "Better vault APY exceeds current APY by configured spread.",
-      "Current vault risk rating worsens.",
-      "TVL or liquidity falls below minimum threshold."
-    ],
-    summary: "Vault monitoring plan prepared. Use live vault APIs before enabling automated deposits or rebalances."
+    rebalanceTriggers: [],
+    summary: "No live USDC yield candidate is available under the current market-data filters."
   };
 }
 
@@ -1378,7 +1418,8 @@ async function analyzeGitHubRepo(input: string) {
   const repo = parseGitHubRepo(input);
   const headers = {
     "accept": "application/vnd.github+json",
-    "user-agent": "NexoraGitHubRepoAnalyzer/1.0"
+    "user-agent": "NexoraGitHubRepoAnalyzer/1.0",
+    ...(config.integrations.githubToken ? {authorization: `Bearer ${config.integrations.githubToken}`} : {})
   };
   const repoResponse = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}`, {
     headers,
@@ -1567,6 +1608,148 @@ function parseWebhookJson(text: string) {
   } catch {
     return {summary: text.slice(0, 2_000)};
   }
+}
+
+function hasPreflightSimulationArgs(args: Record<string, unknown>) {
+  if (typeof args.transaction === "string" || typeof args.tx === "string") return true;
+  return Boolean(args.chainId ?? args.networkId) && typeof args.from === "string" && typeof (args.to ?? args.contract) === "string";
+}
+
+function marketplaceTenderlyConfig() {
+  return {
+    accessKey: config.integrations.tenderlyAccessKey,
+    accountSlug: config.integrations.tenderlyAccountSlug,
+    projectSlug: config.integrations.tenderlyProjectSlug,
+    apiUrl: config.integrations.tenderlyApiUrl
+  };
+}
+
+function marketplacePreflightOptions() {
+  return {
+    tenderly: marketplaceTenderlyConfig(),
+    rpcUrls: marketplaceRpcUrls()
+  };
+}
+
+function marketplaceRpcUrls() {
+  const rpcUrls: Record<number, string> = {};
+  addRpcUrl(rpcUrls, config.arc.chainId, config.arc.rpcUrl);
+  addRpcUrl(rpcUrls, config.base.sepoliaChainId, config.base.sepoliaRpcUrl);
+  addRpcUrl(rpcUrls, config.base.mainnetChainId, config.base.mainnetRpcUrl);
+  addRpcUrl(rpcUrls, config.arbitrum.sepoliaChainId, config.arbitrum.sepoliaRpcUrl);
+  addRpcUrl(rpcUrls, config.arbitrum.oneChainId, config.arbitrum.oneRpcUrl);
+  return rpcUrls;
+}
+
+function addRpcUrl(target: Record<number, string>, chainId: number, rpcUrl: string) {
+  if (Number.isInteger(chainId) && chainId > 0 && rpcUrl.trim()) target[chainId] = rpcUrl;
+}
+
+function marketplaceWalletRiskChains(): WalletRiskChainConfig[] {
+  const chains: WalletRiskChainConfig[] = [
+    {
+      key: config.arc.chainId === 5042002 ? "arc-testnet" : "arc",
+      name: config.arc.chainId === 5042002 ? "Arc Testnet" : "Arc",
+      chainId: config.arc.chainId,
+      rpcUrl: config.arc.rpcUrl,
+      explorerUrl: config.arc.explorerUrl,
+      usdcAddress: config.contracts.usdc || (config.arc.chainId === 5042002 ? "0x3600000000000000000000000000000000000000" : ""),
+      nativeCurrency: {name: "USDC", symbol: "USDC", decimals: 18},
+      knownSpenders: knownSpenders(config.contracts.x402Ledger, "x402 ledger"),
+      approvalHistoryStartBlock: approvalHistoryStartBlock("ARC"),
+      approvalLogChunkSize: approvalLogChunkSize("ARC")
+    },
+    {
+      key: "base-sepolia",
+      name: "Base Sepolia",
+      chainId: config.base.sepoliaChainId,
+      rpcUrl: config.base.sepoliaRpcUrl,
+      explorerUrl: config.base.sepoliaExplorerUrl,
+      usdcAddress: config.base.sepoliaUsdc,
+      knownSpenders: knownSpenders(config.base.sepoliaX402Ledger, "x402 ledger"),
+      approvalHistoryStartBlock: approvalHistoryStartBlock("BASE_SEPOLIA"),
+      approvalLogChunkSize: approvalLogChunkSize("BASE_SEPOLIA")
+    },
+    {
+      key: "arbitrum-sepolia",
+      name: "Arbitrum Sepolia",
+      chainId: config.arbitrum.sepoliaChainId,
+      rpcUrl: config.arbitrum.sepoliaRpcUrl,
+      explorerUrl: config.arbitrum.sepoliaExplorerUrl,
+      usdcAddress: config.arbitrum.sepoliaUsdc,
+      knownSpenders: knownSpenders(config.arbitrum.sepoliaX402Ledger, "x402 ledger"),
+      approvalHistoryStartBlock: approvalHistoryStartBlock("ARB_SEPOLIA"),
+      approvalLogChunkSize: approvalLogChunkSize("ARB_SEPOLIA")
+    }
+  ];
+
+  if ((process.env.NEXORA_WALLET_RISK_MAINNETS ?? "false").toLowerCase() === "true") {
+    chains.push(
+      {
+        key: "base-mainnet",
+        name: "Base",
+        chainId: config.base.mainnetChainId,
+        rpcUrl: config.base.mainnetRpcUrl,
+        explorerUrl: config.base.mainnetExplorerUrl,
+        usdcAddress: config.base.mainnetUsdc,
+        knownSpenders: knownSpenders(config.base.mainnetX402Ledger, "x402 ledger"),
+        approvalHistoryStartBlock: approvalHistoryStartBlock("BASE_MAINNET"),
+        approvalLogChunkSize: approvalLogChunkSize("BASE_MAINNET")
+      },
+      {
+        key: "arbitrum-one",
+        name: "Arbitrum One",
+        chainId: config.arbitrum.oneChainId,
+        rpcUrl: config.arbitrum.oneRpcUrl,
+        explorerUrl: config.arbitrum.oneExplorerUrl,
+        usdcAddress: config.arbitrum.oneUsdc,
+        knownSpenders: knownSpenders(config.arbitrum.oneX402Ledger, "x402 ledger"),
+        approvalHistoryStartBlock: approvalHistoryStartBlock("ARB_ONE"),
+        approvalLogChunkSize: approvalLogChunkSize("ARB_ONE")
+      }
+    );
+  }
+
+  return chains;
+}
+
+function knownSpenders(address: string, label: string) {
+  return /^0x[a-fA-F0-9]{40}$/.test(address) ? [{address, label}] : [];
+}
+
+function approvalHistoryStartBlock(chainEnvPrefix: string) {
+  return Number(process.env[`${chainEnvPrefix}_APPROVAL_HISTORY_START_BLOCK`] ?? process.env.NEXORA_APPROVAL_HISTORY_START_BLOCK ?? 0);
+}
+
+function approvalLogChunkSize(chainEnvPrefix: string) {
+  return Number(
+    process.env[`${chainEnvPrefix}_APPROVAL_LOG_CHUNK_BLOCKS`]
+      ?? process.env.NEXORA_APPROVAL_LOG_CHUNK_BLOCKS
+      ?? process.env.NEXORA_APPROVAL_SCAN_BLOCKS
+      ?? 100_000
+  );
+}
+
+async function counterpartyLocalActivity(wallet: string | null): Promise<CounterpartyLocalActivity> {
+  if (!wallet) return {settledPayments: 0, failedPayments: 0, publishedServices: 0, lastSeenAt: null};
+  const marker = wallet.toLowerCase();
+  const store = await readStore();
+  const payments = store.payments.filter((payment) => [
+    payment.payer,
+    payment.publisherAddress,
+    payment.agentWallet ?? ""
+  ].some((value) => value.toLowerCase() === marker));
+  const services = visibleServicesForStore(store.services).filter((service) => service.publisherAddress.toLowerCase() === marker);
+  const timestamps = [
+    ...payments.flatMap((payment) => [payment.createdAt, payment.settledAt ?? ""]),
+    ...services.map((service) => service.createdAt)
+  ].filter(Boolean);
+  return {
+    settledPayments: payments.filter((payment) => payment.status === "settled").length,
+    failedPayments: payments.filter((payment) => payment.status === "failed" || payment.status === "policy_blocked").length,
+    publishedServices: services.length,
+    lastSeenAt: timestamps.sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
+  };
 }
 
 function roundUsdc(value: number) {

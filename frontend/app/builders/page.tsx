@@ -19,14 +19,27 @@ type Builder = {
 export default function BuildersPage() {
   const [builders, setBuilders] = useState<Builder[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     void apiGet<{builders: Builder[]}>("/api/public/builders")
       .then((data) => {
+        if (!active) return;
         setBuilders(data.builders);
         setError("");
       })
-      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : "Builder directory unavailable"));
+      .catch((requestError) => {
+        if (!active) return;
+        setError(requestError instanceof Error ? requestError.message : "Builder directory unavailable");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const services = builders.reduce((sum, builder) => sum + builder.serviceCount, 0);
@@ -43,6 +56,17 @@ export default function BuildersPage() {
 
       {error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{error}</p> : null}
 
+      {loading ? (
+        <>
+          <section className="grid gap-4 md:grid-cols-3">
+            {[0, 1, 2].map((item) => <div key={item} className="panel"><div className="shimmer h-10 w-10 rounded-lg" /><div className="shimmer mt-4 h-3 w-20 rounded" /><div className="shimmer mt-3 h-7 w-24 rounded" /></div>)}
+          </section>
+          <section className="grid gap-5 lg:grid-cols-2">
+            {[0, 1].map((item) => <div key={item} className="panel"><div className="shimmer h-40 w-full rounded-xl" /></div>)}
+          </section>
+        </>
+      ) : (
+        <>
       <section className="grid gap-4 md:grid-cols-3">
         <Metric icon={<WalletCards size={18} />} label="Builders" value={builders.length} />
         <Metric icon={<Store size={18} />} label="Services" value={services} />
@@ -60,9 +84,11 @@ export default function BuildersPage() {
                 </div>
                 <p className="mt-2 break-all font-mono text-xs text-slate-500">{builder.address}</p>
               </div>
-              <button className="secondary-button min-h-10 px-4 py-2 text-sm" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(builder.services[0]?.id ?? "")}`)}>
-                View service
-              </button>
+              {builder.services[0]?.id ? (
+                <button className="secondary-button min-h-10 px-4 py-2 text-sm" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(builder.services[0].id)}`)}>
+                  View service
+                </button>
+              ) : null}
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -83,11 +109,13 @@ export default function BuildersPage() {
         ))}
       </section>
 
-      {builders.length === 0 ? (
+      {builders.length === 0 && !error ? (
         <div className="panel">
           <p className="text-sm text-slate-400">No public builders yet. Publish the first x402 API from the marketplace console.</p>
         </div>
       ) : null}
+        </>
+      )}
     </div>
   );
 }

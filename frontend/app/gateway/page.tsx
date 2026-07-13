@@ -137,7 +137,7 @@ export default function GatewayPage() {
       <PageHeader
         kicker="Circle Gateway"
         title="Unified USDC balance"
-        description="View Gateway deposits across supported testnets and deposit USDC into Circle Gateway from Nexora. Deposits credit your unified balance; cross-chain burn and mint execution is intentionally not automated here yet."
+        description="View Gateway deposits across supported testnets and deposit USDC into Circle Gateway from Nexora. Deposits credit your unified balance; cross-chain burn and mint is settled directly through Circle Gateway rather than automated in this console."
         action={
           <button className="secondary-button" onClick={() => void balances.refetch()} disabled={!address || balances.isFetching}>
             {balances.isFetching ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
@@ -147,10 +147,21 @@ export default function GatewayPage() {
       />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatMetric variant="landing" size="lg" value={balances.data?.totalBalanceUsdc ?? 0} prefix="$" decimals={2} label="Unified Gateway balance" loading={balances.isLoading} accent />
-        {(balances.data?.balances ?? gatewayChains.map((item) => ({chain: item.name, chainId: item.id, balanceUsdc: 0, domain: 0, depositor: "", balance: "0"}))).map((item) => (
-          <StatMetric key={item.chainId} variant="landing" value={item.balanceUsdc} prefix="$" decimals={2} label={`${item.chain} · domain ${item.domain || gatewayDomainLabel(item.chainId)}`} loading={balances.isLoading} />
-        ))}
+        {balances.isError ? (
+          <>
+            <UnavailableStat size="lg" label="Unified Gateway balance" />
+            {gatewayChains.map((item) => (
+              <UnavailableStat key={item.id} label={`${item.name} · domain ${gatewayDomainLabel(item.id)}`} />
+            ))}
+          </>
+        ) : (
+          <>
+            <StatMetric variant="landing" size="lg" value={balances.data?.totalBalanceUsdc ?? 0} prefix="$" decimals={2} label="Unified Gateway balance" loading={balances.isLoading} accent />
+            {(balances.data?.balances ?? gatewayChains.map((item) => ({chain: item.name, chainId: item.id, balanceUsdc: 0, domain: 0, depositor: "", balance: "0"}))).map((item) => (
+              <StatMetric key={item.chainId} variant="landing" value={item.balanceUsdc} prefix="$" decimals={2} label={`${item.chain} · domain ${item.domain || gatewayDomainLabel(item.chainId)}`} loading={balances.isLoading} />
+            ))}
+          </>
+        )}
       </section>
 
       {balances.isError ? (
@@ -301,6 +312,15 @@ function gatewayDomainLabel(chainId: number) {
   if (chainId === arbitrumSepoliaWagmiChain.id) return 3;
   if (chainId === baseSepoliaWagmiChain.id) return 6;
   return "—";
+}
+
+function UnavailableStat({label, size = "md"}: {label: string; size?: "md" | "lg"}) {
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.035] px-4 py-3 backdrop-blur-sm">
+      <p className={`${size === "lg" ? "text-3xl" : "text-2xl"} font-semibold text-slate-500`}>—</p>
+      <p className="mt-1 text-xs text-slate-500">{label}</p>
+    </div>
+  );
 }
 
 function AddressRow({label, value, copied, onCopy}: {label: string; value: string; copied: boolean; onCopy: () => void}) {

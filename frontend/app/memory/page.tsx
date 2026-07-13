@@ -113,25 +113,34 @@ export default function AgentMemoryPage() {
           <p className="section-kicker">Recent memories</p>
           <h2 className="mt-2 text-2xl font-semibold text-white">Why agents spent</h2>
           <div className="mt-5 space-y-3">
-            {(data?.recentMemories ?? []).slice(0, 8).map((item) => (
-              <div key={item.paymentId} className="surface p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-white">{item.serviceName}</p>
-                    <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">{item.intent}</p>
+            {memory.isLoading ? (
+              [0, 1, 2].map((item) => <div key={item} className="shimmer h-24 rounded-xl" />)
+            ) : (
+              <>
+                {(data?.recentMemories ?? []).slice(0, 8).map((item) => (
+                  <div key={item.paymentId} className="surface p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-white">{item.serviceName}</p>
+                        <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">{item.intent}</p>
+                      </div>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${item.status === "settled" ? "border-mint/25 bg-mint/10 text-mint" : "border-white/[0.12] bg-white/[0.04] text-slate-300"}`}>
+                        {item.status.replaceAll("_", " ")}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
+                      <span>{usd(item.amountUsdc)}</span>
+                      <span className="capitalize">{item.budgetBucket.replaceAll("_", " ")}</span>
+                      <span>{item.memoId ? shortAddress(item.memoId) : "no memo id"}</span>
+                      <span>{formatTimestamp(item.settledAt ?? item.createdAt)}</span>
+                    </div>
                   </div>
-                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${item.status === "settled" ? "border-mint/25 bg-mint/10 text-mint" : "border-white/[0.12] bg-white/[0.04] text-slate-300"}`}>
-                    {item.status.replaceAll("_", " ")}
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
-                  <span>{usd(item.amountUsdc)}</span>
-                  <span className="capitalize">{item.budgetBucket.replaceAll("_", " ")}</span>
-                  <span>{item.memoId ? shortAddress(item.memoId) : "no memo id"}</span>
-                  <span>{formatTimestamp(item.settledAt ?? item.createdAt)}</span>
-                </div>
-              </div>
-            ))}
+                ))}
+                {(data?.recentMemories?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-slate-400">No agent spend memories yet. They appear after memo-backed payments settle.</p>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
       </section>

@@ -1,5 +1,18 @@
-export function listEarnOpportunities() {
+import {fetchDefiLlamaUsdcYields} from "../providers/defillama.js";
+
+export async function listEarnOpportunities() {
   const xylonetVault = process.env.XYLONET_VAULT_ADDRESS ?? "0x240Eb85458CD41361bd8C3773253a1D78054f747";
+  const marketData = await fetchDefiLlamaUsdcYields({limit: 6, minTvlUsd: 500_000}).catch((error) => [{
+    id: "defillama_unavailable",
+    title: "DeFiLlama USDC yield intelligence",
+    payoutAsset: "USDC" as const,
+    automationEnabled: false,
+    risk: "medium" as const,
+    provider: "defillama",
+    status: "unavailable" as const,
+    contractAddress: null,
+    error: error instanceof Error ? error.message : "DeFiLlama unavailable"
+  }]);
 
   return [
     {
@@ -20,6 +33,7 @@ export function listEarnOpportunities() {
       risk: "low",
       provider: "nexora",
       status: "available"
-    }
+    },
+    ...marketData
   ];
 }

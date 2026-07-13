@@ -21,6 +21,7 @@ import {
   WalletCards
 } from "lucide-react";
 import {useAccount} from "wagmi";
+import {useConnectModal} from "@rainbow-me/rainbowkit";
 import toast from "react-hot-toast";
 import {AgentAvatar} from "@/components/AgentAvatar";
 import {ArcNameLabel} from "@/components/ArcNameLabel";
@@ -37,6 +38,7 @@ type Payment = Snapshot["payments"][number];
 
 export default function HomePage() {
   const {address, isConnected} = useAccount();
+  const {openConnectModal} = useConnectModal();
   const walletReady = Boolean(address);
   const [creating, setCreating] = useState(false);
   const snapshot = useAppSnapshot();
@@ -59,7 +61,7 @@ export default function HomePage() {
 
   async function createAgentWallet() {
     if (!walletReady || !address) {
-      toast.error("Connect your wallet to activate an agent wallet.");
+      openConnectModal?.();
       return;
     }
 
@@ -105,10 +107,18 @@ export default function HomePage() {
     {title: "Developer docs", copy: "Install the SDK or test the x402 playground.", href: "/docs/api", icon: Code2}
   ];
 
+  const runRecommendedAction = () => {
+    if (recommendedAction.href) {
+      navigateTo(recommendedAction.href);
+    } else {
+      openConnectModal?.();
+    }
+  };
+
   const actionQueue = [
-    {label: recommendedAction.label, copy: recommendedAction.copy, href: recommendedAction.href || "/home", icon: Gauge, primary: true},
-    {label: "Check agents", copy: `${readyAgents}/${agents.length} wallets ready for policy-gated payments.`, href: "/agents", icon: WalletCards},
-    {label: "Open receipts", copy: `${recentReceipts.length} recent payment receipt${recentReceipts.length === 1 ? "" : "s"} available.`, href: "/payments", icon: ReceiptText}
+    {label: recommendedAction.label, copy: recommendedAction.copy, onClick: runRecommendedAction, icon: Gauge, primary: true},
+    {label: "Check agents", copy: `${readyAgents}/${agents.length} wallets ready for policy-gated payments.`, onClick: () => navigateTo("/agents"), icon: WalletCards},
+    {label: "Open receipts", copy: `${recentReceipts.length} recent payment receipt${recentReceipts.length === 1 ? "" : "s"} available.`, onClick: () => navigateTo("/payments"), icon: ReceiptText}
   ];
 
   const policyHealth = [
@@ -146,6 +156,21 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {snapshot.isError ? (
+        <div className="panel flex items-start gap-3 border-magenta/30 bg-magenta/10">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-magenta" />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-white">Live data is temporarily unavailable</p>
+            <p className="mt-1 text-sm text-slate-400">
+              {snapshot.error instanceof Error ? snapshot.error.message : "Could not reach the Nexora API."} Figures below may be out of date until the connection is restored.
+            </p>
+            <button type="button" onClick={() => snapshot.refetch()} className="secondary-button mt-3 min-h-9 px-3 py-1.5 text-sm">
+              Retry
+              <ArrowRight size={14} />
+            </button>
+          </div>
+        </div>
+      ) : null}
       <section className="panel relative overflow-hidden p-0">
         <div className="aurora pointer-events-none absolute inset-0 opacity-50" />
         <div className="relative grid gap-0 lg:grid-cols-[1fr_390px]">
@@ -212,7 +237,7 @@ export default function HomePage() {
                 Recommended next step
               </div>
               <p className="mt-3 text-sm leading-6 text-slate-300/90">{recommendedAction.copy}</p>
-              <button className="secondary-button mt-4 min-h-10 px-4 py-2 text-sm" onClick={() => recommendedAction.href ? navigateTo(recommendedAction.href) : undefined} disabled={!recommendedAction.href}>
+              <button className="secondary-button mt-4 min-h-10 px-4 py-2 text-sm" onClick={runRecommendedAction}>
                 {recommendedAction.label}
                 <ArrowRight size={15} />
               </button>
@@ -233,7 +258,7 @@ export default function HomePage() {
               <button
                 key={action.label}
                 type="button"
-                onClick={() => navigateTo(action.href)}
+                onClick={action.onClick}
                 className={`surface group flex min-w-0 flex-1 items-center justify-between gap-4 px-4 py-3 text-left ${action.primary ? "border-mint/25 bg-mint/10" : ""}`}
               >
                 <span className="flex min-w-0 items-center gap-3">
@@ -410,7 +435,7 @@ export default function HomePage() {
                           </p>
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="font-bold text-white">${payment.amountUsdc}</span>
+                          <span className="font-bold text-white">{usd(payment.amountUsdc)}</span>
                           <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize ${tone.pill}`}>{payment.status.replaceAll("_", " ")}</span>
                         </div>
                       </div>

@@ -159,7 +159,7 @@ export async function evaluateAutomationRecipes(operatorAddress: string) {
     const visibleServiceIds = new Set(visibleServicesForStore(store.services).map((service) => service.id));
     const payments = store.payments.filter((payment) => (
       (payment.payer.toLowerCase() === operatorAddress.toLowerCase() || Boolean(payment.agentId && agents.some((agent) => agent.id === payment.agentId)))
-      && visibleServiceIds.has(payment.serviceId)
+      && (payment.external || visibleServiceIds.has(payment.serviceId))
     ));
     const runs: AgentAutomationRunRecord[] = [];
     const notifications: NotificationRecord[] = [];

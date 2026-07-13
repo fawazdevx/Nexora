@@ -189,6 +189,15 @@ ARC_RPC_URL=https://rpc.testnet.arc.network
 ARC_CHAIN_ID=5042002
 ARC_EXPLORER_URL=https://testnet.arcscan.app
 
+ARC_STRESS_ENABLED=false
+ARC_STRESS_DRY_RUN=true
+ARC_STRESS_PRIVATE_KEY=
+ARC_STRESS_TARGET_TPS=2
+ARC_STRESS_MAX_CONCURRENCY=10
+ARC_STRESS_DURATION_SECONDS=300
+ARC_STRESS_MAX_TX=1000
+ARC_STRESS_TRANSFER_USDC=0.000001
+
 USDC_ADDRESS=0x3600000000000000000000000000000000000000
 POLICY_REGISTRY_ADDRESS=
 REPUTATION_ADDRESS=
@@ -200,6 +209,11 @@ TREASURY_ADDRESS=
 
 CIRCLE_API_KEY=
 CIRCLE_ENTITY_SECRET=
+NEXORA_CIRCLE_AGENT_MARKETPLACE_ENABLED=false
+NEXORA_CIRCLE_CLI_PATH=circle
+NEXORA_CIRCLE_DEFAULT_CHAIN=BASE
+NEXORA_CIRCLE_PAYMENT_REQUIRE_CONFIRMATION=true
+NEXORA_CIRCLE_PAYMENT_MAX_USDC=5
 
 NEXORA_AUTH_SECRET=
 NEXORA_REQUIRE_SIGNED_AUTH=true
@@ -217,11 +231,18 @@ FACILITATOR_PRIVATE_KEY=
 
 SYNTHRA_API_KEY=
 SYNTHRA_API_URL=https://trading-api.synthra.org
+GITHUB_TOKEN=
 
 NEXORA_MARKETPLACE_PUBLISHER_ADDRESS=
+
+NEXORA_APPROVAL_HISTORY_START_BLOCK=0
+NEXORA_APPROVAL_LOG_CHUNK_BLOCKS=100000
+NEXORA_WALLET_RISK_MAINNETS=false
 ```
 
 Use a dedicated facilitator wallet for `FACILITATOR_PRIVATE_KEY`. Do not use an owner/deployer wallet, and never expose this key to frontend code.
+
+Arc stress testing is disabled and dry-run by default. Keep `ARC_STRESS_DRY_RUN=true` for backend/dashboard load tests that do not write to chain. For live Arc Testnet sends only, fund a dedicated test wallet from the Circle faucet, set `ARC_STRESS_PRIVATE_KEY`, then set `ARC_STRESS_ENABLED=true` and `ARC_STRESS_DRY_RUN=false`. Live stress sends are restricted in code to Arc Testnet chain id `5042002`.
 
 Optional multi-chain testnet env:
 
@@ -246,6 +267,8 @@ BASE_SEPOLIA_YIELD_ROUTER_ADDRESS=
 BASE_SEPOLIA_SAVE_EARN_VAULT_ADDRESS=
 BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS=
 ```
+
+Wallet approval scans default to full historical RPC log coverage from block `0`. For faster production scans, set `NEXORA_APPROVAL_HISTORY_START_BLOCK` or a chain-specific override such as `ARC_APPROVAL_HISTORY_START_BLOCK`, `BASE_SEPOLIA_APPROVAL_HISTORY_START_BLOCK`, `ARB_SEPOLIA_APPROVAL_HISTORY_START_BLOCK`, `BASE_MAINNET_APPROVAL_HISTORY_START_BLOCK`, or `ARB_ONE_APPROVAL_HISTORY_START_BLOCK` to the USDC deployment block you trust for that chain. Use `NEXORA_APPROVAL_LOG_CHUNK_BLOCKS` or `<CHAIN>_APPROVAL_LOG_CHUNK_BLOCKS` if your RPC provider requires smaller log ranges.
 
 ### Frontend
 

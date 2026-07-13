@@ -1,4 +1,4 @@
-import {useMemo, useState} from "react";
+import {useEffect, useMemo, useState} from "react";
 import {Check, Loader2} from "lucide-react";
 import toast from "react-hot-toast";
 import {useAccount} from "wagmi";
@@ -57,6 +57,13 @@ export function PlanSubscriptionCard({
     }
   }
 
+  useEffect(() => {
+    void loadPlans().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const plansLoading = loading && !plans;
+
   const activeSubscription = useMemo(() => {
     const now = Date.now();
     return subscriptions
@@ -112,23 +119,31 @@ export function PlanSubscriptionCard({
     <section className={`panel ${className}`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="section-kicker">Monthly plan</p>
+          <p className="section-kicker">{plan.interval === "one_time" ? "One-time plan" : "Monthly plan"}</p>
           <h2 className="mt-2 text-2xl font-semibold text-white">{plan.name}</h2>
           <p className="muted-copy mt-2 max-w-2xl">{plan.benefit}</p>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-semibold text-white">${plan.amountUsdc}</p>
-          <p className="text-xs text-slate-500">per {plan.interval}</p>
+          {plansLoading ? (
+            <div className="shimmer ml-auto h-8 w-20 rounded" />
+          ) : (
+            <p className="text-2xl font-semibold text-white">${plan.amountUsdc}</p>
+          )}
+          <p className="text-xs text-slate-500">{plan.interval === "one_time" ? "one-time" : "per month"}</p>
         </div>
       </div>
 
       <div className="mt-5 grid gap-2 md:grid-cols-3">
-        {plan.features.map((feature) => (
-          <div key={feature} className="surface flex items-start gap-2 px-3 py-3 text-sm text-slate-300">
-            <Check size={14} className="mt-0.5 shrink-0 text-mint" />
-            <span>{feature}</span>
-          </div>
-        ))}
+        {plansLoading ? (
+          [0, 1, 2].map((item) => <div key={item} className="shimmer h-14 rounded-xl" />)
+        ) : (
+          plan.features.map((feature) => (
+            <div key={feature} className="surface flex items-start gap-2 px-3 py-3 text-sm text-slate-300">
+              <Check size={14} className="mt-0.5 shrink-0 text-mint" />
+              <span>{feature}</span>
+            </div>
+          ))
+        )}
       </div>
 
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
@@ -145,9 +160,9 @@ export function PlanSubscriptionCard({
             <span>Pay with Arc USDC to activate.</span>
           )}
         </div>
-        <button type="button" className="action-button" onClick={activate} disabled={!isConnected || active || activating}>
-          {activating ? <Loader2 size={16} className="animate-spin" /> : null}
-          {active ? "Plan active" : activating ? "Activating..." : "Activate plan"}
+        <button type="button" className="action-button" onClick={activate} disabled={!isConnected || active || activating || plansLoading}>
+          {activating || plansLoading ? <Loader2 size={16} className="animate-spin" /> : null}
+          {active ? "Plan active" : activating ? "Activating..." : plansLoading ? "Loading plan..." : "Activate plan"}
         </button>
       </div>
     </section>
@@ -190,6 +205,6 @@ function normalizePlan(remote: (Partial<Plan> & {id?: string}) | undefined, fall
     benefit: remote?.benefit ?? fallback?.benefit ?? "Nexora monthly plan.",
     features: Array.isArray(remote?.features) && remote.features.length > 0
       ? remote.features.filter((feature): feature is string => typeof feature === "string" && feature.trim().length > 0)
-      : fallback?.features ?? ["Plan details are loading."]
+      : fallback?.features ?? []
   };
 }

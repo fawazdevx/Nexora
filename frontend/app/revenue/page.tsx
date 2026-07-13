@@ -52,17 +52,64 @@ type RevenueDashboard = {
 export default function RevenuePage() {
   const [dashboard, setDashboard] = useState<RevenueDashboard | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     void apiGet<RevenueDashboard>("/api/revenue")
       .then((data) => {
+        if (!active) return;
         setDashboard(data);
         setError("");
       })
-      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : "Revenue dashboard unavailable"));
+      .catch((requestError) => {
+        if (!active) return;
+        setError(requestError instanceof Error ? requestError.message : "Revenue dashboard unavailable");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const summary = dashboard?.summary;
+
+  if (loading && !dashboard) {
+    return (
+      <div className="space-y-5">
+        <PageHeader
+          kicker="Treasury"
+          title="Revenue dashboard"
+          description="Track collected treasury fees separately from gross marketplace volume and booked plan activity."
+        />
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {[0, 1, 2, 3, 4, 5].map((item) => (
+            <div key={item} className="panel space-y-4">
+              <div className="shimmer h-10 w-10 rounded-lg" />
+              <div className="shimmer h-3 w-24 rounded" />
+              <div className="shimmer h-7 w-28 rounded" />
+              <div className="shimmer h-3 w-32 rounded" />
+            </div>
+          ))}
+        </section>
+        <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="panel space-y-3">
+            <div className="shimmer h-40 w-full rounded-xl" />
+            <div className="shimmer h-24 w-full rounded-xl" />
+          </div>
+          <div className="panel space-y-3">
+            <div className="shimmer h-6 w-32 rounded" />
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="shimmer h-14 w-full rounded-xl" />
+            ))}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -72,7 +119,12 @@ export default function RevenuePage() {
         description="Track collected treasury fees separately from gross marketplace volume and booked plan activity."
       />
 
-      {error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{error}</p> : null}
+      {error ? (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">
+          <span>{error}</span>
+          <button type="button" className="secondary-button min-h-8 px-3 py-1 text-xs" onClick={() => window.location.reload()}>Retry</button>
+        </div>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <RevenueMetric icon={<Landmark size={18} />} label="Treasury fees" value={usd(summary?.totalPlatformRevenueUsdc)} detail="collected fee revenue" />
@@ -214,7 +266,7 @@ export default function RevenuePage() {
             ))}
           </div>
 
-          {!dashboard || dashboard.feeReceipts.length === 0 ? (
+          {dashboard && dashboard.feeReceipts.length === 0 ? (
             <p className="py-5 text-sm text-slate-400">No fee receipts yet. Marketplace settlements and released escrows will appear here.</p>
           ) : null}
         </div>
@@ -255,6 +307,7 @@ function RevenueMetric({icon, label, value, detail}: {icon: React.ReactNode; lab
   );
 }
 
-function usd(value?: number) {
-  return `$${(value ?? 0).toFixed(2)}`;
+function usd(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `$${Number(value).toFixed(2)}`;
 }

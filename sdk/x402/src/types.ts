@@ -17,6 +17,7 @@ export type NexoraServiceKind =
   | "launch_readiness_check"
   | "x402_integration_planner"
   | "wallet_risk_approval_scan"
+  | "agent_transaction_preflight"
   | "contract_interaction_risk_scan"
   | "invoice_collection_agent"
   | "escrow_milestone_monitor"

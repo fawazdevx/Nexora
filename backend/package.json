@@ -9,6 +9,7 @@
     "archive:test-data": "tsx src/archive-test-data.ts",
     "build": "tsc",
     "start": "node dist/local-http.js",
+    "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

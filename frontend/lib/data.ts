@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   BriefcaseBusiness,
+  CircleDollarSign,
   Coins,
   Gauge,
   Home,
@@ -34,6 +35,7 @@ export const navGroups: NavGroup[] = [
       {href: "/automation", label: "Automation", icon: PlayCircle, description: "Agent recipes and safety actions"},
       {href: "/memory", label: "Memory", icon: Brain, description: "Memo-backed agent spend context"},
       {href: "/marketplace", label: "Marketplace", icon: Store, description: "Discover and buy paid APIs"},
+      {href: "/circle-marketplace", label: "Circle Bridge", icon: CircleDollarSign, description: "Pay Circle x402 services"},
       {href: "/escrow", label: "Escrow", icon: BriefcaseBusiness, description: "USDC work agreements"},
       {href: "/payments", label: "Payments", icon: Coins, description: "Settled payment receipts"}
     ]

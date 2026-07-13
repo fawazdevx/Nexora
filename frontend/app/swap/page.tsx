@@ -23,7 +23,6 @@ const tokens = Object.keys(xylonetSwapTokens) as XyloNetSwapToken[];
 const routeVenues = ["XyloNet", "Synthra"] as const;
 const swapFeeBps = Number(import.meta.env.VITE_SWAP_FEE_BPS ?? "0");
 const swapFeeRecipient = import.meta.env.VITE_SWAP_FEE_RECIPIENT ?? "";
-const eurcUsd = Number(import.meta.env.VITE_EURC_USD ?? "1.08") || 1.08;
 
 const SLIPPAGE_PRESETS: Array<[string, string]> = [
   ["0.5%", "50"],
@@ -31,16 +30,15 @@ const SLIPPAGE_PRESETS: Array<[string, string]> = [
   ["3%", "300"]
 ];
 
-// Anchored USD estimate: USDC/USYC ≈ $1, EURC via configurable EUR/USD rate.
-const TOKEN_META: Record<XyloNetSwapToken, {name: string; glyph: string; gradient: string; usd: number}> = {
-  USDC: {name: "USD Coin", glyph: "$", gradient: "from-[#2775ca] to-[#1b5fa6]", usd: 1},
-  EURC: {name: "Euro Coin", glyph: "€", gradient: "from-[#2f6bff] to-[#4453d6]", usd: eurcUsd},
-  USYC: {name: "US Yield Coin", glyph: "%", gradient: "from-mint to-emerald-500", usd: 1}
+const TOKEN_META: Record<XyloNetSwapToken, {name: string; glyph: string; gradient: string}> = {
+  USDC: {name: "USD Coin", glyph: "$", gradient: "from-[#2775ca] to-[#1b5fa6]"},
+  EURC: {name: "Euro Coin", glyph: "€", gradient: "from-[#2f6bff] to-[#4453d6]"},
+  USYC: {name: "US Yield Coin", glyph: "%", gradient: "from-mint to-emerald-500"}
 };
 
 type RoutePreview = {
   venue: typeof routeVenues[number];
-  status: "best" | "available" | "quoteOnly" | "unavailable" | "error";
+  status: "best" | "available" | "quoteOnly" | "unavailable" | "error" | "idle";
   output?: string;
   message: string;
 };
@@ -222,11 +220,11 @@ export default function SwapPage() {
     setSwapStep("approve");
     setTxHash(null);
     const toastId = toast.loading("Approve if needed, then confirm the swap in your wallet…");
+    const onStep = (step: "approving" | "swapping") => setSwapStep(step === "approving" ? "approve" : "swap");
     try {
-      window.setTimeout(() => setSwapStep((step) => step === "approve" ? "swap" : step), 900);
       const result = quote.venue === "XyloNet"
-        ? await executeXyloNetSwap({quote, slippageBps: Number(slippageBps)})
-        : await executeSynthraSwap({quote, slippageBps: Number(slippageBps)});
+        ? await executeXyloNetSwap({quote, slippageBps: Number(slippageBps), onStep})
+        : await executeSynthraSwap({quote, slippageBps: Number(slippageBps), onStep});
       setTxHash(result.swapHash);
       setSwapStep("confirmed");
       toast.success(txToast(`Swap submitted through ${quote.venue}`, result.swapHash), {id: toastId});
@@ -362,14 +360,11 @@ export default function SwapPage() {
                 <span className="font-semibold text-slate-300">Slippage protection</span>
                 <span className="font-bold text-white">{Number(slippageBps) / 100}% max</span>
               </div>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="font-semibold text-slate-300">Nexora swap fee</span>
-                <span className="font-bold text-white">{feeEnabled ? `${feeAmount.toFixed(6)} ${tokenIn}` : "0.00 USDC"}</span>
-              </div>
-              {!feeEnabled ? (
-                <p className="mt-3 text-xs leading-5 text-slate-500">
-                  Swap fee capture is disabled until a verified router fee path is configured.
-                </p>
+              {feeEnabled ? (
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <span className="font-semibold text-slate-300">Nexora swap fee</span>
+                  <span className="font-bold text-white">{feeAmount.toFixed(6)} {tokenIn}</span>
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -429,7 +424,7 @@ export default function SwapPage() {
           ) : (
             <div className="grid gap-3">
               {visibleRoutes.map((route) => {
-                const dim = route.status === "unavailable" || route.status === "error";
+                const dim = route.status === "unavailable" || route.status === "error" || route.status === "idle";
                 return (
                   <div key={route.venue} className={`surface p-5 transition-all duration-200 ${dim ? "opacity-60" : "hover:scale-[1.01]"}`}>
                     <div className="flex items-center justify-between gap-3">
@@ -569,8 +564,6 @@ function SwapBox(props: {
   loading?: boolean;
   placeholder?: string;
 }) {
-  const usd = Number(props.amount) * TOKEN_META[props.token].usd;
-  const showUsd = Number.isFinite(usd) && usd > 0;
   return (
     <label className="grid gap-2.5 text-sm font-semibold text-slate-300">
       <span className="flex flex-wrap items-center justify-between gap-2">
@@ -601,7 +594,6 @@ function SwapBox(props: {
               placeholder={props.placeholder}
             />
           )}
-          <p className="mt-1 h-4 text-xs font-medium text-slate-500">{showUsd ? `≈ $${usd.toFixed(2)}` : ""}</p>
         </div>
         <TokenPicker value={props.token} onChange={props.onTokenChange} />
       </div>
@@ -615,22 +607,24 @@ function RouteStatus({status}: {status: RoutePreview["status"]}) {
     available: "Live",
     quoteOnly: "Quote only",
     unavailable: "No route",
-    error: "Error"
+    error: "Error",
+    idle: "Idle"
   };
   const colors = {
     best: "border-mint/35 bg-gradient-to-br from-mint/15 to-mint/10 text-mint shadow-[0_0_16px_rgba(110,231,183,0.2)]",
     available: "border-cyan/35 bg-gradient-to-br from-cyan/15 to-cyan/10 text-cyan shadow-[0_0_16px_rgba(125,211,252,0.2)]",
     quoteOnly: "border-amber-300/35 bg-gradient-to-br from-amber-300/15 to-amber-300/10 text-amber-200 shadow-[0_0_16px_rgba(252,211,77,0.14)]",
     unavailable: "border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] text-slate-400",
-    error: "border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 text-magenta shadow-[0_0_16px_rgba(236,72,153,0.2)]"
+    error: "border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 text-magenta shadow-[0_0_16px_rgba(236,72,153,0.2)]",
+    idle: "border-white/[0.1] bg-white/[0.04] text-slate-500"
   };
   return <span className={`rounded-full border px-4 py-1.5 text-xs font-bold ${colors[status]}`}>{labels[status]}</span>;
 }
 
 function defaultRoutes(): RoutePreview[] {
   return [
-    {venue: "XyloNet", status: "available", message: "Live quotes for verified USDC to EURC/USYC pools."},
-    {venue: "Synthra", status: "available", message: "Live quotes for verified USDC to EURC pools."}
+    {venue: "XyloNet", status: "idle", message: "Enter an amount to compare live quotes for USDC, EURC, and USYC pools."},
+    {venue: "Synthra", status: "idle", message: "Enter an amount to compare live quotes for USDC and EURC pools."}
   ];
 }
 

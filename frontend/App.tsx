@@ -7,6 +7,7 @@ import AgentMemoryPage from "@/app/memory/page";
 import EarnPage from "@/app/earn/page";
 import SwapPage from "@/app/swap/page";
 import MarketplacePage from "@/app/marketplace/page";
+import CircleMarketplacePage from "@/app/circle-marketplace/page";
 import NewMarketplaceServicePage from "@/app/marketplace/new/page";
 import MarketplaceServicePage from "@/app/marketplace/service/page";
 import ApiDocsPage from "@/app/docs/api/page";
@@ -36,6 +37,7 @@ const routes: Record<string, React.ComponentType> = {
   "/earn": EarnPage,
   "/swap": SwapPage,
   "/marketplace": MarketplacePage,
+  "/circle-marketplace": CircleMarketplacePage,
   "/marketplace/new": NewMarketplaceServicePage,
   "/builders": BuildersPage,
   "/docs/api": ApiDocsPage,

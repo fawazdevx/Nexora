@@ -293,7 +293,7 @@ export default function X402PlaygroundPage() {
       const ms = Math.round(performance.now() - startedAt);
       setVerifyResult({error: error instanceof Error ? error.message : "Verification failed"});
       setVerifyStatus({label: "Request failed", tone: "error", detail: `${ms} ms`});
-      toast.success("Returned an expected validation response.", {id: toastId});
+      toast.error(error instanceof Error ? error.message : "Verification request failed.", {id: toastId});
     } finally {
       setRunning(false);
     }

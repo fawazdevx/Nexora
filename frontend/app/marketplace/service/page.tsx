@@ -12,14 +12,28 @@ type Service = AppSnapshot["services"][number];
 export default function MarketplaceServicePage({serviceId}: {serviceId: string}) {
   const [service, setService] = useState<Service | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     void apiGet<{service: Service}>(`/api/marketplace/services/${encodeURIComponent(serviceId)}`)
       .then((data) => {
+        if (!active) return;
         setService(data.service);
         setError("");
       })
-      .catch((requestError) => setError(requestError instanceof Error ? requestError.message : "Service not found"));
+      .catch((requestError) => {
+        if (!active) return;
+        setService(null);
+        setError(requestError instanceof Error ? requestError.message : "Service not found");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [serviceId]);
 
   return (
@@ -32,6 +46,23 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
       />
 
       {error ? <p className="rounded-md border border-magenta/30 bg-magenta/10 p-3 text-sm text-magenta">{error}</p> : null}
+
+      {loading && !service ? (
+        <section className="grid gap-5 lg:grid-cols-[1fr_360px]">
+          <div className="panel space-y-4">
+            <div className="shimmer h-6 w-48 rounded" />
+            <div className="shimmer h-8 w-64 rounded" />
+            <div className="shimmer h-4 w-full rounded" />
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[0, 1, 2, 3].map((item) => <div key={item} className="shimmer h-16 rounded-xl" />)}
+            </div>
+            <div className="shimmer h-40 w-full rounded-xl" />
+          </div>
+          <aside className="space-y-5">
+            {[0, 1, 2].map((item) => <div key={item} className="shimmer h-40 w-full rounded-xl" />)}
+          </aside>
+        </section>
+      ) : null}
 
       {service ? (
         <section className="grid gap-5 lg:grid-cols-[1fr_360px]">
@@ -54,7 +85,7 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
             <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Info label="Price" value={`${service.pricePerUnitUsdc} USDC`} />
               <Info label="Ledger service" value={service.chainServiceId ? `#${service.chainServiceId}` : "Not published"} />
-              <Info label="Receipt" value="Memo-backed" />
+              <Info label="Receipt" value={service.chainServiceId ? "Memo-backed" : "After publish"} />
               <Info label="Platform fee" value={`${(service.manifest.platformFeeBps / 100).toFixed(2)}%`} />
             </div>
 
@@ -138,9 +169,9 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
               </div>
               <div className="mt-4 grid gap-2 text-sm">
                 <CheckRow label="Published on x402 ledger" active={Boolean(service.chainServiceId)} />
-                <CheckRow label="Arc Testnet USDC settlement" active />
-                <CheckRow label="Structured memo receipt" active />
-                <CheckRow label="Publisher address visible" active />
+                <CheckRow label="Arc Testnet USDC settlement" active={Boolean(service.chainServiceId)} />
+                <CheckRow label="Structured memo receipt" active={Boolean(service.chainServiceId)} />
+                <CheckRow label="Publisher address visible" active={Boolean(service.publisherAddress)} />
               </div>
               {service.txHash ? (
                 <a className="secondary-button mt-5 min-h-10 w-full justify-center px-4 py-2 text-sm" href={explorerTx(service.txHash)} target="_blank" rel="noreferrer">

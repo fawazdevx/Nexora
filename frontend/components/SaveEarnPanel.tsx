@@ -6,10 +6,31 @@ import toast from "react-hot-toast";
 import {depositSaveEarn, readSaveEarnPosition, readUsdcBalance, withdrawSaveEarn} from "@/lib/contracts";
 import {shortAddress, arcTestnet} from "@/lib/arc";
 import {StatMetric} from "@/components/StatMetric";
+import {apiGet} from "@/lib/api";
 
 const PERCENTS = [25, 50, 75] as const;
 const parsedApr = Number(import.meta.env.VITE_SAVE_EARN_APR ?? "");
 const estApr = Number.isFinite(parsedApr) && parsedApr > 0 ? parsedApr : null;
+
+type EarnOpportunity = {
+  id: string;
+  title: string;
+  payoutAsset: "USDC";
+  automationEnabled: boolean;
+  risk: "low" | "medium" | "high";
+  provider: string;
+  status: string;
+  contractAddress?: string | null;
+  chain?: string;
+  project?: string;
+  symbol?: string;
+  poolMeta?: string | null;
+  tvlUsd?: number;
+  apy?: number;
+  notes?: string[];
+  sourceUrl?: string;
+  error?: string;
+};
 
 function num(value?: string) {
   return Number(value ?? 0);
@@ -50,12 +71,20 @@ export function SaveEarnPanel() {
     enabled: Boolean(address),
     refetchInterval: 12_000
   });
+  const earnOpportunities = useQuery({
+    queryKey: ["earn-opportunities"],
+    queryFn: () => apiGet<{opportunities: EarnOpportunity[]}>("/api/earn/opportunities"),
+    refetchInterval: 60_000
+  });
 
   const positionData = position.data;
   const loading = position.isLoading;
   const amountIsPositive = Number(amount) > 0;
   const maxSource = mode === "save" ? num(walletBalance.data) : num(positionData?.withdrawableAssets);
   const yieldToDate = num(positionData?.deposited) > 0 ? (num(positionData?.estimatedEarnings) / num(positionData?.deposited)) * 100 : 0;
+  const marketOpportunities = (earnOpportunities.data?.opportunities ?? [])
+    .filter((opportunity) => opportunity.provider === "defillama" && typeof opportunity.apy === "number")
+    .slice(0, 3);
 
   function setPercent(pct: number) {
     setAmount(fmtAmount((maxSource * pct) / 100));
@@ -249,7 +278,7 @@ export function SaveEarnPanel() {
             {[
               ["Asset", "USDC", ShieldCheck],
               ["Routing", "Best approved Arc vault", Sparkles],
-              ["Current adapter", "XyloNet target", Gauge]
+              ["Routing target", "XyloNet USDC vault", Gauge]
             ].map(([label, value, Icon]) => {
               const ItemIcon = Icon as typeof ShieldCheck;
               return (
@@ -265,8 +294,69 @@ export function SaveEarnPanel() {
           </div>
         </section>
       </div>
+
+      <section className="panel">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="section-kicker">Provider intelligence</p>
+            <h3 className="mt-1 text-lg font-semibold text-white">USDC yield market data</h3>
+          </div>
+          <span className="status-pill border-amber/25 bg-amber/10 text-amber">Discovery only</span>
+        </div>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+          DeFiLlama data helps Nexora agents monitor USDC yield markets, but these are not executable routes until a protocol adapter is approved.
+        </p>
+
+        {earnOpportunities.isLoading ? (
+          <div className="mt-5 grid gap-3 lg:grid-cols-3">
+            {[0, 1, 2].map((item) => <div key={item} className="shimmer h-32 rounded-xl" />)}
+          </div>
+        ) : marketOpportunities.length > 0 ? (
+          <div className="mt-5 grid gap-3 lg:grid-cols-3">
+            {marketOpportunities.map((opportunity) => <YieldMarketCard key={opportunity.id} opportunity={opportunity} />)}
+          </div>
+        ) : (
+          <div className="surface mt-5 p-4 text-sm leading-6 text-slate-400">
+            {earnOpportunities.isError ? "Live DeFiLlama market data is unavailable right now. Save/Earn vault actions are unaffected." : "No USDC yield market data is available right now."}
+          </div>
+        )}
+      </section>
     </div>
   );
+}
+
+function YieldMarketCard({opportunity}: {opportunity: EarnOpportunity}) {
+  const tvl = typeof opportunity.tvlUsd === "number" ? compactUsd(opportunity.tvlUsd) : "—";
+  const apy = typeof opportunity.apy === "number" ? `${opportunity.apy.toFixed(2)}%` : "—";
+  const riskClass = opportunity.risk === "low" ? "border-mint/25 bg-mint/10 text-mint" : opportunity.risk === "medium" ? "border-amber/25 bg-amber/10 text-amber" : "border-magenta/25 bg-magenta/10 text-magenta";
+  return (
+    <article className="surface p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-white">{opportunity.project ?? opportunity.symbol ?? "USDC pool"}</p>
+          <p className="mt-1 truncate text-xs text-slate-500">{[opportunity.chain, opportunity.symbol].filter(Boolean).join(" · ") || "USDC market"}</p>
+        </div>
+        <span className={`status-pill ${riskClass}`}>{opportunity.risk}</span>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.035] px-3 py-2">
+          <p className="text-lg font-semibold text-mint">{apy}</p>
+          <p className="text-[11px] text-slate-500">APY</p>
+        </div>
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.035] px-3 py-2">
+          <p className="text-lg font-semibold text-white">{tvl}</p>
+          <p className="text-[11px] text-slate-500">TVL</p>
+        </div>
+      </div>
+      {opportunity.poolMeta ? (
+        <p className="mt-3 line-clamp-2 text-xs leading-5 text-slate-500">{opportunity.poolMeta}</p>
+      ) : null}
+    </article>
+  );
+}
+
+function compactUsd(value: number) {
+  return `$${value.toLocaleString("en-US", {notation: "compact", maximumFractionDigits: 1})}`;
 }
 
 function RouteNode({icon: Icon, label, caption, accent = false}: {icon: typeof Wallet; label: string; caption: string; accent?: boolean}) {

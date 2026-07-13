@@ -2,6 +2,7 @@ import {AlertTriangle, BellRing, CheckCircle2, ExternalLink, ShieldAlert} from "
 import {EmptyState} from "@/components/EmptyState";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {navigateTo} from "@/lib/router";
+import {timeAgo} from "@/lib/time";
 
 type Snapshot = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>;
 type RiskAlert = Snapshot["riskAlerts"][number];
@@ -62,7 +63,7 @@ function RiskAlertCard({alert}: {alert: RiskAlert}) {
           <h3 className="mt-2 text-base font-semibold text-white">{alert.title}</h3>
           <p className="mt-1 text-sm leading-6 text-slate-300">{alert.detail}</p>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs text-slate-400">Current check</span>
+            <span className="text-xs text-slate-400">{alert.createdAt ? `Detected ${timeAgo(alert.createdAt)}` : "Live check"}</span>
             {alert.actionHref ? (
               <button type="button" className="secondary-button min-h-9 px-3 py-1.5 text-xs" onClick={() => navigateTo(alert.actionHref ?? "/settings/policies")}>
                 Review <ExternalLink size={12} />

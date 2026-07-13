@@ -10,7 +10,14 @@ const serviceTemplates = [
     name: "Wallet Risk + Approval Scan",
     endpointHash: "wallet-risk-approval-scan-v1",
     price: "0.05",
-    description: "Scan a wallet for risky approvals, spend patterns, counterparties, and suggested policy limits before an agent pays or interacts."
+    description: "Scan full historical USDC Approval logs through configured RPCs, then check current allowance exposure before an agent pays or interacts."
+  },
+  {
+    kind: "agent_transaction_preflight",
+    name: "Agent Transaction Preflight",
+    endpointHash: "agent-transaction-preflight-v1",
+    price: "0.035",
+    description: "Run a live Tenderly or RPC transaction preflight before an agent signs or submits a contract call."
   },
   {
     kind: "stablecoin_route_report",
@@ -52,7 +59,7 @@ const serviceTemplates = [
     name: "Counterparty Compliance Screen",
     endpointHash: "counterparty-compliance-screen-v1",
     price: "0.08",
-    description: "Screen a wallet or business counterparty for sanctions, scam exposure, transaction history, and payment suitability."
+    description: "Screen a wallet or business counterparty with live chain telemetry, Nexora local activity, and explicit KYT readiness."
   },
   {
     kind: "liquidation_risk_monitor",
@@ -66,7 +73,7 @@ const serviceTemplates = [
     name: "Vault APY Monitor",
     endpointHash: "vault-apy-monitor-v1",
     price: "0.04",
-    description: "Track vault APYs, TVL, strategy changes, and rebalance opportunities before users enable Save/Earn automation."
+    description: "Track USDC yield APY, TVL, and risk from live DeFiLlama market data before users enable Save/Earn automation."
   },
   {
     kind: "subscription_payment_agent",
@@ -295,6 +302,7 @@ export function PublishServiceForm() {
           <option value="launch_readiness_check">Launch Readiness Check</option>
           <option value="x402_integration_planner">x402 Integration Planner</option>
           <option value="wallet_risk_approval_scan">Wallet Risk + Approval Scan</option>
+          <option value="agent_transaction_preflight">Agent Transaction Preflight</option>
           <option value="contract_interaction_risk_scan">Contract Interaction Risk Scan</option>
           <option value="invoice_collection_agent">Invoice Collection Agent</option>
           <option value="escrow_milestone_monitor">Escrow Milestone Monitor</option>

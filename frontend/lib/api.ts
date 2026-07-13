@@ -55,6 +55,21 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return parseResponse<T>(response);
 }
 
+export async function apiPostWithHeaders<T>(path: string, body: unknown, headers: Record<string, string>): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(buildApiUrl(path), {
+      method: "POST",
+      headers: {"content-type": "application/json", ...headers},
+      body: JSON.stringify(body)
+    });
+  } catch {
+    throw new Error(apiConnectionHint(path));
+  }
+
+  return parseResponse<T>(response);
+}
+
 export async function apiDelete<T>(path: string, body?: unknown): Promise<T> {
   let response: Response;
   try {
@@ -168,7 +183,69 @@ export type AppSnapshot = {
       };
     } | null;
     txHash?: string | null;
+    external?: {
+      provider: "circle_agent_marketplace";
+      serviceUrl: string;
+      chain: string;
+      chainId?: number | null;
+      network?: string | null;
+      paymentScheme?: string | null;
+      resultSummary?: string | null;
+    } | null;
     createdAt: string;
+    settledAt?: string | null;
+  }>;
+  paymentIntents: Array<{
+    id: string;
+    operatorAddress: string;
+    agentId?: string | null;
+    agentWallet?: string | null;
+    requestHash: string;
+    status: "pending_approval" | "approved" | "rejected" | "executing" | "settled" | "failed" | "policy_blocked" | "expired";
+    source: {
+      provider: "circle_agent_marketplace";
+      serviceUrl: string;
+      inspectedAt: string;
+    };
+    normalized: {
+      serviceId: string;
+      serviceName: string;
+      description: string;
+      amountUsdc: number;
+      payTo: string;
+      chain: string;
+      chainId?: number | null;
+      network?: string | null;
+      paymentScheme?: string | null;
+      inputSchema?: unknown;
+    };
+    data: Record<string, unknown>;
+    policy: {
+      allowed: boolean;
+      reason?: string | null;
+      dailySpentUsdc: number;
+      weeklySpentUsdc: number;
+      monthlySpentUsdc: number;
+      checks: Array<{status: "pass" | "fail"; label: string; detail: string}>;
+      riskFlags: Array<{severity: "info" | "warning" | "critical"; label: string; detail: string}>;
+    };
+    approval: {
+      required: boolean;
+      decidedBy?: string | null;
+      decidedAt?: string | null;
+      note?: string | null;
+      expiresAt?: string | null;
+    };
+    execution: {
+      paymentId?: string | null;
+      txHash?: string | null;
+      resultSummary?: string | null;
+      error?: string | null;
+      executedAt?: string | null;
+    };
+    receiptId?: string | null;
+    createdAt: string;
+    updatedAt: string;
   }>;
   approvalRequests: Array<{
     id: string;
