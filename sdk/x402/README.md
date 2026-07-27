@@ -259,15 +259,19 @@ It does not create a complete custody ledger, refund system, payout engine, or e
 6. Use `createMeridianPaymentRequirements` for BOT instead of manually setting `payTo`.
 7. Use the Circle intent helpers only with an authenticated Nexora session in production.
 
-Before publishing a new npm version:
+Run release commands from the package directory. The parent `sdk/` directory has no `package.json`.
 
 ```bash
+cd sdk/x402
+npm install
 npm run typecheck
 npm test
+npm pack --dry-run
+npm whoami
 npm publish --access public
 ```
 
-The package version must be an unused npm version. If `0.3.0` already exists, increment to the next patch version before publishing.
+Run the block from the repository root. The package version must be unused on npm. Check it with `npm view @nexorafi/x402 versions --json` and increment the patch version when needed.
 
 ## Security checklist
 

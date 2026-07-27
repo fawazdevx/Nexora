@@ -9,6 +9,7 @@ frontend/dist/
 frontend/node_modules/
 backend/dist/
 backend/node_modules/
+.nexora-data/
 
 # Ignores development broadcast logs
 !/broadcast
