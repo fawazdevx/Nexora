@@ -8,6 +8,7 @@ import {OperatorReputation} from "../src/OperatorReputation.sol";
 interface BotVm {
     function prank(address sender) external;
     function expectRevert(bytes4 selector) external;
+    function expectRevert(bytes calldata revertData) external;
 }
 
 contract BotChainCommerceTest {
@@ -30,6 +31,12 @@ contract BotChainCommerceTest {
         require(deployed.policyRelayer == POLICY_RELAYER, "RELAYER");
         require(policy.facilitators(POLICY_RELAYER), "FACILITATOR");
         require(reputation.updaters(POLICY_RELAYER), "UPDATER");
+    }
+
+    function testRefusesDeploymentWithoutPolicyRelayer() external {
+        DeployNexoraBotCommerce script = new DeployNexoraBotCommerce();
+        vm.expectRevert(bytes("ZERO_RELAYER"));
+        script.deploy(address(script), address(0));
     }
 
     function testConnectedEoaPolicyGuardsMeridianSettlementAccounting() external {

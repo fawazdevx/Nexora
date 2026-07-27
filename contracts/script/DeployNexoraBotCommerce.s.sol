@@ -8,6 +8,7 @@ import {OperatorReputation} from "../src/OperatorReputation.sol";
 interface Vm {
     function startBroadcast() external;
     function stopBroadcast() external;
+    function envAddress(string calldata key) external view returns (address value);
     function envOr(string calldata key, address defaultValue) external view returns (address value);
 }
 
@@ -28,7 +29,11 @@ contract DeployNexoraBotCommerce {
 
     function run() external returns (DeployedContracts memory deployed) {
         address owner = vm.envOr("OWNER_ADDRESS", tx.origin);
-        address policyRelayer = vm.envOr("BOTCHAIN_POLICY_RELAYER_ADDRESS", address(0));
+        // Reputation and spend accounting are written by the backend only
+        // after Meridian confirms settlement. Requiring the relayer here
+        // prevents a superficially successful deployment that cannot record
+        // either result.
+        address policyRelayer = vm.envAddress("BOTCHAIN_POLICY_RELAYER_ADDRESS");
 
         vm.startBroadcast();
         deployed = deploy(owner, policyRelayer);
@@ -39,6 +44,9 @@ contract DeployNexoraBotCommerce {
         public
         returns (DeployedContracts memory deployed)
     {
+        require(owner != address(0), "ZERO_OWNER");
+        require(policyRelayer != address(0), "ZERO_RELAYER");
+
         NexoraPolicyRegistry policyImplementation = new NexoraPolicyRegistry();
         NexoraProxy policyProxy = new NexoraProxy(
             address(policyImplementation),
@@ -51,10 +59,8 @@ contract DeployNexoraBotCommerce {
             abi.encodeCall(OperatorReputation.initialize, (owner))
         );
 
-        if (policyRelayer != address(0)) {
-            NexoraPolicyRegistry(address(policyProxy)).setFacilitator(policyRelayer, true);
-            OperatorReputation(address(reputationProxy)).setUpdater(policyRelayer, true);
-        }
+        NexoraPolicyRegistry(address(policyProxy)).setFacilitator(policyRelayer, true);
+        OperatorReputation(address(reputationProxy)).setUpdater(policyRelayer, true);
 
         deployed = DeployedContracts({
             policyImplementation: address(policyImplementation),

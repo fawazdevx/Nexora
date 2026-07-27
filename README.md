@@ -196,7 +196,7 @@ VITE_NEXORA_API_URL=http://localhost:4000
 
 ## Essential environment configuration
 
-Use proxy addresses in runtime configuration. Keep private keys, Circle credentials, and Meridian credentials server-side.
+Copy these variable names into untracked `.env` files. Leave secrets blank in public examples. Do not commit private keys, API credentials, database URLs, wallet IDs, or keystore passwords. Chain IDs, public RPC endpoints, token addresses, and deployed contract addresses may be public.
 
 ### Circle and application server
 
@@ -278,10 +278,14 @@ VITE_MERIDIAN_TESTNET_FACILITATOR_ADDRESS=0x8e633dBf31adCc7D41BE3e95B7c8DD3526B5
 
 ## BOT policy deployment
 
-The BOT deployment script creates only policy and reputation proxies. `BOTCHAIN_POLICY_RELAYER_ADDRESS` is required so the deployment always authorizes the backend relayer for confirmed spend and reputation updates.
+The BOT deployment script creates policy and reputation proxies. It requires `BOTCHAIN_POLICY_RELAYER_ADDRESS` and authorizes that public address to record confirmed spend and reputation updates. Keep the matching private key in the backend environment.
 
 ```bash
 cd contracts
+source .env
+
+export BOTCHAIN_TESTNET_RPC_URL=https://rpc.bohr.life
+export BOTCHAIN_POLICY_RELAYER_ADDRESS=0xYOUR_RELAYER_ADDRESS
 
 forge script script/DeployNexoraBotCommerce.s.sol:DeployNexoraBotCommerce \
   --rpc-url $BOTCHAIN_TESTNET_RPC_URL \
@@ -293,14 +297,16 @@ forge script script/DeployNexoraBotCommerce.s.sol:DeployNexoraBotCommerce \
   -vvv
 ```
 
-The address supplied as `BOTCHAIN_POLICY_RELAYER_ADDRESS` must be derived from the backend's `BOTCHAIN_POLICY_RELAYER_PRIVATE_KEY`. If it was not supplied during deployment, authorize it manually as owner:
+Replace `0xYOUR_RELAYER_ADDRESS` before running the command. The account stored as `deploytestKey` must match `OWNER_ADDRESS` and hold enough tBOT for gas. Foundry prompts for the keystore password; do not place it in the command or README.
+
+The deployment authorizes `BOTCHAIN_POLICY_RELAYER_ADDRESS` in both proxies. To rotate the relayer later, the owner must update both permissions:
 
 ```text
 policyRegistry.setFacilitator(relayer, true)
 reputation.setUpdater(relayer, true)
 ```
 
-Nexora never deploys or broadcasts contracts automatically.
+The command uses `--broadcast` and submits transactions to BOT Chain Testnet.
 
 ## SDK v0.3
 
@@ -358,4 +364,4 @@ No npm publication, contract deployment, Vercel update, or live payment is perfo
 
 ## License
 
-See the repository license files for package-specific terms.
+The `@nexorafi/x402` SDK is available under the MIT License. This repository does not declare a license for the remaining source code.
