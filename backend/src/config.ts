@@ -47,18 +47,78 @@ export const config = {
     mainnetUsdc: process.env.BASE_MAINNET_USDC_ADDRESS ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     mainnetX402Ledger: process.env.BASE_MAINNET_X402_LEDGER_ADDRESS ?? ""
   },
+  // Nexora-owned x402 settlement contract (NexoraX402Settlement) per chain. This
+  // is the fee-collecting, EIP-3009 receiveWithAuthorization splitter for the RAW
+  // x402 path — distinct from the marketplace X402FacilitatorLedger. When an
+  // address is set for a chain, raw x402 settles through it (payTo = contract,
+  // payer/seller submits, Nexora pays no gas and earns feeBps). Empty = that
+  // chain has no settlement contract yet; raw x402 falls back to the legacy EOA.
+  x402Settlement: {
+    arcTestnet: process.env.ARC_X402_SETTLEMENT_ADDRESS ?? "",
+    baseSepolia: process.env.BASE_SEPOLIA_X402_SETTLEMENT_ADDRESS ?? "",
+    baseMainnet: process.env.BASE_MAINNET_X402_SETTLEMENT_ADDRESS ?? "",
+    arbitrumSepolia: process.env.ARB_SEPOLIA_X402_SETTLEMENT_ADDRESS ?? "",
+    arbitrumOne: process.env.ARB_ONE_X402_SETTLEMENT_ADDRESS ?? ""
+  },
+  // BOT Chain (EVM). Its payment token (USDT) has no EIP-3009, so x402 settles
+  // via Permit2 through Meridian's facilitator (see `meridian` below), not by
+  // Nexora self-submitting like on Arc. Testnet-first per rollout plan.
+  botchain: {
+    testnetRpcUrl: process.env.BOTCHAIN_TESTNET_RPC_URL ?? "https://rpc.bohr.life",
+    testnetChainId: Number(process.env.BOTCHAIN_TESTNET_CHAIN_ID ?? 968),
+    testnetExplorerUrl: process.env.BOTCHAIN_TESTNET_EXPLORER_URL ?? "",
+    // Meridian's default testnet payment token (USDT). NOTE: token decimals are
+    // NOT assumed — Meridian's docs warn against hardcoding 6. `tokenDecimals`
+    // is overridable and should be confirmed on-chain (decimals()) before use.
+    testnetUsdt: process.env.BOTCHAIN_TESTNET_USDT_ADDRESS ?? "0x75edC9335175Fc0552D51D48439F229c10420fe3",
+    mainnetRpcUrl: process.env.BOTCHAIN_MAINNET_RPC_URL ?? "https://rpc.botchain.ai",
+    mainnetChainId: Number(process.env.BOTCHAIN_MAINNET_CHAIN_ID ?? 677),
+    mainnetExplorerUrl: process.env.BOTCHAIN_MAINNET_EXPLORER_URL ?? "",
+    mainnetUsdt: process.env.BOTCHAIN_MAINNET_USDT_ADDRESS ?? "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C",
+    tokenDecimals: Number(process.env.BOTCHAIN_USDT_DECIMALS ?? 6),
+    // BOT payments stay on Meridian. Nexora deploys only policy and reputation
+    // controls; the legacy BOT ledger address is retained as an ignored
+    // compatibility setting for existing environments.
+    testnetPolicyRegistry: process.env.BOTCHAIN_TESTNET_POLICY_REGISTRY_ADDRESS ?? "",
+    testnetX402Ledger: process.env.BOTCHAIN_TESTNET_X402_LEDGER_ADDRESS ?? "",
+    testnetReputation: process.env.BOTCHAIN_TESTNET_REPUTATION_ADDRESS ?? ""
+  },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
     entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? "",
     walletSetId: process.env.CIRCLE_WALLET_SET_ID ?? "",
     agentWalletAccountType: normalizeCircleAccountType(process.env.CIRCLE_AGENT_WALLET_ACCOUNT_TYPE),
+    agentMainnetsEnabled: (process.env.NEXORA_ENABLE_AGENT_MAINNETS ?? "false").toLowerCase() === "true",
     agentMarketplace: {
       enabled: (process.env.NEXORA_CIRCLE_AGENT_MARKETPLACE_ENABLED ?? "false").toLowerCase() === "true",
       cliPath: process.env.NEXORA_CIRCLE_CLI_PATH ?? "circle",
-      defaultChain: process.env.NEXORA_CIRCLE_DEFAULT_CHAIN ?? "BASE",
+      defaultChain: process.env.NEXORA_CIRCLE_DEFAULT_CHAIN ?? "BASE_SEPOLIA",
       requireConfirmation: (process.env.NEXORA_CIRCLE_PAYMENT_REQUIRE_CONFIRMATION ?? "true").toLowerCase() !== "false",
       maxPaymentUsdc: normalizeOptionalPositiveNumber(process.env.NEXORA_CIRCLE_PAYMENT_MAX_USDC, 5)
+    },
+    gatewaySeller: {
+      enabled: (process.env.NEXORA_CIRCLE_GATEWAY_SELLER_ENABLED ?? "true").toLowerCase() !== "false",
+      facilitatorUrl: process.env.CIRCLE_GATEWAY_FACILITATOR_URL ?? "https://gateway-api-testnet.circle.com"
     }
+  },
+  // Meridian is an external x402 facilitator. On non-EIP-3009 chains (BOT Chain)
+  // Nexora acts as a Meridian seller and relays signed Permit2 payloads with a
+  // server-side public `pk_` credential. When unset, Nexora does not advertise
+  // BOT Chain settlement.
+  meridian: {
+    apiBase: process.env.MERIDIAN_API_BASE ?? "https://api.mrdn.finance/v1",
+    // Meridian authenticates seller API calls with the public `pk_` credential
+    // as a Bearer token. Keep the old variable as a backwards-compatible
+    // fallback, but never load or send MERIDIAN_API_SECRET.
+    publicKey: process.env.MERIDIAN_PUBLIC_KEY ?? process.env.MERIDIAN_API_KEY ?? "",
+    sellerAddress: process.env.MERIDIAN_SELLER_ADDRESS ?? process.env.NEXORA_MARKETPLACE_PUBLISHER_ADDRESS ?? "",
+    policyRelayerPrivateKey: process.env.BOTCHAIN_POLICY_RELAYER_PRIVATE_KEY ?? "",
+    // Meridian's fixed contract set (same across supported EVM chains).
+    permit2: process.env.MERIDIAN_PERMIT2_ADDRESS ?? "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    exactPermit2Proxy: process.env.MERIDIAN_EXACT_PERMIT2_PROXY_ADDRESS ?? "0x402085c248EeA27D92E8b30b2C58ed07f9E20001",
+    // Per-network facilitator (payTo / witness.to). Testnet differs from mainnet.
+    testnetFacilitator: process.env.MERIDIAN_TESTNET_FACILITATOR_ADDRESS ?? "0x8e633dBf31adCc7D41BE3e95B7c8DD3526B5235A",
+    mainnetFacilitator: process.env.MERIDIAN_MAINNET_FACILITATOR_ADDRESS ?? "0x8E7769D440b3460b92159Dd9C6D17302b036e2d6"
   },
   contracts: {
     usdc: process.env.USDC_ADDRESS ?? "",
@@ -68,7 +128,8 @@ export const config = {
     yieldRouter: process.env.YIELD_ROUTER_ADDRESS ?? "",
     saveEarnVault: process.env.SAVE_EARN_VAULT_ADDRESS ?? "",
     nexoraEscrow: process.env.NEXORA_ESCROW_ADDRESS ?? "",
-    treasury: process.env.TREASURY_ADDRESS ?? ""
+    treasury: process.env.TREASURY_ADDRESS ?? "",
+    marketplacePublisher: process.env.NEXORA_MARKETPLACE_PUBLISHER_ADDRESS ?? process.env.OWNER_ADDRESS ?? ""
   },
   facilitator: {
     signingMode: process.env.FACILITATOR_SIGNING_MODE ?? "wallet",
@@ -76,7 +137,10 @@ export const config = {
   },
   gateway: {
     apiUrl: process.env.GATEWAY_API_URL ?? "https://gateway-api-testnet.circle.com/v1",
-    token: process.env.GATEWAY_TOKEN ?? "USDC"
+    token: process.env.GATEWAY_TOKEN ?? "USDC",
+    walletAddress: process.env.GATEWAY_WALLET_ADDRESS ?? "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+    minterAddress: process.env.GATEWAY_MINTER_ADDRESS ?? "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B",
+    maxTransferUsdc: normalizeOptionalPositiveNumber(process.env.NEXORA_GATEWAY_MAX_TRANSFER_USDC, 10_000)
   },
   security: {
     authSecret: process.env.NEXORA_AUTH_SECRET ?? process.env.AUTH_SECRET ?? "nexora-local-dev-secret",

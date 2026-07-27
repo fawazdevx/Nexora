@@ -42,7 +42,7 @@ type SimulationResult = {
 export function PolicySimulationPanel() {
   const {address, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
-  const agents = snapshot.data?.agents ?? [];
+  const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
   const services = (snapshot.data?.services ?? []).filter((service) => service.active);
   const requests = snapshot.data?.approvalRequests ?? [];
   const pendingRequests = requests.filter((request) => request.status === "pending");

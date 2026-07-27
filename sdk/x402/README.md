@@ -1,29 +1,35 @@
-# @nexorafi/x402
+# `@nexorafi/x402`
 
-Nexora x402 SDK and middleware for protecting APIs with Arc USDC payments.
+`@nexorafi/x402` v0.3 adds Nexora payment requirements and middleware to Express and Next.js APIs. It supports x402 v1 and v2, USDC settlement on Arc, Base, and Arbitrum, and policy-guarded Permit2/USDT settlement on BOT Chain Testnet through Meridian.
 
-The SDK helps developers:
+The package also exposes Circle Agent Stack helpers for creating Nexora-controlled payment intents, checking approval, and submitting an externally executed payment for onchain receipt verification.
 
-- return x402 payment requirements
-- parse `X-PAYMENT` headers
-- verify signed payment payloads through Nexora
-- settle payments through Nexora
-- protect Express and Next.js routes
-- generate Nexora service manifests and policy hints
-- run webhook-backed service executors
-- trigger receipt callbacks after verified settlement
+> Network types describe protocol compatibility. A route is live only when its chain contracts, token, RPC, facilitator, and application configuration are deployed and verified.
 
 ## Install
 
 ```bash
-npm install @nexorafi/x402
+npm install @nexorafi/x402@0.3
 ```
 
-For local repo development:
+The package is ESM and publishes TypeScript declarations.
 
-```bash
-npm install ../sdk/x402
+## Supported network names
+
+```ts
+type X402Network =
+  | "arc-testnet"
+  | "arc"
+  | "base-sepolia"
+  | "base"
+  | "arbitrum-sepolia"
+  | "arbitrum"
+  | "bot-chain-testnet"
+  | "bot-chain"
+  | `eip155:${number}`;
 ```
+
+x402 v2 challenges use CAIP-2 network IDs. V1 challenges preserve readable aliases for compatibility. Nexora currently enables BOT only on `bot-chain-testnet`; BOT mainnet remains disabled until its policy, reputation, relayer, and settlement configuration are separately deployed and tested.
 
 ## Express
 
@@ -32,58 +38,198 @@ import express from "express";
 import {nexoraX402} from "@nexorafi/x402";
 
 const app = express();
-const facilitatorUrl = process.env.NEXORA_FACILITATOR_URL ?? "https://nexorafibackend.vercel.app";
 
 app.get(
   "/paid-report",
   nexoraX402({
-    facilitatorUrl,
-    payTo: "0xYourPublisherWallet",
-    asset: "0x3600000000000000000000000000000000000000",
+    facilitatorUrl: process.env.NEXORA_FACILITATOR_URL!,
+    payTo: process.env.PUBLISHER_ADDRESS!,
+    asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     price: "0.05",
-    network: "arc-testnet",
-    description: "Website growth report",
-    onReceipt: async ({settlement}) => {
-      console.log("Nexora receipt tx", settlement?.transaction);
+    network: "base-sepolia",
+    x402Version: 2,
+    resource: "https://api.example.com/paid-report",
+    description: "Paid Base Sepolia report",
+    onReceipt: async ({verification, settlement}) => {
+      console.log(verification.payer, settlement?.transaction);
     }
   }),
-  (_req, res) => {
-    res.json({report: "paid result"});
-  }
-);
-
-app.listen(3000);
-```
-
-## Next.js Route Handler
-
-```ts
-import {withNexoraX402} from "@nexorafi/x402";
-
-const facilitatorUrl = process.env.NEXORA_FACILITATOR_URL ?? "https://nexorafibackend.vercel.app";
-
-export const GET = withNexoraX402(
-  {
-    facilitatorUrl,
-    payTo: "0xYourPublisherWallet",
-    asset: "0x3600000000000000000000000000000000000000",
-    price: "0.05",
-    network: "arc-testnet",
-    description: "Paid API response"
-  },
-  async (_request, context) => {
-    return Response.json({
+  (req, res) => {
+    res.json({
       ok: true,
-      payer: context.verification.payer,
-      tx: context.settlement?.transaction
+      payer: req.x402?.verification.payer,
+      transaction: req.x402?.settlement?.transaction
     });
   }
 );
 ```
 
-## Service Manifest
+## Next.js route handler
 
-Use `createNexoraServiceManifest` before publishing a paid endpoint to Nexora.
+```ts
+import {withNexoraX402} from "@nexorafi/x402";
+
+export const POST = withNexoraX402(
+  {
+    facilitatorUrl: process.env.NEXORA_FACILITATOR_URL!,
+    payTo: process.env.PUBLISHER_ADDRESS!,
+    asset: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+    price: "0.02",
+    network: "arbitrum-sepolia",
+    x402Version: 2,
+    resource: "https://api.example.com/risk-check",
+    description: "Arbitrum Sepolia risk check"
+  },
+  async (_request, context) => Response.json({
+    ok: true,
+    payer: context.verification.payer,
+    transaction: context.settlement?.transaction
+  })
+);
+```
+
+## Headers
+
+| Version | Client payment | Server challenge | Settlement response |
+| --- | --- | --- | --- |
+| v1 | `X-PAYMENT` | JSON / v1 accepts | `X-PAYMENT-RESPONSE` |
+| v2 | `PAYMENT-SIGNATURE` | `PAYMENT-REQUIRED` | `PAYMENT-RESPONSE` |
+
+Challenge and receipt headers are base64-encoded JSON. Helpers support both plain and encoded payloads:
+
+```ts
+import {
+  encodeX402Header,
+  parsePaymentSignatureHeader,
+  parseXPaymentHeader
+} from "@nexorafi/x402";
+```
+
+## Direct facilitator client
+
+```ts
+import {NexoraX402Client} from "@nexorafi/x402";
+
+const client = new NexoraX402Client("https://api.nexora.example");
+const supported = await client.supported();
+const verification = await client.verify(paymentPayload, paymentRequirements);
+
+if (!verification.isValid) {
+  throw new Error(verification.invalidReason);
+}
+
+const settlement = await client.settle(paymentPayload, paymentRequirements);
+```
+
+The client calls:
+
+```text
+GET  /api/x402/supported
+POST /api/x402/verify
+POST /api/x402/facilitator-settle
+```
+
+`/api/x402/facilitator-settle` is intentionally separate from Nexora Marketplace authorization settlement, which requires an internal authorization ID.
+
+## BOT Chain Testnet
+
+BOT uses Permit2 because its configured USDT does not expose EIP-3009. Use the dedicated builder so `payTo` and the Permit2 witness always target Meridian's facilitator, not the seller wallet.
+
+```ts
+import {
+  buildMeridianPermit2Payload,
+  buildPermit2WitnessTypedData,
+  createMeridianPaymentRequirements,
+  randomPermit2Nonce
+} from "@nexorafi/x402";
+
+const requirements = createMeridianPaymentRequirements({
+  facilitatorUrl: "https://api.nexora.example",
+  amountAtomic: "10000",
+  resource: "https://seller.example/paid-report",
+  description: "BOT Chain paid report"
+});
+
+const nonce = randomPermit2Nonce();
+const deadline = String(Math.floor(Date.now() / 1000) + 300);
+const typedData = buildPermit2WitnessTypedData({
+  token: requirements.asset,
+  amount: requirements.maxAmountRequired,
+  facilitator: requirements.payTo,
+  chainId: 968,
+  nonce,
+  deadline
+});
+
+const signature = await wallet.signTypedData(typedData);
+const paymentPayload = buildMeridianPermit2Payload({
+  network: "bot-chain-testnet",
+  signature,
+  owner: wallet.account.address,
+  token: requirements.asset,
+  amount: requirements.maxAmountRequired,
+  facilitator: requirements.payTo,
+  nonce,
+  deadline
+});
+
+const settlement = await client.settle(paymentPayload, requirements);
+```
+
+Defaults:
+
+```text
+chain ID     968
+USDT         0x75edC9335175Fc0552D51D48439F229c10420fe3
+facilitator  0x8e633dBf31adCc7D41BE3e95B7c8DD3526B5235A
+```
+
+When this payment is routed through Nexora, the backend checks the connected EOA's BOT policy before Meridian relay. A direct Meridian request bypasses Nexora's policy, receipt, notification, and reputation layer.
+
+## External Circle Agent Stack flow
+
+External Circle Agent Stack clients can use Nexora's controls without handing wallet execution to Nexora:
+
+```ts
+const nexora = new NexoraX402Client("https://api.nexora.example", {
+  authorizationToken: signedNexoraSession
+});
+
+const intent = await nexora.createCirclePaymentIntent({
+  operatorAddress,
+  agentId,
+  walletAddress,
+  serviceUrl,
+  chain: "BASE_SEPOLIA",
+  data: {query: "BTC"}
+});
+
+// An operator approves in Nexora, or through the authenticated SDK method.
+await nexora.approveCirclePaymentIntent(intent.id, operatorAddress);
+
+const authorization = await nexora.circlePaymentIntentAuthorization(
+  intent.id,
+  operatorAddress
+);
+
+if (!authorization.approved) throw new Error("Payment is not approved");
+
+// Execute with the application's own Circle Agent Stack wallet.
+const paid = await externalCircleAgent.pay(
+  authorization.payment.serviceUrl,
+  authorization.payment.data
+);
+
+const completed = await nexora.completeCirclePaymentIntent(intent.id, {
+  operatorAddress,
+  paymentResponse: paid.paymentResponse,
+  result: paid.result
+});
+```
+
+External completion does not trust a client-provided `success` flag. The payment response must include a transaction hash, and Nexora verifies the approved chain, USDC token, payer, recipient, amount, and successful transaction before recording a settled receipt. Gateway-batched external payments without a directly verifiable transfer are not accepted through this completion endpoint yet.
+
+## Service manifests
 
 ```ts
 import {createNexoraServiceManifest} from "@nexorafi/x402";
@@ -95,58 +241,42 @@ const manifest = createNexoraServiceManifest({
   price: "0.05",
   outputSchema: ["wallet", "riskLevel", "checks", "recommendedPolicy"]
 });
-
-console.log(manifest.policyHints);
 ```
 
-## Webhook Executor
+## Using Nexora in applications
 
-Use `createWebhookExecutor` for a webhook endpoint that Nexora can call after settlement.
+The SDK can protect paid HTTP resources used by games, SaaS products, AI agents, marketplaces, commerce, subscriptions, creator tools, and treasury workflows. It provides payment requirements, verification, settlement, and receipt callbacks.
 
-```ts
-import {createWebhookExecutor} from "@nexorafi/x402";
+It does not create a complete custody ledger, refund system, payout engine, or entitlement database. Applications must authenticate users, enforce idempotency, deliver the paid resource exactly once, and reconcile each settlement with their own product ledger.
 
-export const POST = createWebhookExecutor(async ({args}) => {
-  return {
-    status: "ok",
-    summary: "Paid execution complete",
-    input: args
-  };
-});
+## Migration from v0.2
+
+1. Install `@nexorafi/x402@0.3`.
+2. Existing Arc v1 middleware can remain unchanged.
+3. Prefer `x402Version: 2` for new Arc, Base, and Arbitrum routes.
+4. Update clients to send `PAYMENT-SIGNATURE` and read `PAYMENT-RESPONSE` for v2.
+5. Keep v1 clients during migration; v0.3 still accepts `X-PAYMENT`.
+6. Use `createMeridianPaymentRequirements` for BOT instead of manually setting `payTo`.
+7. Use the Circle intent helpers only with an authenticated Nexora session in production.
+
+Before publishing a new npm version:
+
+```bash
+npm run typecheck
+npm test
+npm publish --access public
 ```
 
-## Options
+The package version must be an unused npm version. If `0.3.0` already exists, increment to the next patch version before publishing.
 
-`facilitatorUrl` is the Nexora facilitator endpoint used by the SDK to verify and settle x402 payments.
+## Security checklist
 
-```ts
-type NexoraX402Config = {
-  facilitatorUrl: string;
-  payTo: string;
-  asset: string;
-  price?: string;
-  amountAtomic?: string;
-  network?: "arc-testnet" | "arc";
-  resource?: string;
-  description?: string;
-  mimeType?: string;
-  maxTimeoutSeconds?: number;
-  settle?: boolean;
-  outputSchema?: unknown;
-  onReceipt?: (event: {
-    paymentRequirements: PaymentRequirements;
-    verification: VerifyResponse;
-    settlement?: SettleResponse;
-  }) => void | Promise<void>;
-};
-```
-
-Use `price` for USDC decimal strings such as `"0.05"`, or `amountAtomic` for base units.
-
-## Security
-
-- Use HTTPS for production facilitator URLs.
-- Keep publisher wallets and payout addresses explicit.
-- Set `settle: false` only if your API intentionally wants verify-only behavior.
-- Nexora verifies amount, recipient, asset, network, authorization time window, signature, and replay protection.
-- Do not treat provider-dependent services such as compliance, liquidation, or APY monitors as definitive unless your endpoint uses a licensed/live provider.
+- Keep facilitator, Circle, and Meridian credentials server-side.
+- Configure an explicit asset and publisher for every USDC route.
+- Treat network, token, recipient, amount, validity window, signature, and nonce as mandatory checks.
+- Do not deliver an entitlement before settlement succeeds.
+- Use one idempotency key for each application purchase or payout.
+- Never reuse a transaction hash to satisfy two payment intents.
+- Keep BOT Permit2 approvals scoped to the canonical Permit2 contract.
+- Do not describe a mainnet route as live until contracts and operational controls have been tested.
+- Obtain an independent audit before production custody or high-value flows.

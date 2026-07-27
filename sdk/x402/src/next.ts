@@ -1,5 +1,5 @@
-import {NexoraX402Client, parseXPaymentHeader} from "./client.js";
-import {createPaymentRequirements, paymentRequiredResponse} from "./requirements.js";
+import {encodeX402Header, NexoraX402Client, parseXPaymentHeader} from "./client.js";
+import {createPaymentRequirements, paymentRequiredResponseForVersion} from "./requirements.js";
 import {dispatchReceiptCallback} from "./webhook.js";
 import type {NexoraX402Config, X402Context} from "./types.js";
 
@@ -13,7 +13,7 @@ export function withNexoraX402(config: NexoraX402Config, handler: NexoraNextHand
       ...config,
       resource: config.resource ?? request.url
     });
-    const payment = parseXPaymentHeader(request.headers.get("x-payment"));
+    const payment = parseXPaymentHeader(request.headers.get("payment-signature") ?? request.headers.get("x-payment"));
 
     if (!payment) {
       return paymentRequired(paymentRequirements);
@@ -30,21 +30,30 @@ export function withNexoraX402(config: NexoraX402Config, handler: NexoraNextHand
     }
 
     await dispatchReceiptCallback(config.onReceipt, {paymentRequirements, verification, settlement});
-    return handler(request, {payment, paymentRequirements, verification, settlement});
+    const response = await handler(request, {payment, paymentRequirements, verification, settlement});
+    if (settlement) {
+      const receiptHeader = encodeX402Header(settlement);
+      response.headers.set("PAYMENT-RESPONSE", receiptHeader);
+      response.headers.set("X-PAYMENT-RESPONSE", receiptHeader);
+    }
+    return response;
   };
 }
 
 function paymentRequired(paymentRequirements: ReturnType<typeof createPaymentRequirements>, reason?: string) {
+  const version = Number(paymentRequirements.extra?.x402Version) === 1 ? 1 : 2;
+  const body = {
+    ...paymentRequiredResponseForVersion(paymentRequirements, version),
+    ...(reason ? {error: reason} : {})
+  };
   return Response.json(
-    {
-      ...paymentRequiredResponse(paymentRequirements),
-      ...(reason ? {error: reason} : {})
-    },
+    body,
     {
       status: 402,
       headers: {
         "x-accept-payment": "x402",
-        "x402-version": "1"
+        "x402-version": String(version),
+        "PAYMENT-REQUIRED": encodeX402Header(body)
       }
     }
   );

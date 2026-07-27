@@ -1,5 +1,5 @@
 import {dispatchNotification} from "../notifications.js";
-import {isVisibleAgent, pushNotification, updateStore, visibleServicesForStore, type AgentAutomationRecipeRecord, type AgentAutomationRunRecord, type AgentWalletRecord, type NotificationRecord, type PaymentRecord, type StoreShape} from "../store.js";
+import {agentWalletAddresses, isVisibleAgent, pushNotification, updateStore, visibleServicesForStore, type AgentAutomationRecipeRecord, type AgentAutomationRunRecord, type AgentWalletRecord, type NotificationRecord, type PaymentRecord, type StoreShape} from "../store.js";
 
 export type AutomationTemplate = {
   id: string;
@@ -412,7 +412,7 @@ function settledSpendSince(payments: PaymentRecord[], agent: AgentWalletRecord, 
 }
 
 function paymentBelongsToAgent(payment: PaymentRecord, agent: AgentWalletRecord) {
-  return payment.agentId === agent.id || Boolean(agent.address && payment.agentWallet?.toLowerCase() === agent.address.toLowerCase());
+  return payment.agentId === agent.id || Boolean(payment.agentWallet && agentWalletAddresses(agent).includes(payment.agentWallet.toLowerCase()));
 }
 
 function startOfUtcDay(timestamp: number) {

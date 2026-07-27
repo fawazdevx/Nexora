@@ -50,6 +50,8 @@ test("circleAgentMarketplaceReadiness reports missing CLI without throwing", asy
 
   assert.equal(readiness.configured, false);
   assert.equal(readiness.status, "cli_missing");
+  assert.equal(readiness.defaultChain, "BASE_SEPOLIA");
+  assert.deepEqual(readiness.supportedChains, ["ARC", "BASE_SEPOLIA", "ARB_SEPOLIA"]);
   assert.equal(readiness.requiredEnv.includes("NEXORA_CIRCLE_AGENT_MARKETPLACE_ENABLED"), true);
 });
 
@@ -177,7 +179,7 @@ test("Circle marketplace search falls back to Circle Discovery API when CLI disc
   assert.equal(search.services[0]?.url, serviceUrl);
   assert.equal(search.services[0]?.priceUsdc, 0.00044);
   assert.equal(search.services[0]?.publisherAddress, publisher);
-  assert.equal(search.services[0]?.acceptedChains.includes("BASE"), true);
+  assert.equal(search.services[0]?.acceptedChains.includes("BASE_SEPOLIA"), true);
 });
 
 test("Circle marketplace search falls back to Circle Discovery API when CLI returns no services", async () => {
@@ -213,7 +215,7 @@ test("Circle marketplace inspect falls back to Circle Discovery API when CLI ins
   assert.equal(inspection.service.name, "AIsa API");
   assert.equal(inspection.service.priceUsdc, 0.00044);
   assert.equal(inspection.service.publisherAddress, publisher);
-  assert.equal(inspection.service.acceptedChains.includes("BASE"), true);
+  assert.equal(inspection.service.acceptedChains.includes("BASE_SEPOLIA"), true);
 });
 
 test("Circle marketplace search and inspect normalize current CLI JSON", async () => {
@@ -224,7 +226,7 @@ test("Circle marketplace search and inspect normalize current CLI JSON", async (
         description: "Realtime crypto market data",
         url: serviceUrl,
         price: "$0.005",
-        accepts: [{network: "base", scheme: "exact"}]
+        accepts: [{network: "base-sepolia", scheme: "exact"}]
       }]
     },
     inspect: {
@@ -233,7 +235,7 @@ test("Circle marketplace search and inspect normalize current CLI JSON", async (
       url: serviceUrl,
       price: "0.005",
       payTo: publisher,
-      accepts: [{network: "base", chain: "BASE", scheme: "exact"}],
+      accepts: [{network: "base-sepolia", chain: "BASE_SEPOLIA", scheme: "exact"}],
       inputSchema: {type: "object", properties: {symbol: {type: "string"}}}
     }
   });
@@ -241,13 +243,13 @@ test("Circle marketplace search and inspect normalize current CLI JSON", async (
   const search = await backend.searchCircleAgentServices("market", {runner});
   assert.equal(search.services[0]?.name, "Market Data");
   assert.equal(search.services[0]?.priceUsdc, 0.005);
-  assert.equal(search.services[0]?.acceptedChains.includes("BASE"), true);
+  assert.equal(search.services[0]?.acceptedChains.includes("BASE_SEPOLIA"), true);
 
   const inspection = await backend.inspectCircleAgentService(serviceUrl, {runner});
   assert.equal(inspection.service.url, serviceUrl);
   assert.equal(inspection.service.priceUsdc, 0.005);
   assert.equal(inspection.service.publisherAddress, publisher);
-  assert.equal(inspection.service.acceptedChains.includes("BASE"), true);
+  assert.equal(inspection.service.acceptedChains.includes("BASE_SEPOLIA"), true);
 });
 
 test("preflightCircleAgentPayment blocks Circle payments that exceed existing agent policy", async () => {
@@ -258,7 +260,7 @@ test("preflightCircleAgentPayment blocks Circle payments that exceed existing ag
       url: serviceUrl,
       price: "0.25",
       payTo: publisher,
-      accepts: [{chain: "BASE"}]
+      accepts: [{chain: "BASE_SEPOLIA"}]
     }
   });
 
@@ -267,7 +269,7 @@ test("preflightCircleAgentPayment blocks Circle payments that exceed existing ag
     agentId: "agent-1",
     walletAddress: wallet,
     serviceUrl,
-    chain: "BASE",
+    chain: "BASE_SEPOLIA",
     data: {query: "btc"}
   }, {runner});
 
@@ -275,6 +277,33 @@ test("preflightCircleAgentPayment blocks Circle payments that exceed existing ag
   assert.equal(guard.decision, "block");
   assert.equal(guard.policy.reason, "This purchase exceeds the agent transaction cap.");
   assert.equal(guard.payment.service.priceUsdc, 0.25);
+});
+
+test("preflightCircleAgentPayment blocks chains outside Nexora agent routes", async () => {
+  await seedAgent({transactionCapUsdc: 1, dailyLimitUsdc: 5});
+  const runner = fakeCircleRunner({
+    inspect: {
+      name: "Polygon-only Service",
+      url: serviceUrl,
+      price: "0.005",
+      payTo: publisher,
+      accepts: [{chain: "MATIC"}]
+    }
+  });
+
+  const guard = await backend.preflightCircleAgentPayment({
+    operatorAddress: operator,
+    agentId: "agent-1",
+    walletAddress: wallet,
+    serviceUrl,
+    chain: "MATIC",
+    data: {query: "btc"}
+  }, {runner});
+
+  assert.equal(guard.allowed, false);
+  const supportedCheck = guard.checks.find((item) => item.label === "Nexora chain supported");
+  assert.equal(supportedCheck?.status, "fail");
+  assert.match(supportedCheck?.detail ?? "", /ARC, BASE_SEPOLIA, ARB_SEPOLIA/);
 });
 
 test("createCircleAgentPaymentIntent stores Circle intake for approval without spending", async () => {
@@ -287,7 +316,7 @@ test("createCircleAgentPaymentIntent stores Circle intake for approval without s
       url: serviceUrl,
       price: "0.005",
       payTo: publisher,
-      accepts: [{chain: "BASE", scheme: "exact"}],
+      accepts: [{chain: "BASE_SEPOLIA", scheme: "exact"}],
       inputSchema: {type: "object", properties: {symbol: {type: "string"}}}
     },
     onCall: (args) => calls.push(args.slice(0, 2).join(" "))
@@ -298,7 +327,7 @@ test("createCircleAgentPaymentIntent stores Circle intake for approval without s
     agentId: "agent-1",
     walletAddress: wallet,
     serviceUrl,
-    chain: "BASE",
+    chain: "BASE_SEPOLIA",
     data: {symbol: "BTC"}
   }, {runner});
 
@@ -307,7 +336,7 @@ test("createCircleAgentPaymentIntent stores Circle intake for approval without s
   assert.equal(intent.normalized.serviceName, "Circle: Market Data");
   assert.equal(intent.normalized.amountUsdc, 0.005);
   assert.equal(intent.normalized.payTo, publisher);
-  assert.equal(intent.normalized.chain, "BASE");
+  assert.equal(intent.normalized.chain, "BASE_SEPOLIA");
   assert.equal(intent.policy.allowed, true);
   assert.equal(intent.approval.required, true);
   assert.equal(intent.execution.paymentId, null);
@@ -321,6 +350,24 @@ test("createCircleAgentPaymentIntent stores Circle intake for approval without s
   const snapshot = snapshotResponse.body as {paymentIntents?: Array<{id: string; status: string}>; payments?: unknown[]};
   assert.equal(snapshot.paymentIntents?.some((item) => item.id === intent.id && item.status === "pending_approval"), true);
   assert.equal(snapshot.payments?.length, 0);
+});
+
+test("intent creation remains available when managed wallet execution is unavailable", async () => {
+  await seedAgent({transactionCapUsdc: 1, dailyLimitUsdc: 5});
+  const intent = await backend.createCircleAgentPaymentIntent({
+    operatorAddress: operator,
+    agentId: "agent-1",
+    walletAddress: wallet,
+    serviceUrl,
+    chain: "BASE_SEPOLIA",
+    data: {symbol: "BTC"}
+  }, {
+    discoveryFetch: async () => ({x402Version: 2, items: [discoveryService()]})
+  });
+
+  assert.equal(intent.status, "pending_approval");
+  assert.equal(intent.normalized.chain, "BASE_SEPOLIA");
+  assert.equal(intent.execution.paymentId, null);
 });
 
 test("approved Circle payment intent executes once, writes receipt, memory, and automation event", async () => {
@@ -352,7 +399,7 @@ test("approved Circle payment intent executes once, writes receipt, memory, and 
       url: serviceUrl,
       price: "0.005",
       payTo: publisher,
-      accepts: [{chain: "BASE", scheme: "exact"}]
+      accepts: [{chain: "BASE_SEPOLIA", scheme: "exact"}]
     },
     pay: {
       status: "success",
@@ -366,7 +413,7 @@ test("approved Circle payment intent executes once, writes receipt, memory, and 
     agentId: "agent-1",
     walletAddress: wallet,
     serviceUrl,
-    chain: "BASE",
+    chain: "BASE_SEPOLIA",
     data: {symbol: "BTC"}
   }, {runner});
 
@@ -433,7 +480,7 @@ test("payCircleAgentService calls real Circle pay path through runner and stores
       url: serviceUrl,
       price: "0.005",
       payTo: publisher,
-      accepts: [{chain: "BASE"}]
+      accepts: [{chain: "BASE_SEPOLIA"}]
     },
     pay: {
       status: "success",
@@ -447,7 +494,7 @@ test("payCircleAgentService calls real Circle pay path through runner and stores
     agentId: "agent-1",
     walletAddress: wallet,
     serviceUrl,
-    chain: "BASE",
+    chain: "BASE_SEPOLIA",
     data: {symbol: "BTC"},
     confirmed: true
   }, {runner});
@@ -467,11 +514,113 @@ test("payCircleAgentService calls real Circle pay path through runner and stores
   assert.equal(receiptBody.receipt?.amountUsdc, 0.005);
 });
 
+test("approved intent executes through the selected Circle developer wallet adapter", async () => {
+  await seedAgent({transactionCapUsdc: 1, dailyLimitUsdc: 5});
+  const runner = fakeCircleRunner({
+    inspect: {
+      name: "Market Data",
+      description: "Realtime crypto market data",
+      url: serviceUrl,
+      method: "GET",
+      price: "0.005",
+      payTo: publisher,
+      accepts: [{chain: "BASE_SEPOLIA", scheme: "exact"}]
+    }
+  });
+  const intent = await backend.createCircleAgentPaymentIntent({
+    operatorAddress: operator,
+    agentId: "agent-1",
+    walletAddress: wallet,
+    serviceUrl,
+    chain: "BASE_SEPOLIA",
+    data: {symbol: "BTC"}
+  }, {runner});
+  await backend.approveCircleAgentPaymentIntent(intent.id, {operatorAddress: operator});
+
+  let selectedWalletId = "";
+  let selectedMethod = "";
+  const executed = await backend.executeCircleAgentPaymentIntent(intent.id, {operatorAddress: operator, confirmed: true}, {
+    runner,
+    executor: async ({walletId, method}) => {
+      selectedWalletId = walletId;
+      selectedMethod = method;
+      return {
+        result: {symbol: "BTC", source: "managed-wallet"},
+        txHash: `0x${"bb".repeat(32)}`,
+        paymentResponse: {success: true},
+        paymentScheme: "x402-exact"
+      };
+    }
+  });
+
+  assert.equal(selectedWalletId, "circle-wallet-base-sepolia");
+  assert.equal(selectedMethod, "GET");
+  assert.equal(executed.receipt.txHash, `0x${"bb".repeat(32)}`);
+  assert.equal(executed.intent.status, "settled");
+});
+
+test("external Agent Stack flow reads approval and completes from a validated receipt", async () => {
+  await seedAgent({transactionCapUsdc: 1, dailyLimitUsdc: 5});
+  const runner = fakeCircleRunner({
+    inspect: {
+      name: "Market Data",
+      description: "Realtime crypto market data",
+      url: serviceUrl,
+      price: "0.005",
+      payTo: publisher,
+      accepts: [{chain: "BASE_SEPOLIA", scheme: "exact"}]
+    }
+  });
+  const intent = await backend.createCircleAgentPaymentIntent({
+    operatorAddress: operator,
+    agentId: "agent-1",
+    walletAddress: wallet,
+    serviceUrl,
+    chain: "BASE_SEPOLIA",
+    data: {symbol: "BTC"}
+  }, {runner});
+  await backend.approveCircleAgentPaymentIntent(intent.id, {operatorAddress: operator});
+
+  const authorization = await backend.circleAgentPaymentIntentAuthorization(intent.id, operator);
+  assert.equal(authorization.approved, true);
+  assert.equal(authorization.payment.walletAddress, wallet);
+
+  const completed = await backend.completeCircleAgentPaymentIntentFromReceipt(intent.id, {
+    operatorAddress: operator,
+    paymentResponse: {
+      success: true,
+      network: "BASE_SEPOLIA",
+      payer: wallet,
+      payTo: publisher,
+      amount: "5000",
+      transaction: `0x${"cc".repeat(32)}`
+    },
+    result: {symbol: "BTC", source: "external-agent-stack"}
+  }, {
+    verifySettlement: async ({intent: approvedIntent, txHash}) => {
+      assert.equal(approvedIntent.id, intent.id);
+      assert.equal(txHash, `0x${"cc".repeat(32)}`);
+    }
+  });
+  assert.equal(completed.status, "settled");
+  assert.equal(completed.receipt.txHash, `0x${"cc".repeat(32)}`);
+  assert.equal(completed.receipt.external?.provider, "circle_agent_marketplace");
+
+  await assert.rejects(
+    () => backend.completeCircleAgentPaymentIntentFromReceipt(intent.id, {
+      operatorAddress: operator,
+      paymentResponse: {success: true}
+    }),
+    /already executed/
+  );
+});
+
 function fakeCircleRunner(outputs: {search?: unknown; inspect?: unknown; pay?: unknown; onCall?: (args: string[]) => void}): CircleCliRunner {
   return async (args: string[]) => {
-    outputs.onCall?.(args);
     const command = args.slice(0, 2).join(" ");
     if (args[0] === "--version") return {stdout: "circle/1.0.0\n", stderr: ""};
+    if (command === "wallet status") return {stdout: JSON.stringify({authenticated: true}), stderr: ""};
+    outputs.onCall?.(args);
     if (command === "services search") return {stdout: JSON.stringify(outputs.search ?? {services: []}), stderr: ""};
     if (command === "services inspect") return {stdout: JSON.stringify(outputs.inspect ?? {}), stderr: ""};
     if (command === "services pay") return {stdout: JSON.stringify(outputs.pay ?? {}), stderr: ""};
@@ -486,8 +635,8 @@ function discoveryService() {
     x402Version: 2,
     accepts: [{
       scheme: "exact",
-      network: "eip155:8453",
-      asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      network: "eip155:84532",
+      asset: "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
       payTo: publisher,
       amount: "440",
       maxTimeoutSeconds: 604900,
@@ -520,6 +669,15 @@ async function seedAgent(input: {transactionCapUsdc: number; dailyLimitUsdc: num
       circleWalletId: null,
       circleAccountType: null,
       settlementMode: null,
+      chainWallets: [{
+        chainId: 84532,
+        chain: "Base Sepolia",
+        circleBlockchain: "BASE-SEPOLIA",
+        address: wallet,
+        circleWalletId: "circle-wallet-base-sepolia",
+        status: "ready",
+        updatedAt: new Date().toISOString()
+      }],
       createdAt: new Date().toISOString(),
       policy: {
         dailyLimitUsdc: input.dailyLimitUsdc,
@@ -552,6 +710,8 @@ async function loadBackend() {
     approveCircleAgentPaymentIntent: circle.approveCircleAgentPaymentIntent,
     buildCircleCliEnv: circle.buildCircleCliEnv,
     createCircleAgentPaymentIntent: circle.createCircleAgentPaymentIntent,
+    circleAgentPaymentIntentAuthorization: circle.circleAgentPaymentIntentAuthorization,
+    completeCircleAgentPaymentIntentFromReceipt: circle.completeCircleAgentPaymentIntentFromReceipt,
     executeCircleAgentPaymentIntent: circle.executeCircleAgentPaymentIntent,
     inspectCircleAgentService: circle.inspectCircleAgentService,
     payCircleAgentService: circle.payCircleAgentService,

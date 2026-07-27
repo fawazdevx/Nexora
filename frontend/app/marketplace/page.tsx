@@ -7,14 +7,28 @@ import {StatMetric} from "@/components/StatMetric";
 import {EmptyState} from "@/components/EmptyState";
 import {AgentPicker} from "@/components/AgentPicker";
 import {AgentAvatar} from "@/components/AgentAvatar";
-import {apiPost} from "@/lib/api";
+import {apiGet, apiPost} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
-import {arcTestnet, shortAddress} from "@/lib/arc";
+import {arcTestnet, marketplaceSettlementChains, shortAddress, supportedChains, switchToChain} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
-import {settleX402Request, type NexoraStructuredMemo} from "@/lib/contracts";
+import {publishX402Services, settleX402Request, type NexoraStructuredMemo} from "@/lib/contracts";
 import {MARKETPLACE_CATEGORY_DESCRIPTIONS, executionArgs, formatCategory, formatKind, sampleInputForService, serviceCategory, serviceInputLabel, serviceInputPlaceholder, serviceReadiness, type MarketplaceCategoryKey} from "@/lib/marketplace";
+import {agentWalletChainIds, preferredAgentChainId, savePreferredAgentChainId} from "@/lib/agent-chain-preferences";
 
 type Service = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["services"][number];
+type Agent = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["agents"][number];
+type ServiceGroup = {key: string; service: Service; routes: Service[]};
+type CanonicalCatalog = {
+  publisherAddress: string | null;
+  chains: Array<{chainId: number; label: string; ledger: string; configured: boolean}>;
+  services: Array<{
+    name: string;
+    endpointHash: string;
+    pricePerUnitUsdc: number;
+    manifestKind: Service["manifest"]["kind"];
+    routes: Array<{id: string; chainServiceId: number; settlementChainId: number; txHash?: string | null}>;
+  }>;
+};
 type SortKey = "featured" | "priceAsc" | "priceDesc" | "name";
 type PrivacyScope = "public" | "selective" | "private";
 
@@ -56,8 +70,9 @@ function kindIcon(kind: string) {
   return ShieldCheck;
 }
 
-function txToast(title: string, hash: string) {
-  const href = `${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${hash}`;
+function txToast(title: string, hash: string, chainId: number) {
+  const target = marketplaceSettlementChains.find((item) => item.id === chainId) ?? marketplaceSettlementChains[0];
+  const href = `${target.blockExplorers.default.url.replace(/\/$/, "")}/tx/${hash}`;
   return (
     <span>
       {title} ·{" "}
@@ -69,7 +84,7 @@ function txToast(title: string, hash: string) {
 }
 
 export default function MarketplacePage() {
-  const {address, isConnected} = useAccount();
+  const {address, chain, isConnected} = useAccount();
   const [serviceInputs, setServiceInputs] = useState<Record<string, string>>({});
   const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
   const [resultDialog, setResultDialog] = useState<{service: Service; result: unknown} | null>(null);
@@ -80,25 +95,95 @@ export default function MarketplacePage() {
   const [categoryFilter, setCategoryFilter] = useState<MarketplaceCategoryKey>("all");
   const [kindFilter, setKindFilter] = useState("all");
   const [sort, setSort] = useState<SortKey>("featured");
+  const [settlementChainId, setSettlementChainId] = useState(arcTestnet.id);
+  const [pendingPurchase, setPendingPurchase] = useState<{service: Service; serviceKey: string} | null>(null);
+  const [switchingNetwork, setSwitchingNetwork] = useState(false);
+  const [publishingMissingRoutes, setPublishingMissingRoutes] = useState(false);
+  const [canonicalCatalog, setCanonicalCatalog] = useState<CanonicalCatalog | null>(null);
+  const [routeImportHash, setRouteImportHash] = useState("");
+  const [routeImportChainId, setRouteImportChainId] = useState(arcTestnet.id);
+  const [importingRoute, setImportingRoute] = useState(false);
   const snapshot = useAppSnapshot();
-  const agents = snapshot.data?.agents ?? [];
+  const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
   const services = snapshot.data?.services ?? [];
-  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
+  const serviceGroups = useMemo(
+    () => groupMarketplaceServices(services, canonicalCatalog?.publisherAddress),
+    [services, canonicalCatalog?.publisherAddress]
+  );
+  const isCanonicalPublisher = Boolean(
+    address
+    && canonicalCatalog?.publisherAddress
+    && address.toLowerCase() === canonicalCatalog.publisherAddress.toLowerCase()
+  );
+  const configuredCanonicalChains = useMemo(
+    () => canonicalCatalog?.chains.filter((item) => item.configured && marketplaceSettlementChains.some((chain) => chain.id === item.chainId)) ?? [],
+    [canonicalCatalog]
+  );
+  const ownedMissingRouteCount = useMemo(
+    () => isCanonicalPublisher
+      ? (canonicalCatalog?.services ?? []).reduce(
+          (total, service) => total + configuredCanonicalChains.filter(
+            (target) => !service.routes.some((route) => route.settlementChainId === target.chainId)
+          ).length,
+          0
+        )
+      : 0,
+    [canonicalCatalog, configuredCanonicalChains, isCanonicalPublisher]
+  );
+  const selectedAgentWalletChains = useMemo(
+    () => selectedAgent ? agentWalletChainIds(selectedAgent) : [],
+    [selectedAgent]
+  );
+  const selectedAgentChainWallet = selectedAgent?.chainWallets?.find((wallet) => wallet.chainId === settlementChainId)
+    ?? (selectedAgent && settlementChainId === arcTestnet.id
+      ? {address: selectedAgent.address, circleWalletId: selectedAgent.circleWalletId}
+      : null);
+  const selectedAgentPolicyReady = selectedAgent ? hasRecordedAgentPolicy(selectedAgent, settlementChainId) : false;
+  const selectedAgentNeedsNativeGas = Boolean(
+    selectedAgent
+    && settlementChainId !== arcTestnet.id
+    && (selectedAgent.circleAccountType === "EOA" || selectedAgent.settlementMode === "eoa_memo")
+  );
 
-  const kinds = useMemo(() => Array.from(new Set(services.map((service) => service.manifest.kind))), [services]);
+  useEffect(() => {
+    if (!selectedAgent) return;
+    setSelectedAgentId((current) => current || selectedAgent.id);
+    setSettlementChainId(preferredAgentChainId(selectedAgent));
+  }, [selectedAgent?.id]);
+
+  useEffect(() => {
+    let active = true;
+    apiGet<CanonicalCatalog>("/api/marketplace/canonical-catalog")
+      .then((catalog) => {
+        if (!active) return;
+        setCanonicalCatalog(catalog);
+        const firstConfigured = catalog.chains.find((item) => item.configured);
+        if (firstConfigured) setRouteImportChainId(firstConfigured.chainId);
+      })
+      .catch(() => {
+        if (active) setCanonicalCatalog(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const kinds = useMemo(() => Array.from(new Set(serviceGroups.map((group) => group.service.manifest.kind))), [serviceGroups]);
   const settledVolume = snapshot.data?.stats.usdcSettled ?? 0;
-  const onchainServices = services.filter((service) => service.chainServiceId).length;
-  const featuredServices = services.filter((service) => service.featured).length;
+  const multichainServices = serviceGroups.filter((group) => marketplaceSettlementChains.every((chain) => routeForChain(group, chain.id, canonicalCatalog?.publisherAddress))).length;
+  const featuredServices = serviceGroups.filter((group) => group.service.featured).length;
   const categoryCounts = useMemo(() => {
     const counts = Object.fromEntries(CATEGORIES.map((category) => [category.key, 0])) as Record<MarketplaceCategoryKey, number>;
-    counts.all = services.length;
-    for (const service of services) counts[serviceCategory(service)] += 1;
+    counts.all = serviceGroups.length;
+    for (const group of serviceGroups) counts[serviceCategory(group.service)] += 1;
     return counts;
-  }, [services]);
+  }, [serviceGroups]);
 
   const visibleServices = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const filtered = services.filter((service) => {
+    const filtered = serviceGroups.filter((group) => {
+      const service = routeForChain(group, settlementChainId, canonicalCatalog?.publisherAddress) ?? group.service;
       if (categoryFilter !== "all" && serviceCategory(service) !== categoryFilter) return false;
       if (kindFilter !== "all" && service.manifest.kind !== kindFilter) return false;
       if (!q) return true;
@@ -110,15 +195,86 @@ export default function MarketplacePage() {
     });
     const sorted = [...filtered];
     sorted.sort((a, b) => {
-      if (sort === "priceAsc") return Number(a.pricePerUnitUsdc) - Number(b.pricePerUnitUsdc);
-      if (sort === "priceDesc") return Number(b.pricePerUnitUsdc) - Number(a.pricePerUnitUsdc);
-      if (sort === "name") return a.name.localeCompare(b.name);
-      return Number(Boolean(b.featured)) - Number(Boolean(a.featured));
+      const serviceA = routeForChain(a, settlementChainId, canonicalCatalog?.publisherAddress) ?? a.service;
+      const serviceB = routeForChain(b, settlementChainId, canonicalCatalog?.publisherAddress) ?? b.service;
+      if (sort === "priceAsc") return Number(serviceA.pricePerUnitUsdc) - Number(serviceB.pricePerUnitUsdc);
+      if (sort === "priceDesc") return Number(serviceB.pricePerUnitUsdc) - Number(serviceA.pricePerUnitUsdc);
+      if (sort === "name") return serviceA.name.localeCompare(serviceB.name);
+      return Number(Boolean(serviceB.featured)) - Number(Boolean(serviceA.featured));
     });
     return sorted;
-  }, [services, query, categoryFilter, kindFilter, sort]);
+  }, [serviceGroups, query, categoryFilter, kindFilter, sort, settlementChainId, canonicalCatalog?.publisherAddress]);
 
-  async function purchase(service: Service) {
+  async function publishOwnedMissingRoutes() {
+    if (!address || !canonicalCatalog || !isCanonicalPublisher || publishingMissingRoutes || ownedMissingRouteCount === 0) return;
+    setPublishingMissingRoutes(true);
+    const toastId = toast.loading("Preparing missing Marketplace routes…");
+    let completedNetworks = 0;
+    try {
+      for (const configuredTarget of configuredCanonicalChains) {
+        const target = marketplaceSettlementChains.find((chain) => chain.id === configuredTarget.chainId);
+        if (!target) continue;
+        const missingServices = canonicalCatalog.services.filter(
+          (service) => !service.routes.some((route) => route.settlementChainId === target.id)
+        );
+        if (missingServices.length === 0) continue;
+        toast.loading(`Publish ${missingServices.length} service route${missingServices.length === 1 ? "" : "s"} on ${target.name}…`, {id: toastId});
+        await switchToChain(target);
+        const publications = await publishX402Services({
+          chainId: target.id,
+          services: missingServices.map((service) => ({
+            endpointHash: service.endpointHash,
+            pricePerUnitUsdc: String(service.pricePerUnitUsdc)
+          }))
+        });
+        const txHash = publications[0]?.txHash;
+        if (!txHash || publications.some((publication) => publication.txHash !== txHash)) {
+          throw new Error("The Marketplace batch transaction could not be identified.");
+        }
+        const reconciled = await apiPost<{catalog: CanonicalCatalog}>("/api/marketplace/canonical-routes/reconcile", {
+          publisherAddress: address,
+          settlementChainId: target.id,
+          txHash
+        });
+        setCanonicalCatalog(reconciled.catalog);
+        completedNetworks += 1;
+        await snapshot.refetch();
+      }
+      toast.success(`Published all missing routes in ${completedNetworks} batched network transaction${completedNetworks === 1 ? "" : "s"}.`, {id: toastId});
+    } catch (error) {
+      const prefix = completedNetworks > 0 ? `${completedNetworks} network batch${completedNetworks === 1 ? "" : "es"} completed. ` : "";
+      toast.error(`${prefix}${marketplaceErrorMessage(error)}`, {id: toastId});
+    } finally {
+      setPublishingMissingRoutes(false);
+    }
+  }
+
+  async function importPublicationReceipt() {
+    if (!address || !canonicalCatalog || !isCanonicalPublisher || importingRoute) return;
+    if (!/^0x[0-9a-fA-F]{64}$/.test(routeImportHash.trim())) {
+      toast.error("Enter a valid Marketplace publication transaction hash.");
+      return;
+    }
+    setImportingRoute(true);
+    const toastId = toast.loading("Verifying the on-chain Marketplace publication…");
+    try {
+      const reconciled = await apiPost<{catalog: CanonicalCatalog; verifiedPublications: number}>("/api/marketplace/canonical-routes/reconcile", {
+        publisherAddress: address,
+        settlementChainId: routeImportChainId,
+        txHash: routeImportHash.trim()
+      });
+      setCanonicalCatalog(reconciled.catalog);
+      await snapshot.refetch();
+      setRouteImportHash("");
+      toast.success(`Verified and imported ${reconciled.verifiedPublications} route${reconciled.verifiedPublications === 1 ? "" : "s"}.`, {id: toastId});
+    } catch (error) {
+      toast.error(marketplaceErrorMessage(error), {id: toastId});
+    } finally {
+      setImportingRoute(false);
+    }
+  }
+
+  async function purchase(service: Service, serviceKey: string, networkConfirmed = false) {
     if (!isConnected || !address) {
       toast.error("Connect your wallet before purchasing an x402 service.");
       return;
@@ -128,10 +284,32 @@ export default function MarketplacePage() {
       return;
     }
     if (!service.chainServiceId) {
-      toast.error("This service must be published on the Arc ledger before purchase.");
+      toast.error("This service must be published on-chain before purchase.");
       return;
     }
-    setBusyId(service.id);
+    if (!service.settlementChainId) {
+      toast.error("This service does not have an explicit settlement network.");
+      return;
+    }
+    const routeChainId = service.settlementChainId;
+    if (routeChainId !== settlementChainId) {
+      toast.error(`Select the ${marketplaceChainLabel(routeChainId)} agent route before purchasing this service.`);
+      return;
+    }
+    const settlementWallet = selectedAgent.chainWallets?.find((wallet) => wallet.chainId === routeChainId)
+      ?? (routeChainId === arcTestnet.id
+        ? {circleWalletId: selectedAgent.circleWalletId, address: selectedAgent.address}
+        : null);
+    const canUseCircleAgentSettlement = Boolean(settlementWallet?.circleWalletId && settlementWallet.address);
+    if (canUseCircleAgentSettlement && !hasRecordedAgentPolicy(selectedAgent, routeChainId)) {
+      toast.error(`Save this agent's policy on ${marketplaceChainLabel(routeChainId)} before purchasing a service with its Circle wallet.`);
+      return;
+    }
+    if (!canUseCircleAgentSettlement && chain?.id !== routeChainId && !networkConfirmed) {
+      setPendingPurchase({service, serviceKey});
+      return;
+    }
+    setBusyId(serviceKey);
     const toastId = toast.loading(`Authorizing x402 payment for ${service.name}…`);
     try {
       const requestHash = `0x${crypto.randomUUID().replaceAll("-", "").padEnd(64, "0")}` as `0x${string}`;
@@ -145,7 +323,6 @@ export default function MarketplacePage() {
       });
       let txHash: string | null = null;
       let memoSettlement: Awaited<ReturnType<typeof settleX402Request>> | null = null;
-      const canUseCircleAgentSettlement = Boolean(selectedAgent.circleWalletId);
       if (!canUseCircleAgentSettlement) {
         toast.loading(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement…`, {id: toastId});
         memoSettlement = await settleX402Request({
@@ -158,7 +335,8 @@ export default function MarketplacePage() {
         });
         txHash = memoSettlement.settleHash;
       } else if (canUseCircleAgentSettlement) {
-        toast.loading(`Agent wallet settling ${service.name} on Arc with memo receipt…`, {id: toastId});
+        const target = supportedChains.find((item) => item.id === routeChainId);
+        toast.loading(`Agent wallet settling ${service.name} on ${target?.name ?? "the service network"}…`, {id: toastId});
       }
       const settlement = await apiPost<{status: string; txHash?: string | null}>("/api/x402/settle", {
         authorizationId: result.authorizationId,
@@ -171,27 +349,59 @@ export default function MarketplacePage() {
       });
       if (settlement.status === "pending_settlement") {
         await snapshot.refetch();
-        toast.success(`Agent settlement is pending on Circle. Execute ${service.name} after the Arc transaction confirms.`, {id: toastId});
+        toast.success(`Agent settlement is pending on Circle. Execute ${service.name} after the network transaction confirms.`, {id: toastId});
         return;
       }
       toast.loading(`Executing ${service.name}…`, {id: toastId});
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
         payer: address,
         authorizationId: result.authorizationId,
-        args: executionArgs(service, serviceInputs[service.id] ?? "")
+        args: executionArgs(service, serviceInputs[serviceKey] ?? "")
       });
       await snapshot.refetch();
-      setServiceResults((current) => ({...current, [service.id]: execution.result}));
+      setServiceResults((current) => ({...current, [serviceKey]: execution.result}));
       setResultDialog({service, result: execution.result});
       if (settlement.txHash) {
-        toast.success(txToast(`Purchased ${service.name}`, settlement.txHash), {id: toastId});
+        toast.success(txToast(`Purchased ${service.name}`, settlement.txHash, routeChainId), {id: toastId});
       } else {
         toast.success(`Settlement recorded for ${service.name}.`, {id: toastId});
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Service purchase failed", {id: toastId});
+      toast.error(marketplaceErrorMessage(error), {id: toastId});
     } finally {
       setBusyId(null);
+    }
+  }
+
+  function selectAgent(agentId: string) {
+    setSelectedAgentId(agentId);
+    const agent = agents.find((item) => item.id === agentId);
+    if (agent) setSettlementChainId(preferredAgentChainId(agent));
+  }
+
+  function selectSettlementChain(chainId: number) {
+    if (!selectedAgent || !agentWalletChainIds(selectedAgent).includes(chainId)) return;
+    savePreferredAgentChainId(selectedAgent, chainId);
+    setSettlementChainId(chainId);
+  }
+
+  async function confirmNetworkSwitch() {
+    const pending = pendingPurchase;
+    if (!pending?.service.settlementChainId) return;
+    const target = marketplaceSettlementChains.find((item) => item.id === pending.service.settlementChainId);
+    if (!target) {
+      toast.error("This Marketplace settlement network is not enabled.");
+      return;
+    }
+    setSwitchingNetwork(true);
+    try {
+      await switchToChain(target);
+      setPendingPurchase(null);
+      await purchase(pending.service, pending.serviceKey, true);
+    } catch {
+      toast.error(`The wallet did not switch to ${target.name}. No payment was submitted.`);
+    } finally {
+      setSwitchingNetwork(false);
     }
   }
 
@@ -205,17 +415,57 @@ export default function MarketplacePage() {
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <StatMetric variant="panel" icon={Store} label="Services" value={services.length} loading={snapshot.isLoading} />
-        <StatMetric variant="panel" icon={CheckCircle2} label="On-chain ready" value={onchainServices} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={Store} label="Services" value={serviceGroups.length} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={CheckCircle2} label="3-chain ready" value={multichainServices} loading={snapshot.isLoading} />
         <StatMetric variant="panel" icon={ShieldCheck} label="Settled volume" value={settledVolume} prefix="$" decimals={2} loading={snapshot.isLoading} accent />
       </div>
+
+      {isCanonicalPublisher ? (
+        <section className="panel space-y-4 border-mint/20">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="section-kicker">Canonical publisher routes</p>
+              <h2 className="mt-2 text-xl font-semibold text-white">Keep Nexora’s six services synchronized across configured networks</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+                {ownedMissingRouteCount > 0
+                  ? `${ownedMissingRouteCount} verified route${ownedMissingRouteCount === 1 ? " is" : "s are"} still missing. Each network is published in one wallet transaction, then verified independently by the backend.`
+                  : "Every configured network has a verified route for the canonical catalog."}
+              </p>
+            </div>
+            {ownedMissingRouteCount > 0 ? (
+              <button type="button" className="action-button" onClick={() => void publishOwnedMissingRoutes()} disabled={publishingMissingRoutes}>
+                {publishingMissingRoutes ? <Loader2 size={16} className="animate-spin" /> : <Route size={16} />}
+                {publishingMissingRoutes ? "Publishing routes…" : "Publish missing routes"}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="surface grid gap-3 p-4 lg:grid-cols-[190px_minmax(0,1fr)_auto] lg:items-end">
+            <label className="grid gap-2 text-xs font-semibold text-slate-300">
+              Settlement network
+              <select value={routeImportChainId} onChange={(event) => setRouteImportChainId(Number(event.target.value))} className="field bg-slate-950 text-sm text-white">
+                {configuredCanonicalChains.map((target) => <option key={target.chainId} value={target.chainId}>{target.label}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-2 text-xs font-semibold text-slate-300">
+              Publication transaction hash
+              <input value={routeImportHash} onChange={(event) => setRouteImportHash(event.target.value)} className="field font-mono text-xs" placeholder="0x…" />
+            </label>
+            <button type="button" className="secondary-button" onClick={() => void importPublicationReceipt()} disabled={importingRoute || configuredCanonicalChains.length === 0}>
+              {importingRoute ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+              Verify and import
+            </button>
+          </div>
+          <p className="text-xs leading-5 text-slate-500">Use the import control after publishing locally to reconcile the same transaction into Vercel storage. Replaying a verified hash is safe.</p>
+        </section>
+      ) : null}
 
       <section className="panel grid gap-4 lg:grid-cols-[1fr_0.8fr]">
         <div>
           <p className="section-kicker">Agent service directory</p>
-          <h2 className="mt-2 text-2xl font-semibold text-white">Purchase-ready tools with receipts, policy checks, and Arc settlement</h2>
+          <h2 className="mt-2 text-2xl font-semibold text-white">Purchase-ready tools with USDC settlement on Arc, Base, and Arbitrum</h2>
           <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
-            <TrustFact icon={ReceiptText} label="Receipts" value="Memo-backed" />
+            <TrustFact icon={ReceiptText} label="Receipts" value="Ledger verified" />
             <TrustFact icon={ShieldCheck} label="Policy" value="Agent guarded" />
             <TrustFact icon={Sparkles} label="Featured" value={`${featuredServices} curated`} />
           </div>
@@ -235,12 +485,56 @@ export default function MarketplacePage() {
 
       {snapshot.error ? <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta shadow-[0_0_20px_rgba(236,72,153,0.15)]">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace API unavailable"}</p> : null}
 
-      <div className="panel flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-2.5 text-sm font-bold text-white">
-          <ShieldCheck size={18} className="text-mint drop-shadow-[0_0_12px_rgba(110,231,183,0.5)]" />
-          Agent used for purchases
+      <div className="panel grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div>
+          <div className="flex items-center gap-2.5 text-sm font-bold text-white">
+            <ShieldCheck size={18} className="text-mint drop-shadow-[0_0_12px_rgba(110,231,183,0.5)]" />
+            Agent and settlement network
+          </div>
+          <p className="mt-1 text-xs leading-5 text-slate-400">The saved agent-wallet network selects each service route. Changing it here does not switch the connected wallet.</p>
         </div>
-        <AgentPicker agents={agents} value={selectedAgent} onChange={setSelectedAgentId} />
+        <div className="grid gap-3 sm:grid-cols-[auto_auto] sm:items-center">
+          <AgentPicker agents={agents} value={selectedAgent ?? undefined} onChange={selectAgent} />
+          <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/[0.1] bg-white/[0.03] p-1">
+            {marketplaceSettlementChains.map((target) => {
+              const available = selectedAgentWalletChains.includes(target.id);
+              const active = settlementChainId === target.id;
+              return (
+                <button
+                  key={target.id}
+                  type="button"
+                  onClick={() => selectSettlementChain(target.id)}
+                  disabled={!available}
+                  title={available ? `Use ${target.name} for Marketplace settlement` : `Create or backfill the ${target.name} agent wallet first`}
+                  className={`min-h-9 rounded-md px-2 text-xs font-semibold transition ${
+                    active
+                      ? "bg-mint/15 text-mint"
+                      : available
+                        ? "text-slate-300 hover:bg-white/[0.06] hover:text-white"
+                        : "cursor-not-allowed text-slate-600"
+                  }`}
+                >
+                  {shortMarketplaceChainLabel(target.id)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {selectedAgent && selectedAgentWalletChains.length < marketplaceSettlementChains.length ? (
+          <p className="text-xs text-amber lg:col-span-2">This agent is missing one or more chain wallets. Use the Agents page backfill action before selecting those Marketplace routes.</p>
+        ) : null}
+        {selectedAgentChainWallet?.address && !selectedAgentPolicyReady ? (
+          <p className="text-xs leading-5 text-amber lg:col-span-2">
+            This agent has no policy receipt recorded on {marketplaceChainLabel(settlementChainId)}. The Marketplace ledger rejects unregistered agent wallets.{" "}
+            <a href="/settings/policies" onClick={(event) => navigate(event, "/settings/policies")} className="font-semibold underline underline-offset-2">Open Agent Policies</a>
+            {" "}and save this network before purchasing.
+          </p>
+        ) : null}
+        {selectedAgentChainWallet?.address && selectedAgentNeedsNativeGas ? (
+          <p className="text-xs leading-5 text-cyan lg:col-span-2">
+            This EOA agent wallet needs both ERC-20 USDC for the service and native testnet ETH on {marketplaceChainLabel(settlementChainId)} for Circle's approval and settlement transactions. Fees are checked before each submission.
+          </p>
+        ) : null}
       </div>
 
       <div className="panel flex flex-wrap items-center justify-between gap-4">
@@ -329,7 +623,7 @@ export default function MarketplacePage() {
             </div>
           ))}
         </div>
-      ) : services.length === 0 ? (
+      ) : serviceGroups.length === 0 ? (
         !isConnected ? (
           <EmptyState icon={<Wallet size={26} />} title="Connect your wallet" copy="Connect a wallet to browse and purchase x402 services, or publish your own." />
         ) : (
@@ -344,27 +638,43 @@ export default function MarketplacePage() {
         <EmptyState icon={<Search size={26} />} title="No matches" copy="No services match your search or filter. Try a different term or clear the filter." />
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
-          {visibleServices.map((service) => (
-            <ServiceCard
-              key={service.id}
-              service={service}
-              busy={busyId === service.id}
-              disabled={!isConnected || !selectedAgent || !service.chainServiceId || Boolean(busyId)}
-              input={serviceInputs[service.id] ?? ""}
-              onInput={(value) => setServiceInputs((current) => ({...current, [service.id]: value}))}
-              onSample={() => setServiceInputs((current) => ({...current, [service.id]: sampleInputForService(service)}))}
-              onPurchase={() => void purchase(service)}
-              result={serviceResults[service.id]}
-              onViewResult={() => {
-                const result = serviceResults[service.id];
-                if (result) setResultDialog({service, result});
-              }}
-            />
-          ))}
+          {visibleServices.map((group) => {
+            const route = routeForChain(group, settlementChainId, canonicalCatalog?.publisherAddress);
+            const displayService = route ?? group.service;
+            return (
+              <ServiceCard
+                key={group.key}
+                service={displayService}
+                route={route}
+                availableChainIds={group.routes.map((item) => item.settlementChainId).filter((value): value is number => typeof value === "number")}
+                selectedChainId={settlementChainId}
+                busy={busyId === group.key}
+                disabled={!isConnected || !selectedAgent || !route || Boolean(busyId)}
+                input={serviceInputs[group.key] ?? ""}
+                onInput={(value) => setServiceInputs((current) => ({...current, [group.key]: value}))}
+                onSample={() => setServiceInputs((current) => ({...current, [group.key]: sampleInputForService(displayService)}))}
+                onPurchase={() => route ? void purchase(route, group.key) : undefined}
+                result={serviceResults[group.key]}
+                onViewResult={() => {
+                  const result = serviceResults[group.key];
+                  if (result) setResultDialog({service: displayService, result});
+                }}
+              />
+            );
+          })}
         </div>
       )}
 
       <ServiceResultDialog dialog={resultDialog} onClose={() => setResultDialog(null)} />
+      <NetworkSwitchDialog
+        pending={pendingPurchase}
+        connectedChainName={chain?.name ?? "the connected network"}
+        switching={switchingNetwork}
+        onCancel={() => {
+          if (!switchingNetwork) setPendingPurchase(null);
+        }}
+        onConfirm={() => void confirmNetworkSwitch()}
+      />
     </div>
   );
 }
@@ -395,6 +705,9 @@ function FilterChip({label, active, onClick}: {label: string; active: boolean; o
 
 function ServiceCard({
   service,
+  route,
+  availableChainIds,
+  selectedChainId,
   busy,
   disabled,
   input,
@@ -405,6 +718,9 @@ function ServiceCard({
   onViewResult
 }: {
   service: Service;
+  route: Service | null;
+  availableChainIds: number[];
+  selectedChainId: number;
   busy: boolean;
   disabled: boolean;
   input: string;
@@ -421,6 +737,10 @@ function ServiceCard({
   const trust = service.trust;
   const multilineInput = service.manifest.kind === "agent_transaction_preflight";
   const sampleEnabled = service.manifest.kind !== "agent_transaction_preflight";
+  const selectedChainName = marketplaceChainLabel(selectedChainId);
+  const explorer = marketplaceSettlementChains.find((item) => item.id === (route?.settlementChainId ?? service.settlementChainId))
+    ?.blockExplorers.default.url
+    ?? arcTestnet.explorerUrl;
   return (
     <article className="group panel relative overflow-hidden transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
       <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-plasma/[0.06] blur-3xl transition-all duration-500 group-hover:bg-plasma/[0.12]" />
@@ -439,14 +759,15 @@ function ServiceCard({
                   Featured
                 </span>
               ) : null}
-              {service.chainServiceId ? (
+              {route?.chainServiceId ? (
                 <span className="flex items-center gap-1 rounded-full border border-mint/25 bg-mint/10 px-2 py-0.5 text-[11px] font-bold text-mint">
                   <CheckCircle2 size={11} />
-                  Verified route
+                  {shortMarketplaceChainLabel(selectedChainId)} route
                 </span>
               ) : (
                 <span className="flex items-center gap-1 rounded-full border border-amber/25 bg-amber/10 px-2 py-0.5 text-[11px] font-bold text-amber">
-                  Publish required
+                  <X size={11} />
+                  Route unavailable
                 </span>
               )}
               {trust ? <TrustBadge score={trust.score} tier={trust.tier} /> : null}
@@ -454,7 +775,7 @@ function ServiceCard({
             <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-400">
               <AgentAvatar seed={service.publisherAddress} size={16} />
               {shortAddress(service.publisherAddress)}
-              <a href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/address/${service.publisherAddress}`} target="_blank" rel="noreferrer" className="text-slate-500 transition hover:text-orchid" aria-label="View publisher on explorer">
+              <a href={`${explorer.replace(/\/$/, "")}/address/${service.publisherAddress}`} target="_blank" rel="noreferrer" className="text-slate-500 transition hover:text-orchid" aria-label="View publisher on explorer">
                 <ExternalLink size={12} />
               </a>
             </p>
@@ -466,10 +787,31 @@ function ServiceCard({
         </div>
       </div>
 
+      <div className="relative mt-4 grid grid-cols-3 gap-1 rounded-lg border border-white/[0.1] bg-white/[0.03] p-1">
+        {marketplaceSettlementChains.map((target) => {
+          const available = availableChainIds.includes(target.id);
+          const active = target.id === selectedChainId;
+          return (
+            <div
+              key={target.id}
+              title={available ? `${target.name} USDC route is available` : `${target.name} route has not been published`}
+              className={`flex min-h-9 items-center justify-center gap-1 rounded-md px-2 text-xs font-semibold ${
+                active
+                  ? available ? "bg-mint/15 text-mint" : "bg-amber/10 text-amber"
+                  : available ? "text-slate-300" : "text-slate-600"
+              }`}
+            >
+              {available ? <CheckCircle2 size={12} /> : <X size={12} />}
+              {shortMarketplaceChainLabel(target.id)}
+            </div>
+          );
+        })}
+      </div>
+
       <div className="relative mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
-        <StatusMetric icon={Layers} label="Settlement" value={service.chainServiceId ? `Ledger #${service.chainServiceId}` : "Not published"} tone={service.chainServiceId ? "mint" : "amber"} />
-        <StatusMetric icon={Activity} label="Status" value={readiness.label} tone={readiness.tone} />
-        <StatusMetric icon={ReceiptText} label="Receipt" value={service.chainServiceId ? "Memo-backed" : "After publish"} tone={service.chainServiceId ? "mint" : "slate"} />
+        <StatusMetric icon={Layers} label="Settlement" value={route?.chainServiceId ? `${selectedChainName} · Ledger #${route.chainServiceId}` : `No ${selectedChainName} route`} tone={route ? "mint" : "amber"} />
+        <StatusMetric icon={Activity} label="Status" value={route ? readiness.label : "Route required"} tone={route ? readiness.tone : "amber"} />
+        <StatusMetric icon={ReceiptText} label="Receipt" value={route ? (selectedChainId === arcTestnet.id ? "Memo + ledger" : "Ledger verified") : "After route publish"} tone={route ? "mint" : "slate"} />
         <StatusMetric icon={ShieldCheck} label="Trust" value={trust ? `${trust.score}/100` : "New"} tone={trust && trust.score >= 60 ? "mint" : trust && trust.score >= 40 ? "amber" : "slate"} />
       </div>
 
@@ -522,9 +864,9 @@ function ServiceCard({
       <div className="relative mt-4 flex items-center gap-3">
         <button onClick={onPurchase} className="action-button flex-1" disabled={disabled}>
           {busy ? <Loader2 size={16} className="animate-spin" /> : null}
-          {busy ? "Processing…" : "Purchase per execution"}
+          {busy ? "Processing…" : route ? `Purchase on ${shortMarketplaceChainLabel(selectedChainId)}` : `${shortMarketplaceChainLabel(selectedChainId)} route unavailable`}
         </button>
-        <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(service.id)}`)} className="secondary-button px-3" aria-label="Public service page">
+        <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent((route ?? service).id)}`)} className="secondary-button px-3" aria-label="Public service page">
           <ArrowUpRight size={16} />
         </button>
       </div>
@@ -543,6 +885,51 @@ function ServiceCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function NetworkSwitchDialog({
+  pending,
+  connectedChainName,
+  switching,
+  onCancel,
+  onConfirm
+}: {
+  pending: {service: Service; serviceKey: string} | null;
+  connectedChainName: string;
+  switching: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!pending?.service.settlementChainId) return null;
+  const targetName = marketplaceChainLabel(pending.service.settlementChainId);
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center px-4">
+      <button type="button" className="fixed inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} aria-label="Cancel network switch" />
+      <section role="dialog" aria-modal="true" aria-labelledby="marketplace-network-switch-title" className="relative z-10 w-full max-w-md rounded-lg border border-white/[0.12] bg-slate-950 p-5 shadow-[0_28px_90px_rgba(0,0,0,0.55)]">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-mint/25 bg-mint/10 text-mint">
+            <Route size={18} />
+          </span>
+          <div>
+            <h2 id="marketplace-network-switch-title" className="text-lg font-semibold text-white">Switch settlement network?</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              {pending.service.name} will settle in USDC on {targetName}. Your wallet is currently connected to {connectedChainName}.
+            </p>
+          </div>
+        </div>
+        <p className="mt-4 rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-xs leading-5 text-slate-400">
+          Confirming only requests the wallet network switch. The payment authorization starts after the wallet reports {targetName}.
+        </p>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button type="button" className="secondary-button justify-center" onClick={onCancel} disabled={switching}>Cancel</button>
+          <button type="button" className="action-button justify-center" onClick={onConfirm} disabled={switching}>
+            {switching ? <Loader2 size={16} className="animate-spin" /> : null}
+            {switching ? "Switching…" : `Switch to ${shortMarketplaceChainLabel(pending.service.settlementChainId)}`}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -931,4 +1318,54 @@ function arrayValue(value: unknown) {
 
 function objectValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function groupMarketplaceServices(services: Service[], preferredPublisher?: string | null): ServiceGroup[] {
+  const groups = new Map<string, ServiceGroup>();
+  for (const service of services) {
+    const endpoint = service.endpointHash.trim().toLowerCase() || service.id;
+    // A publisher owns a logical service. The same endpoint hash from another
+    // publisher is a different listing and must never be merged into, hidden
+    // by, or routed through the canonical Nexora listing.
+    const key = `${service.publisherAddress.trim().toLowerCase()}:${endpoint}`;
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, {key, service, routes: [service]});
+      continue;
+    }
+    existing.routes.push(service);
+    const servicePreferred = preferredPublisher && service.publisherAddress.toLowerCase() === preferredPublisher.toLowerCase();
+    const existingPreferred = preferredPublisher && existing.service.publisherAddress.toLowerCase() === preferredPublisher.toLowerCase();
+    if ((servicePreferred && !existingPreferred) || (service.featured && !existing.service.featured)) existing.service = service;
+  }
+  return [...groups.values()];
+}
+
+function routeForChain(group: ServiceGroup, chainId: number, preferredPublisher?: string | null) {
+  const routes = group.routes.filter((service) => service.settlementChainId === chainId);
+  return routes[0] ?? null;
+}
+
+function marketplaceChainLabel(chainId: number) {
+  return marketplaceSettlementChains.find((chain) => chain.id === chainId)?.name ?? `Chain ${chainId}`;
+}
+
+function shortMarketplaceChainLabel(chainId: number) {
+  if (chainId === arcTestnet.id) return "Arc";
+  if (chainId === 84532) return "Base";
+  if (chainId === 421614) return "Arbitrum";
+  return marketplaceChainLabel(chainId);
+}
+
+function hasRecordedAgentPolicy(agent: Agent, chainId: number) {
+  if (agent.policy.deployments?.some((deployment) => deployment.chainId === chainId && Boolean(deployment.txHash))) return true;
+  return chainId === arcTestnet.id && Boolean(agent.policy.txHash);
+}
+
+function marketplaceErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : "Service purchase failed.";
+  if (/Expected bytes|AbiEncoding|Version:\s*viem|invalid.*(bytes|address)|execution reverted/i.test(message)) {
+    return "The Marketplace payment could not be prepared on the selected route. Verify the wallet network and service route, then try again.";
+  }
+  return message;
 }

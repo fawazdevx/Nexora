@@ -43,8 +43,8 @@ export default function HomePage() {
   const [creating, setCreating] = useState(false);
   const snapshot = useAppSnapshot();
   const loading = snapshot.isLoading;
-  const agents = snapshot.data?.agents ?? [];
-  const readyAgents = agents.filter((agent) => Boolean(agent.address)).length;
+  const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
+  const readyAgents = agents.filter((agent) => Boolean(agent.address) || agent.chainWallets?.some((wallet) => Boolean(wallet.address))).length;
   const pendingAgents = agents.length - readyAgents;
   const services = snapshot.data?.services ?? [];
   const payments = snapshot.data?.payments ?? [];
@@ -55,7 +55,7 @@ export default function HomePage() {
   const policySaves = snapshot.data?.stats.policySaves ?? 0;
   const earnActions = snapshot.data?.stats.earnRoutes ?? 0;
   const activePolicies = agents.filter((agent) => agent.policy.active).length;
-  const onchainPolicies = agents.filter((agent) => Boolean(agent.policy.txHash)).length;
+  const onchainPolicies = agents.filter((agent) => Boolean(agent.policy.txHash) || (agent.policy.deployments?.length ?? 0) > 0).length;
   const activeAutomations = snapshot.data?.automationRecipes.filter((recipe) => recipe.active).length ?? 0;
   const activeRiskAlerts = snapshot.data?.riskAlerts.filter((alert) => alert.severity !== "info").length ?? 0;
 
@@ -524,10 +524,14 @@ function statusTone(status: string) {
 }
 
 function AgentReadinessCard({agent, payments}: {agent: Agent; payments: Payment[]}) {
-  const ready = Boolean(agent.address);
+  const agentAddresses = [
+    agent.address,
+    ...(agent.chainWallets ?? []).map((wallet) => wallet.address)
+  ].filter((value): value is string => Boolean(value));
+  const ready = agentAddresses.length > 0;
   const activePolicy = agent.policy.active;
-  const onchainPolicy = Boolean(agent.policy.txHash);
-  const agentPayments = payments.filter((payment) => payment.agentId === agent.id || (agent.address && payment.agentWallet?.toLowerCase() === agent.address.toLowerCase()));
+  const onchainPolicy = Boolean(agent.policy.txHash) || (agent.policy.deployments?.length ?? 0) > 0;
+  const agentPayments = payments.filter((payment) => payment.agentId === agent.id || agentAddresses.some((item) => payment.agentWallet?.toLowerCase() === item.toLowerCase()));
   const settledSpend = agentPayments
     .filter((payment) => payment.status === "settled")
     .reduce((sum, payment) => sum + Number(payment.amountUsdc || 0), 0);

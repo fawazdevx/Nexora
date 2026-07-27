@@ -95,9 +95,9 @@ const AUTOMATION_DEFINITIONS = {
 } as const;
 
 export function AgentCommandModal({open, selectedAgentId, onClose, onSelectAgent}: AgentCommandModalProps) {
-  const {address, isConnected} = useAccount();
+  const {address, isConnected, chain} = useAccount();
   const snapshot = useAppSnapshot();
-  const agents = snapshot.data?.agents ?? [];
+  const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
   const services = snapshot.data?.services ?? [];
   const [agentId, setAgentId] = useState("");
   const [prompt, setPrompt] = useState(PROMPT_TEMPLATES[0].copy);
@@ -152,8 +152,12 @@ export function AgentCommandModal({open, selectedAgentId, onClose, onSelectAgent
       toast.error("Selected agent was not found.");
       return;
     }
-    if (mode === "onchain" && !agent.address) {
-      toast.error("This agent does not have an on-chain wallet yet.");
+    const chainWallet = agent.chainWallets?.find((wallet) => wallet.chainId === chain?.id)
+      ?? (chain?.id === Number(import.meta.env.VITE_ARC_CHAIN_ID ?? 5042002)
+        ? {address: agent.address}
+        : null);
+    if (mode === "onchain" && !chainWallet?.address) {
+      toast.error("This agent does not have a ready wallet on the connected chain.");
       return;
     }
 
@@ -170,9 +174,9 @@ export function AgentCommandModal({open, selectedAgentId, onClose, onSelectAgent
         previousServiceAllowlist: agent.policy.v2?.serviceAllowlist ?? [],
         requireOnchainPolicy: plan.policy.requireOnchainPolicy || mode === "onchain"
       };
-      const txHash = mode === "onchain" && agent.address
+      const txHash = mode === "onchain" && chainWallet?.address
         ? await writeAgentPolicy({
-            agentWallet: agent.address,
+            agentWallet: chainWallet.address,
             operatorAddress: agent.operatorAddress,
             arcName: agent.arcName,
             dailyLimitUsdc: String(plan.policy.dailyLimitUsdc),
@@ -190,6 +194,7 @@ export function AgentCommandModal({open, selectedAgentId, onClose, onSelectAgent
         transactionCapUsdc: plan.policy.transactionCapUsdc,
         contractAllowlist: plan.policy.contractAllowlist,
         recipientAllowlist: plan.policy.recipientAllowlist,
+        chainId: chain?.id,
         policyV2,
         txHash
       });

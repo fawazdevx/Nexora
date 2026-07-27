@@ -3,7 +3,7 @@ import {dirname, resolve} from "node:path";
 import {Pool, type PoolClient} from "pg";
 import {config} from "./config.js";
 import {normalizeMemo, type NexoraStructuredMemo} from "./memos.js";
-import {normalizePolicyV2} from "./policies/engine.js";
+import {normalizePolicyV2, type PolicyRemediation} from "./policies/engine.js";
 
 export type AgentPolicy = {
   dailyLimitUsdc: number;
@@ -12,6 +12,7 @@ export type AgentPolicy = {
   recipientAllowlist: string[];
   active: boolean;
   txHash?: string | null;
+  deployments?: AgentPolicyDeployment[];
   v2?: {
     weeklyLimitUsdc: number;
     monthlyLimitUsdc: number;
@@ -23,8 +24,26 @@ export type AgentPolicy = {
   };
 };
 
+export type AgentPolicyDeployment = {
+  chainId: number;
+  txHash: string;
+  policyRegistry?: string | null;
+  updatedAt: string;
+};
+
+export type AgentChainWalletRecord = {
+  chainId: number;
+  chain: string;
+  circleBlockchain: string;
+  address: string | null;
+  circleWalletId: string | null;
+  status: string;
+  updatedAt: string;
+};
+
 export type AgentWalletRecord = {
   id: string;
+  walletKind?: "circle_developer" | "external_eoa";
   operatorAddress: string;
   arcName: string | null;
   address: string | null;
@@ -33,6 +52,7 @@ export type AgentWalletRecord = {
   circleWalletId?: string | null;
   circleAccountType?: "EOA" | "SCA" | null;
   settlementMode?: "eoa_memo" | "sca_direct" | null;
+  chainWallets?: AgentChainWalletRecord[];
   createdAt: string;
   archivedAt?: string | null;
   archiveReason?: string | null;
@@ -42,6 +62,11 @@ export type AgentWalletRecord = {
 export type ServiceRecord = {
   id: string;
   chainServiceId: number | null;
+  // EVM chain id of the ledger this service was published on. Each chain's
+  // X402FacilitatorLedger has its own nextServiceId counter, so chainServiceId
+  // alone is ambiguous across chains — this disambiguates which RPC/ledger the
+  // settlement must be verified against. Null/undefined = Arc (legacy default).
+  settlementChainId?: number | null;
   publisherAddress: string;
   name: string;
   endpointHash: string;
@@ -128,16 +153,20 @@ export type PaymentRecord = {
   requestHash: string;
   status: "authorized" | "settled" | "failed" | "policy_blocked";
   policyReason?: string | null;
+  remediation?: PolicyRemediation | null;
   memo?: NexoraStructuredMemo | null;
   txHash?: string | null;
   external?: {
-    provider: "circle_agent_marketplace";
+    provider: "circle_agent_marketplace" | "meridian";
     serviceUrl: string;
     chain: string;
     chainId?: number | null;
     network?: string | null;
     paymentScheme?: string | null;
     resultSummary?: string | null;
+    accountingStatus?: "recorded" | "pending" | null;
+    accountingTxHashes?: string[] | null;
+    assetSymbol?: string | null;
   } | null;
   createdAt: string;
   settledAt?: string | null;
@@ -165,12 +194,14 @@ export type PaymentIntentRecord = {
     chainId?: number | null;
     network?: string | null;
     paymentScheme?: string | null;
+    assetAddress?: string | null;
     inputSchema?: unknown;
   };
   data: Record<string, unknown>;
   policy: {
     allowed: boolean;
     reason?: string | null;
+    remediation?: PolicyRemediation | null;
     dailySpentUsdc: number;
     weeklySpentUsdc: number;
     monthlySpentUsdc: number;
@@ -572,8 +603,286 @@ export async function assertStoreReady() {
   await readStore();
 }
 
+// ---------------------------------------------------------------------------
+// Money path (task 3): dedicated helpers for payments and payment_intents.
+//
+// In file mode these fall back to the existing blob path (updateStore), so the
+// in-process cache + write queue keep serializing writes exactly as before. In
+// DB mode they operate on the relational tables so Postgres enforces the money
+// invariants directly (partial unique index for replay; row/advisory locks for
+// the daily-limit check) instead of relying on the global app_store row lock.
+// ---------------------------------------------------------------------------
+
+// Thrown when a payment insert collides with an already-active (authorized or
+// settled) payment for the same request hash. Callers translate this into the
+// existing "request hash has already been used" response.
+export class RequestHashConflictError extends Error {
+  constructor(message = "request hash has already been used") {
+    super(message);
+    this.name = "RequestHashConflictError";
+  }
+}
+
+function paymentIntentNotFound() {
+  // Mirrors the httpError shape used by the Circle marketplace so callers keep
+  // returning HTTP 404 regardless of storage mode.
+  return Object.assign(new Error("payment intent not found"), {status: 404});
+}
+
+const ACTIVE_PAYMENT_STATUSES = new Set<PaymentRecord["status"]>(["authorized", "settled"]);
+
+function isActivePaymentStatus(status: PaymentRecord["status"]) {
+  return ACTIVE_PAYMENT_STATUSES.has(status);
+}
+
+function isUniqueViolation(error: unknown) {
+  return Boolean(error && typeof error === "object" && (error as {code?: string}).code === "23505");
+}
+
+// Insert a payment. When the payment is active (authorized/settled), the
+// active-only replay guard rejects a second live payment for the same request
+// hash — enforced by the partial unique index in DB mode and by an explicit
+// check under the blob lock in file mode. `blobMutate` runs additional
+// non-money-path mutations (e.g. notifications) atomically with the insert.
+export async function insertPayment<T>(
+  payment: PaymentRecord,
+  blobMutate?: (store: StoreShape) => T
+): Promise<T | undefined> {
+  const normalized = normalizePaymentRecord(payment);
+
+  if (!config.databaseUrl) {
+    return updateStore((store) => {
+      if (
+        isActivePaymentStatus(normalized.status)
+        && store.payments.some((existing) => existing.requestHash === normalized.requestHash && isActivePaymentStatus(existing.status))
+      ) {
+        throw new RequestHashConflictError();
+      }
+      store.payments.push(normalized);
+      return blobMutate ? blobMutate(store) : undefined;
+    });
+  }
+
+  await ensureDatabase();
+  const client = await database().connect();
+  try {
+    await client.query("begin");
+    try {
+      await insertPaymentRow(client, normalized);
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      if (isUniqueViolation(error)) throw new RequestHashConflictError();
+      throw error;
+    }
+    let result: T | undefined;
+    if (blobMutate) {
+      result = await runBlobMutation(client, blobMutate);
+    }
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Update a payment by id via a mutator that receives the current record. The
+// mutator returns the mutated record (or null to signal "not found / no-op").
+// `blobMutate` runs alongside for notifications, atomically in DB mode.
+export async function updatePaymentById<T>(
+  matcher: (payment: PaymentRecord) => boolean,
+  mutate: (payment: PaymentRecord, store: StoreShape) => T
+): Promise<T | undefined> {
+  if (!config.databaseUrl) {
+    return updateStore((store) => {
+      const payment = store.payments.find(matcher);
+      if (!payment) return undefined;
+      return mutate(payment, store);
+    });
+  }
+
+  await ensureDatabase();
+  const client = await database().connect();
+  try {
+    await client.query("begin");
+    const store = await hydratedBlobStore(client);
+    const payment = store.payments.find(matcher);
+    if (!payment) {
+      await client.query("commit");
+      return undefined;
+    }
+    const result = mutate(payment, store);
+    await client.query(updatePaymentRowColumns(payment));
+    await persistBlob(client, store);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Insert a payment intent. `blobMutate` runs alongside for notifications.
+export async function insertPaymentIntent<T>(
+  intent: PaymentIntentRecord,
+  blobMutate?: (store: StoreShape) => T
+): Promise<T | undefined> {
+  const normalized = normalizePaymentIntent(intent);
+
+  if (!config.databaseUrl) {
+    return updateStore((store) => {
+      store.paymentIntents.unshift(normalized);
+      store.paymentIntents = store.paymentIntents.slice(0, 500);
+      return blobMutate ? blobMutate(store) : undefined;
+    });
+  }
+
+  await ensureDatabase();
+  const client = await database().connect();
+  try {
+    await client.query("begin");
+    await insertPaymentIntentRow(client, normalized);
+    let result: T | undefined;
+    if (blobMutate) result = await runBlobMutation(client, blobMutate);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Update a payment intent by id under a row lock (DB mode) so status
+// transitions (approve, mark-executing, settle) are serialized. The mutator
+// may throw to abort the transition.
+export async function updatePaymentIntentById<T>(
+  id: string,
+  mutate: (intent: PaymentIntentRecord, store: StoreShape) => T
+): Promise<T> {
+  if (!config.databaseUrl) {
+    return updateStore((store) => {
+      const intent = store.paymentIntents.find((item) => item.id === id);
+      if (!intent) throw paymentIntentNotFound();
+      return mutate(intent, store);
+    });
+  }
+
+  await ensureDatabase();
+  const client = await database().connect();
+  try {
+    await client.query("begin");
+    const locked = await client.query("select record from payment_intents where id = $1 for update", [id]);
+    if (!locked.rows[0]) {
+      await client.query("rollback").catch(() => undefined);
+      throw paymentIntentNotFound();
+    }
+    const store = await hydratedBlobStore(client);
+    const intent = store.paymentIntents.find((item) => item.id === id) ?? normalizePaymentIntent(locked.rows[0].record);
+    const result = mutate(intent, store);
+    await client.query(updatePaymentIntentRowColumns(intent));
+    await persistBlob(client, store);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Run `fn` while holding an exclusive lock keyed to an agent, and provide the
+// agent's currently settled payments so the caller can compute spend windows
+// atomically with the write that follows. In DB mode this uses a Postgres
+// advisory lock (agents still live in the blob, so there is no agent row to
+// lock); in file mode the blob write queue already serializes everything, so
+// `fn` simply runs against the current store.
+//
+// NOTE (Part B, task 3): the DB-mode advisory-lock path is verified by review
+// only — no Postgres was reachable in the build environment. The file-mode
+// path is covered by the concurrent daily-limit adversarial test.
+export async function withAgentSpendLock<T>(
+  agentId: string | null | undefined,
+  fn: (context: {settledPayments: PaymentRecord[]}) => Promise<T> | T
+): Promise<T> {
+  if (!config.databaseUrl) {
+    const store = await readStore();
+    const settledPayments = store.payments.filter((payment) => payment.agentId === agentId && payment.status === "settled");
+    return fn({settledPayments});
+  }
+
+  await ensureDatabase();
+  const client = await database().connect();
+  try {
+    const lockKey = advisoryLockKey(agentId ?? "");
+    await client.query("select pg_advisory_lock($1)", [lockKey]);
+    try {
+      const settled = await client.query(
+        "select record from payments where agent_id = $1 and status = 'settled'",
+        [agentId ?? null]
+      );
+      const settledPayments = settled.rows.map((row) => normalizePaymentRecord(row.record));
+      return await fn({settledPayments});
+    } finally {
+      await client.query("select pg_advisory_unlock($1)", [lockKey]).catch(() => undefined);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// Deterministic 63-bit advisory-lock key from an arbitrary agent id.
+function advisoryLockKey(seed: string) {
+  let hash = 0n;
+  for (const char of seed) {
+    hash = (hash * 131n + BigInt(char.charCodeAt(0))) % 9223372036854775783n;
+  }
+  return hash.toString();
+}
+
+// Load the app_store blob plus the table-backed money records into a single
+// StoreShape for a mutation that spans both (e.g. payment + notification).
+async function hydratedBlobStore(client: PoolClient) {
+  const selected = await client.query("select value from app_store where key = $1 for update", [STORE_KEY]);
+  const store = selected.rows[0]?.value ? normalizeStore(selected.rows[0].value) : emptyStore();
+  store.payments = await loadPaymentsFromTable(client);
+  store.paymentIntents = await loadPaymentIntentsFromTable(client);
+  return store;
+}
+
+async function runBlobMutation<T>(client: PoolClient, blobMutate: (store: StoreShape) => T): Promise<T> {
+  const store = await hydratedBlobStore(client);
+  const result = blobMutate(store);
+  await persistBlob(client, store);
+  return result;
+}
+
+async function persistBlob(client: PoolClient, store: StoreShape) {
+  await client.query(
+    `insert into app_store (key, value, updated_at)
+     values ($1, $2::jsonb, now())
+     on conflict (key) do update set value = excluded.value, updated_at = now()`,
+    [STORE_KEY, JSON.stringify(blobPersistShape(store))]
+  );
+}
+
 export function storageFriendlyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  if (/Expected bytes32, got bytes20|AbiEncoding|invalid.*bytes(20|32)|Version:\s*viem/i.test(message)) {
+    return "Nexora could not prepare this payment because an authorization value was malformed. Refresh and try again.";
+  }
+  if (/FeeExceedsMax|0x5ff85e3f/i.test(message)) {
+    return "The settlement fee changed before submission. Refresh the payment requirements and try again.";
+  }
+  if (/ContractFunctionExecutionError|execution reverted|transaction reverted/i.test(message)) {
+    return "The payment contract rejected the transaction. Check the selected network, balance, and approval, then try again.";
+  }
   if (/ENOTFOUND|getaddrinfo/i.test(message)) {
     return "Nexora data service is temporarily unreachable. Please try again shortly.";
   }
@@ -594,7 +903,7 @@ export async function appSnapshot(operatorAddress?: string) {
   const visibleAgents = store.agents.filter(isVisibleAgent);
   const visibleServiceIds = new Set(servicesWithTrust.map((service) => service.id));
   const visibleAgentIds = new Set(visibleAgents.map((agent) => agent.id));
-  const visibleAgentWallets = new Set(visibleAgents.map((agent) => agent.address?.toLowerCase()).filter(Boolean) as string[]);
+  const visibleAgentWallets = new Set(visibleAgents.flatMap(agentWalletAddresses));
   const visiblePayments = store.payments.filter((payment) => isVisiblePayment(payment, {visibleServiceIds, visibleAgentIds, visibleAgentWallets}));
   const payments = operator
     ? visiblePayments.filter((payment) => payment.payer.toLowerCase() === operator || payment.publisherAddress.toLowerCase() === operator)
@@ -666,7 +975,9 @@ export async function appSnapshot(operatorAddress?: string) {
       agentWallets: operator ? agents.length : store.agents.length,
       usdcSettled: indexedAvailable ? indexedStats.marketplaceGrossUsdc : (operator ? settledPayments : platformSettledPayments).reduce((sum, payment) => sum + payment.amountUsdc, 0),
       earnRoutes: indexedAvailable ? indexedStats.saveEarnDeposits : store.earnActivations.length,
-      policySaves: indexedStats.policySaves > 0 ? indexedStats.policySaves : (operator ? agents : store.agents).filter((agent) => agent.policy.txHash).length,
+      policySaves: indexedStats.policySaves > 0
+        ? indexedStats.policySaves
+        : (operator ? agents : store.agents).reduce((sum, agent) => sum + Math.max(agent.policy.deployments?.length ?? 0, agent.policy.txHash ? 1 : 0), 0),
       analyticsSource: indexedAvailable ? "indexed" : "local",
       indexedEvents: indexedStats.indexedEvents,
       saveEarnDepositVolumeUsdc: indexedStats.saveEarnDepositVolumeUsdc,
@@ -787,7 +1098,7 @@ function computeRiskAlerts(input: {
       }));
     }
 
-    if (agent.policy.v2?.requireOnchainPolicy && !agent.policy.txHash) {
+    if (agent.policy.v2?.requireOnchainPolicy && !(agent.policy.deployments?.length || agent.policy.txHash)) {
       alerts.push(riskAlert({
         severity: "critical",
         category: "policy",
@@ -917,7 +1228,15 @@ function severityRank(severity: RiskAlertRecord["severity"]) {
 }
 
 function paymentBelongsToAgent(payment: PaymentRecord, agent: AgentWalletRecord) {
-  return payment.agentId === agent.id || Boolean(agent.address && payment.agentWallet?.toLowerCase() === agent.address.toLowerCase());
+  return payment.agentId === agent.id || Boolean(payment.agentWallet && agentWalletAddresses(agent).includes(payment.agentWallet.toLowerCase()));
+}
+
+/** Every chain address belonging to an agent, including Arc-only legacy records. */
+export function agentWalletAddresses(agent: Pick<AgentWalletRecord, "address" | "chainWallets">) {
+  return [...new Set([
+    agent.address,
+    ...(agent.chainWallets ?? []).map((wallet) => wallet.address)
+  ].filter((address): address is string => Boolean(address)).map((address) => address.toLowerCase()))];
 }
 
 function startOfUtcDay(timestamp: number) {
@@ -928,6 +1247,7 @@ function startOfUtcDay(timestamp: number) {
 function sanitizeAgent(agent: AgentWalletRecord) {
   return {
     id: agent.id,
+    walletKind: agent.walletKind ?? "circle_developer",
     operatorAddress: agent.operatorAddress,
     arcName: agent.arcName,
     address: agent.address,
@@ -936,6 +1256,7 @@ function sanitizeAgent(agent: AgentWalletRecord) {
     circleWalletId: agent.circleWalletId ?? null,
     circleAccountType: agent.circleAccountType ?? null,
     settlementMode: agent.settlementMode ?? null,
+    chainWallets: agent.chainWallets ?? [],
     createdAt: agent.createdAt,
     policy: agent.policy
   };
@@ -1055,23 +1376,26 @@ export function isVisibleService(service: ServiceRecord) {
 }
 
 export function visibleServicesForStore(services: ServiceRecord[]) {
-  const canonicalByEndpoint = new Map<string, ServiceRecord>();
+  const canonicalByRoute = new Map<string, ServiceRecord>();
 
   for (const service of services) {
     if (!isVisibleService(service)) continue;
-    const key = serviceEndpointKey(service);
-    const current = canonicalByEndpoint.get(key);
+    const key = serviceRouteKey(service);
+    const current = canonicalByRoute.get(key);
     if (!current || shouldPreferVisibleService(service, current)) {
-      canonicalByEndpoint.set(key, service);
+      canonicalByRoute.set(key, service);
     }
   }
 
-  return services.filter((service) => isVisibleService(service) && canonicalByEndpoint.get(serviceEndpointKey(service)) === service);
+  return services.filter((service) => isVisibleService(service) && canonicalByRoute.get(serviceRouteKey(service)) === service);
 }
 
-function serviceEndpointKey(service: Pick<ServiceRecord, "id" | "endpointHash">) {
+function serviceRouteKey(service: Pick<ServiceRecord, "id" | "endpointHash" | "publisherAddress" | "settlementChainId">) {
   const endpointHash = service.endpointHash.trim().toLowerCase();
-  return endpointHash || service.id;
+  const endpoint = endpointHash || service.id;
+  const publisher = service.publisherAddress.trim().toLowerCase();
+  const settlementChainId = service.settlementChainId ?? config.arc.chainId;
+  return `${publisher}:${endpoint}:${settlementChainId}`;
 }
 
 function shouldPreferVisibleService(candidate: ServiceRecord, current: ServiceRecord) {
@@ -1313,6 +1637,9 @@ function normalizeStore(value: unknown): StoreShape {
   store.services = store.services.map((service) => ({
     ...service,
     manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash),
+    // Legacy services predating multi-chain settlement were all on Arc. Default
+    // missing values to Arc's chain id so their fee verification stays correct.
+    settlementChainId: service.settlementChainId ?? (service.chainServiceId !== null ? config.arc.chainId : null),
     archivedAt: service.archivedAt ?? null,
     archiveReason: service.archiveReason ?? null,
     trust: service.trust ?? null
@@ -1320,25 +1647,15 @@ function normalizeStore(value: unknown): StoreShape {
   store.services = mergeSeededServices(store.services);
   store.agents = store.agents.map((agent) => ({
     ...agent,
+    walletKind: agent.walletKind === "external_eoa" ? "external_eoa" : "circle_developer",
     archivedAt: agent.archivedAt ?? null,
     archiveReason: agent.archiveReason ?? null,
     circleAccountType: agent.circleAccountType === "EOA" || agent.circleAccountType === "SCA" ? agent.circleAccountType : null,
     settlementMode: agent.settlementMode === "eoa_memo" || agent.settlementMode === "sca_direct" ? agent.settlementMode : null,
+    chainWallets: normalizeAgentChainWallets(agent),
     policy: normalizeAgentPolicy(agent.policy)
   }));
-  store.payments = store.payments.map((payment) => {
-    const grossAmountUsdc = payment.grossAmountUsdc ?? payment.amountUsdc;
-    const facilitatorFeeBps = payment.facilitatorFeeBps ?? 0;
-    const platformFeeUsdc = payment.platformFeeUsdc ?? roundUsdc(grossAmountUsdc * facilitatorFeeBps / 10_000);
-    return {
-      ...payment,
-      grossAmountUsdc,
-      platformFeeUsdc,
-      publisherNetUsdc: payment.publisherNetUsdc ?? roundUsdc(grossAmountUsdc - platformFeeUsdc),
-      memo: normalizeMemo(payment.memo) ?? null,
-      external: payment.external ?? null
-    };
-  });
+  store.payments = store.payments.map(normalizePaymentRecord);
   store.subscriptions = store.subscriptions.map((subscription) => ({
     ...subscription,
     planName: subscription.planName ?? titleFromPlanId(subscription.plan),
@@ -1352,6 +1669,20 @@ function normalizeStore(value: unknown): StoreShape {
   }));
   store.escrows = Array.isArray(store.escrows) ? store.escrows.map(normalizeEscrow) : [];
   return store;
+}
+
+function normalizePaymentRecord(payment: PaymentRecord): PaymentRecord {
+  const grossAmountUsdc = payment.grossAmountUsdc ?? payment.amountUsdc;
+  const facilitatorFeeBps = payment.facilitatorFeeBps ?? 0;
+  const platformFeeUsdc = payment.platformFeeUsdc ?? roundUsdc(grossAmountUsdc * facilitatorFeeBps / 10_000);
+  return {
+    ...payment,
+    grossAmountUsdc,
+    platformFeeUsdc,
+    publisherNetUsdc: payment.publisherNetUsdc ?? roundUsdc(grossAmountUsdc - platformFeeUsdc),
+    memo: normalizeMemo(payment.memo) ?? null,
+    external: payment.external ?? null
+  };
 }
 
 function normalizePaymentIntent(intent: PaymentIntentRecord): PaymentIntentRecord {
@@ -1382,12 +1713,14 @@ function normalizePaymentIntent(intent: PaymentIntentRecord): PaymentIntentRecor
       chainId: Number.isFinite(Number(intent.normalized?.chainId)) ? Number(intent.normalized?.chainId) : null,
       network: intent.normalized?.network ?? null,
       paymentScheme: intent.normalized?.paymentScheme ?? null,
+      assetAddress: intent.normalized?.assetAddress ?? null,
       inputSchema: intent.normalized?.inputSchema ?? null
     },
     data: intent.data && typeof intent.data === "object" && !Array.isArray(intent.data) ? intent.data : {},
     policy: {
       allowed: Boolean(intent.policy?.allowed),
       reason: intent.policy?.reason ?? null,
+      remediation: intent.policy?.remediation ?? null,
       dailySpentUsdc: Number(intent.policy?.dailySpentUsdc || 0),
       weeklySpentUsdc: Number(intent.policy?.weeklySpentUsdc || 0),
       monthlySpentUsdc: Number(intent.policy?.monthlySpentUsdc || 0),
@@ -1741,8 +2074,52 @@ function normalizeAgentPolicy(policy: AgentPolicy): AgentPolicy {
     recipientAllowlist: Array.isArray(policy.recipientAllowlist) ? policy.recipientAllowlist : [],
     active: policy.active !== false,
     txHash: policy.txHash ?? null,
+    deployments: Array.isArray(policy.deployments)
+      ? policy.deployments
+        .filter((deployment) => Number.isInteger(deployment.chainId) && typeof deployment.txHash === "string" && deployment.txHash.startsWith("0x"))
+        .map((deployment) => ({
+          chainId: Number(deployment.chainId),
+          txHash: deployment.txHash,
+          policyRegistry: deployment.policyRegistry ?? null,
+          updatedAt: deployment.updatedAt || new Date(0).toISOString()
+        }))
+      : policy.txHash
+        ? [{
+          chainId: config.arc.chainId,
+          txHash: policy.txHash,
+          policyRegistry: config.contracts.policyRegistry || null,
+          updatedAt: new Date(0).toISOString()
+        }]
+        : [],
     v2: normalizePolicyV2(policy.v2)
   };
+}
+
+function normalizeAgentChainWallets(agent: AgentWalletRecord) {
+  if (Array.isArray(agent.chainWallets) && agent.chainWallets.length > 0) {
+    return agent.chainWallets
+      .filter((wallet) => Number.isInteger(wallet.chainId))
+      .map((wallet) => ({
+        chainId: Number(wallet.chainId),
+        chain: typeof wallet.chain === "string" && wallet.chain ? wallet.chain : `Chain ${wallet.chainId}`,
+        circleBlockchain: typeof wallet.circleBlockchain === "string" ? wallet.circleBlockchain : "",
+        address: wallet.address ?? null,
+        circleWalletId: wallet.circleWalletId ?? null,
+        status: wallet.status || "circle_wallet_pending_address",
+        updatedAt: wallet.updatedAt || agent.createdAt
+      }));
+  }
+
+  if (!agent.circleWalletId && !agent.address) return [];
+  return [{
+    chainId: config.arc.chainId,
+    chain: "Arc Testnet",
+    circleBlockchain: "ARC-TESTNET",
+    address: agent.address ?? null,
+    circleWalletId: agent.circleWalletId ?? null,
+    status: agent.circleWalletStatus || "circle_wallet_pending_address",
+    updatedAt: agent.createdAt
+  }];
 }
 
 function defaultManifestForService(name: string, endpointHash: string): ServiceManifest {
@@ -2172,14 +2549,24 @@ export function pushNotification(store: StoreShape, input: Omit<NotificationReco
 async function readDatabaseStore() {
   await ensureDatabase();
   const result = await database().query("select value from app_store where key = $1", [STORE_KEY]);
-  const store = result.rows[0]?.value ? normalizeStore(result.rows[0].value) : emptyStore();
+  const rawBlob = result.rows[0]?.value ?? null;
+  const store = rawBlob ? normalizeStore(rawBlob) : emptyStore();
 
   if (!result.rows[0]) {
     await database().query("insert into app_store (key, value) values ($1, $2::jsonb) on conflict (key) do nothing", [
       STORE_KEY,
-      JSON.stringify(store)
+      JSON.stringify(blobPersistShape(store))
     ]);
   }
+
+  // Money path (task 3): payments and payment_intents are table-managed, not
+  // blob-managed. If a legacy blob still carries them, migrate once into the
+  // tables and strip them from the blob so the tables are the sole source of
+  // truth. Then hydrate the in-memory store arrays from the tables so every
+  // existing read caller (appSnapshot, policy engine, router) is unchanged.
+  await migrateBlobMoneyRecords(rawBlob);
+  store.payments = await loadPaymentsFromTable();
+  store.paymentIntents = await loadPaymentIntentsFromTable();
 
   return store;
 }
@@ -2192,12 +2579,18 @@ async function updateDatabaseStore<T>(mutate: (store: StoreShape) => T | Promise
     await client.query("begin");
     const selected = await client.query("select value from app_store where key = $1 for update", [STORE_KEY]);
     const store = selected.rows[0]?.value ? normalizeStore(selected.rows[0].value) : emptyStore();
+    // Payments/intents are hydrated from their tables so read-after-write inside
+    // the callback sees current money-path state. Writes to these arrays inside
+    // a plain updateStore callback are NOT persisted in DB mode — the money path
+    // must use the dedicated helpers below. The blob write strips them.
+    store.payments = await loadPaymentsFromTable(client);
+    store.paymentIntents = await loadPaymentIntentsFromTable(client);
     const result = await mutate(store);
     await client.query(
       `insert into app_store (key, value, updated_at)
        values ($1, $2::jsonb, now())
        on conflict (key) do update set value = excluded.value, updated_at = now()`,
-      [STORE_KEY, JSON.stringify(store)]
+      [STORE_KEY, JSON.stringify(blobPersistShape(store))]
     );
     await client.query("commit");
     return result;
@@ -2209,9 +2602,138 @@ async function updateDatabaseStore<T>(mutate: (store: StoreShape) => T | Promise
   }
 }
 
+// Strip table-managed collections before persisting the app_store blob so the
+// tables remain the single source of truth for the money path.
+function blobPersistShape(store: StoreShape): StoreShape {
+  return {...store, payments: [], paymentIntents: []};
+}
+
+let blobMoneyMigrated = false;
+
+async function migrateBlobMoneyRecords(rawBlob: unknown) {
+  if (blobMoneyMigrated) return;
+  const blob = rawBlob && typeof rawBlob === "object" ? (rawBlob as Partial<StoreShape>) : null;
+  const legacyPayments = Array.isArray(blob?.payments) ? blob!.payments : [];
+  const legacyIntents = Array.isArray(blob?.paymentIntents) ? blob!.paymentIntents : [];
+  if (legacyPayments.length === 0 && legacyIntents.length === 0) {
+    blobMoneyMigrated = true;
+    return;
+  }
+  const client = await database().connect();
+  try {
+    await client.query("begin");
+    for (const payment of legacyPayments.map(normalizePaymentRecord)) {
+      await insertPaymentRow(client, payment, {onConflictDoNothing: true});
+    }
+    for (const intent of legacyIntents.map(normalizePaymentIntent)) {
+      await insertPaymentIntentRow(client, intent, {onConflictDoNothing: true});
+    }
+    // Strip the migrated arrays from the blob so they are not re-migrated and
+    // the tables are authoritative.
+    const selected = await client.query("select value from app_store where key = $1 for update", [STORE_KEY]);
+    if (selected.rows[0]?.value) {
+      const stripped = {...selected.rows[0].value, payments: [], paymentIntents: []};
+      await client.query("update app_store set value = $2::jsonb, updated_at = now() where key = $1", [
+        STORE_KEY,
+        JSON.stringify(stripped)
+      ]);
+    }
+    await client.query("commit");
+    blobMoneyMigrated = true;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function loadPaymentsFromTable(client?: Pool | PoolClient): Promise<PaymentRecord[]> {
+  const db = client ?? database();
+  const result = await db.query("select record from payments order by created_at asc");
+  return result.rows.map((row) => normalizePaymentRecord(row.record));
+}
+
+async function loadPaymentIntentsFromTable(client?: Pool | PoolClient): Promise<PaymentIntentRecord[]> {
+  const db = client ?? database();
+  const result = await db.query("select record from payment_intents order by created_at desc");
+  return result.rows.map((row) => normalizePaymentIntent(row.record));
+}
+
+async function insertPaymentRow(
+  client: Pool | PoolClient,
+  payment: PaymentRecord,
+  options?: {onConflictDoNothing?: boolean}
+) {
+  const conflict = options?.onConflictDoNothing ? "on conflict (id) do nothing" : "";
+  await client.query(
+    `insert into payments
+       (id, request_hash, status, agent_id, payer, publisher_address, service_id, amount_usdc, units, settled_at, created_at, record)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+     ${conflict}`,
+    [
+      payment.id,
+      payment.requestHash,
+      payment.status,
+      payment.agentId ?? null,
+      payment.payer,
+      payment.publisherAddress,
+      payment.serviceId,
+      payment.amountUsdc,
+      payment.units,
+      payment.settledAt ?? null,
+      payment.createdAt,
+      JSON.stringify(payment)
+    ]
+  );
+}
+
+async function insertPaymentIntentRow(
+  client: Pool | PoolClient,
+  intent: PaymentIntentRecord,
+  options?: {onConflictDoNothing?: boolean}
+) {
+  const conflict = options?.onConflictDoNothing ? "on conflict (id) do nothing" : "";
+  await client.query(
+    `insert into payment_intents
+       (id, operator_address, agent_id, request_hash, status, created_at, updated_at, record)
+     values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+     ${conflict}`,
+    [
+      intent.id,
+      intent.operatorAddress,
+      intent.agentId ?? null,
+      intent.requestHash,
+      intent.status,
+      intent.createdAt,
+      intent.updatedAt,
+      JSON.stringify(intent)
+    ]
+  );
+}
+
+function updatePaymentRowColumns(payment: PaymentRecord) {
+  return {
+    text: `update payments set
+       status = $2, settled_at = $3, amount_usdc = $4, record = $5::jsonb
+     where id = $1`,
+    values: [payment.id, payment.status, payment.settledAt ?? null, payment.amountUsdc, JSON.stringify(payment)]
+  };
+}
+
+function updatePaymentIntentRowColumns(intent: PaymentIntentRecord) {
+  return {
+    text: `update payment_intents set
+       status = $2, updated_at = $3, record = $4::jsonb
+     where id = $1`,
+    values: [intent.id, intent.status, intent.updatedAt, JSON.stringify(intent)]
+  };
+}
+
 async function ensureDatabase() {
   if (databaseReady) return;
   await ensureStoreTable(database());
+  await ensureMoneyPathTables(database());
   databaseReady = true;
 }
 
@@ -2222,6 +2744,52 @@ async function ensureStoreTable(client: Pool | PoolClient) {
       value jsonb not null,
       updated_at timestamptz not null default now()
     )
+  `);
+}
+
+// Money path (task 3): relational tables for payments and payment_intents.
+// Kept in sync with src/db/schema.sql. Created idempotently on first DB use.
+async function ensureMoneyPathTables(client: Pool | PoolClient) {
+  await client.query(`
+    create table if not exists payments (
+      id text primary key,
+      request_hash text not null,
+      status text not null,
+      agent_id text,
+      payer text not null,
+      publisher_address text not null,
+      service_id text not null,
+      amount_usdc numeric not null,
+      units numeric not null,
+      settled_at timestamptz,
+      created_at timestamptz not null default now(),
+      record jsonb not null
+    )
+  `);
+  await client.query(`
+    create unique index if not exists payments_request_hash_active
+      on payments (request_hash)
+      where status in ('authorized', 'settled')
+  `);
+  await client.query(`
+    create index if not exists payments_agent_settled
+      on payments (agent_id, status, settled_at)
+  `);
+  await client.query(`
+    create table if not exists payment_intents (
+      id text primary key,
+      operator_address text not null,
+      agent_id text,
+      request_hash text not null,
+      status text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      record jsonb not null
+    )
+  `);
+  await client.query(`
+    create index if not exists payment_intents_operator
+      on payment_intents (operator_address, created_at desc)
   `);
 }
 

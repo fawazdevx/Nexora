@@ -106,7 +106,6 @@ export async function indexedAnalytics() {
   const saveDepositVolume = sumAmount(saveDeposits);
   const saveWithdrawalVolume = sumAmount(saveWithdrawals);
   const saveEarnFees = sumFee(saveWithdrawals);
-
   return {
     cursors: store.indexerCursors,
     recentEvents: events.slice(-60).reverse(),

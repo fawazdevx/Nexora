@@ -1,12 +1,15 @@
 import {attachServiceTrust, readStore, updateStore, visibleServicesForStore, type ServiceManifest, type ServiceRecord} from "../store.js";
+import {buildDiscoveryDocument} from "../discovery/catalog.js";
 import {pushNotification} from "../store.js";
 import {config} from "../config.js";
 import {dispatchNotification} from "../notifications.js";
 import {safeHttpUrl} from "../security.js";
+import {createPublicClient, http, isAddress, parseAbi, parseEventLogs, parseUnits, type Address, type Hex} from "viem";
 import {fetchDefiLlamaUsdcYields, summarizeDefiLlamaVaultQuery} from "../providers/defillama.js";
 import {runAgentTransactionPreflight} from "../providers/preflight.js";
 import {tenderlyReadiness} from "../providers/tenderly.js";
 import {scanWalletApprovalExposure, screenCounterpartyWallet, type CounterpartyLocalActivity, type WalletRiskChainConfig} from "../providers/wallet-risk.js";
+import {CANONICAL_MARKETPLACE_SERVICES, canonicalMarketplaceService} from "./canonical-catalog.js";
 
 export type PlatformPlan = {
   id: "developer_analytics" | "premium_agent_automation" | "enterprise_policy" | "verified_builder";
@@ -66,6 +69,12 @@ type ServiceInput = {
   endpointHash: string;
   pricePerUnitUsdc: number;
   chainServiceId?: number | null;
+  // EVM chain id of the ledger this service was published on. Each chain's
+  // ledger has its own nextServiceId counter, so chainServiceId alone is not
+  // unique across chains — settlementChainId disambiguates which chain's ledger,
+  // RPC, and USDC the settlement verifier must use. Required for new on-chain
+  // routes; only normalized legacy records may default to Arc.
+  settlementChainId?: number | null;
   txHash?: string | null;
   featured?: boolean;
   manifestKind?: ServiceManifest["kind"];
@@ -79,44 +88,406 @@ export async function listServices() {
   return attachServiceTrust(visibleServicesForStore(store.services), store.payments);
 }
 
+const canonicalLedgerAbi = parseAbi([
+  "event ServicePublished(uint256 indexed serviceId,address indexed publisher,uint256 pricePerUnit,string endpointHash)",
+  "function services(uint256 serviceId) view returns (address publisher,string endpointHash,uint256 pricePerUnit,bool active)"
+]);
+
+type CanonicalRouteClient = {
+  getTransactionReceipt(args: {hash: Hex}): Promise<{status: "success" | "reverted"; logs: unknown[]}>;
+  readContract(args: {
+    address: Address;
+    abi: typeof canonicalLedgerAbi;
+    functionName: "services";
+    args: readonly [bigint];
+  }): Promise<unknown>;
+};
+
+type CanonicalReconcileDependencies = {
+  clientFactory?: (input: {chainId: number; rpcUrl: string}) => CanonicalRouteClient;
+};
+
+type MarketplacePublicationDependencies = CanonicalReconcileDependencies;
+
+export async function canonicalMarketplaceCatalog() {
+  const store = await readStore();
+  const publisherAddress = isAddress(config.contracts.marketplacePublisher) ? config.contracts.marketplacePublisher : null;
+  const visible = visibleServicesForStore(store.services);
+  const chains = marketplaceChainRuntimes().map(({chainId, label, ledger}) => ({
+    chainId,
+    label,
+    ledger,
+    configured: isAddress(ledger)
+  }));
+
+  return {
+    publisherAddress,
+    chains,
+    services: CANONICAL_MARKETPLACE_SERVICES.map((definition) => ({
+      ...definition,
+      routes: visible
+        .filter((service) => (
+          service.endpointHash.trim().toLowerCase() === definition.endpointHash
+          && publisherAddress !== null
+          && service.publisherAddress.toLowerCase() === publisherAddress.toLowerCase()
+          && typeof service.settlementChainId === "number"
+          && service.chainServiceId !== null
+        ))
+        .map((service) => ({
+          id: service.id,
+          chainServiceId: service.chainServiceId,
+          settlementChainId: service.settlementChainId,
+          txHash: service.txHash ?? null
+        }))
+    }))
+  };
+}
+
+export async function reconcileCanonicalMarketplaceRoutes(input: {
+  publisherAddress: string;
+  settlementChainId: number;
+  txHash: string;
+}, dependencies: CanonicalReconcileDependencies = {}) {
+  const publisherAddress = canonicalMarketplacePublisher();
+  if (!isAddress(input.publisherAddress) || input.publisherAddress.toLowerCase() !== publisherAddress.toLowerCase()) {
+    throw new Error("The configured Nexora Marketplace publisher wallet is required");
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(input.txHash)) throw new Error("A valid publication transaction hash is required");
+
+  const runtime = marketplaceChainRuntimes().find((chain) => chain.chainId === input.settlementChainId);
+  if (!runtime || !isAddress(runtime.ledger)) {
+    throw new Error(`Marketplace route reconciliation is not configured for chain ${input.settlementChainId}`);
+  }
+  const client = dependencies.clientFactory?.({chainId: runtime.chainId, rpcUrl: runtime.rpcUrl})
+    ?? createPublicClient({transport: http(runtime.rpcUrl, {timeout: 20_000})}) as unknown as CanonicalRouteClient;
+  const receipt = await client.getTransactionReceipt({hash: input.txHash as Hex});
+  if (receipt.status !== "success") throw new Error("The Marketplace publication transaction reverted");
+
+  const publicationEvents = parseEventLogs({
+    abi: canonicalLedgerAbi,
+    eventName: "ServicePublished",
+    logs: receipt.logs as never,
+    strict: false
+  }).filter((event) => (
+    event.address.toLowerCase() === runtime.ledger.toLowerCase()
+    && event.args.publisher?.toLowerCase() === publisherAddress.toLowerCase()
+  ));
+  if (publicationEvents.length === 0) {
+    throw new Error("No Nexora Marketplace service publications were found in this transaction");
+  }
+
+  const eventRoutes = new Map<string, {chainServiceId: number; txHash: string}>();
+  for (const event of publicationEvents) {
+    const endpointHash = event.args.endpointHash;
+    const definition = typeof endpointHash === "string" ? canonicalMarketplaceService(endpointHash) : null;
+    if (!definition) throw new Error(`The transaction contains a non-canonical service route: ${event.args.endpointHash}`);
+    if (eventRoutes.has(definition.endpointHash)) throw new Error(`The transaction published ${definition.endpointHash} more than once`);
+    const expectedPrice = parseUnits(String(definition.pricePerUnitUsdc), 6);
+    if (event.args.pricePerUnit !== expectedPrice) throw new Error(`The on-chain price for ${definition.name} does not match the canonical catalog`);
+    eventRoutes.set(definition.endpointHash, {
+      chainServiceId: Number(event.args.serviceId),
+      txHash: input.txHash
+    });
+  }
+
+  const before = await readStore();
+  const existingRoutes = visibleServicesForStore(before.services)
+    .filter((service) => (
+      service.publisherAddress.toLowerCase() === publisherAddress.toLowerCase()
+      && (service.settlementChainId ?? config.arc.chainId) === runtime.chainId
+      && service.chainServiceId !== null
+      && canonicalMarketplaceService(service.endpointHash)
+    ))
+    .sort((left, right) => Number(right.chainServiceId ?? 0) - Number(left.chainServiceId ?? 0));
+
+  const selectedRoutes = new Map<string, {chainServiceId: number; txHash: string | null}>();
+  for (const route of existingRoutes) {
+    const endpointHash = route.endpointHash.trim().toLowerCase();
+    if (!selectedRoutes.has(endpointHash)) {
+      selectedRoutes.set(endpointHash, {chainServiceId: route.chainServiceId as number, txHash: route.txHash ?? null});
+    }
+  }
+  for (const [endpointHash, route] of eventRoutes) selectedRoutes.set(endpointHash, route);
+
+  for (const [endpointHash, route] of selectedRoutes) {
+    const definition = canonicalMarketplaceService(endpointHash);
+    if (!definition) continue;
+    const onchain = await client.readContract({
+      address: runtime.ledger as Address,
+      abi: canonicalLedgerAbi,
+      functionName: "services",
+      args: [BigInt(route.chainServiceId)]
+    }) as readonly [Address, string, bigint, boolean];
+    if (
+      onchain[0].toLowerCase() !== publisherAddress.toLowerCase()
+      || onchain[1].trim().toLowerCase() !== definition.endpointHash
+      || onchain[2] !== parseUnits(String(definition.pricePerUnitUsdc), 6)
+      || !onchain[3]
+    ) {
+      throw new Error(`On-chain route ${runtime.chainId}:${route.chainServiceId} does not match ${definition.name}`);
+    }
+  }
+
+  const reconciliation = await updateStore((store) => {
+    const now = new Date().toISOString();
+    const selectedIds = new Map<string, string>();
+    let imported = 0;
+    let archived = 0;
+
+    for (const definition of CANONICAL_MARKETPLACE_SERVICES) {
+      const selected = selectedRoutes.get(definition.endpointHash);
+      if (!selected) continue;
+      const id = `${runtime.chainId}:${selected.chainServiceId}`;
+      selectedIds.set(definition.endpointHash, id);
+      const previous = store.services.find((service) => service.id === id);
+      const route: ServiceRecord = {
+        id,
+        chainServiceId: selected.chainServiceId,
+        settlementChainId: runtime.chainId,
+        publisherAddress,
+        name: definition.name,
+        endpointHash: definition.endpointHash,
+        pricePerUnitUsdc: definition.pricePerUnitUsdc,
+        manifest: buildServiceManifest(definition),
+        active: true,
+        featured: previous?.featured ?? true,
+        txHash: selected.txHash,
+        createdAt: previous?.createdAt ?? now,
+        archivedAt: null,
+        archiveReason: null,
+        trust: previous?.trust ?? null
+      };
+      const index = store.services.findIndex((service) => service.id === id);
+      if (index >= 0) store.services[index] = route;
+      else {
+        store.services.push(route);
+        imported += 1;
+      }
+    }
+
+    for (const service of store.services) {
+      const endpointHash = service.endpointHash.trim().toLowerCase();
+      const selectedId = selectedIds.get(endpointHash);
+      if (
+        selectedId
+        && service.id !== selectedId
+        && !service.archivedAt
+        && service.publisherAddress.toLowerCase() === publisherAddress.toLowerCase()
+        && (service.settlementChainId ?? config.arc.chainId) === runtime.chainId
+      ) {
+        service.archivedAt = now;
+        service.archiveReason = `superseded_by_canonical_route:${selectedId}`;
+        archived += 1;
+      }
+    }
+
+    return {
+      imported,
+      archived,
+      routeIds: [...selectedIds.values()]
+    };
+  });
+
+  return {
+    ...reconciliation,
+    publisherAddress,
+    settlementChainId: runtime.chainId,
+    txHash: input.txHash,
+    verifiedPublications: eventRoutes.size,
+    catalog: await canonicalMarketplaceCatalog()
+  };
+}
+
+function canonicalMarketplacePublisher() {
+  if (!isAddress(config.contracts.marketplacePublisher)) {
+    throw new Error("NEXORA_MARKETPLACE_PUBLISHER_ADDRESS is not configured");
+  }
+  return config.contracts.marketplacePublisher;
+}
+
+function marketplaceChainRuntimes() {
+  return [
+    {chainId: config.arc.chainId, label: "Arc Testnet", rpcUrl: config.arc.rpcUrl, ledger: config.contracts.x402Ledger},
+    {chainId: config.base.sepoliaChainId, label: "Base Sepolia", rpcUrl: config.base.sepoliaRpcUrl, ledger: config.base.sepoliaX402Ledger},
+    {chainId: config.arbitrum.sepoliaChainId, label: "Arbitrum Sepolia", rpcUrl: config.arbitrum.sepoliaRpcUrl, ledger: config.arbitrum.sepoliaX402Ledger}
+  ];
+}
+
+// Public x402 discovery document (task 4). Projects the visible service catalog
+// into the same discovery-resources shape Nexora consumes from Circle. Read-only
+// and unauthenticated by design — exposes only publicly sellable service data.
+export async function discoveryDocument(baseUrl?: string, query?: string, x402Version: 1 | 2 = 1) {
+  const store = await readStore();
+  let services = attachServiceTrust(visibleServicesForStore(store.services), store.payments);
+  const term = query?.trim().toLowerCase();
+  if (term) {
+    services = services.filter(
+      (service) =>
+        service.name.toLowerCase().includes(term)
+        || service.manifest.description.toLowerCase().includes(term)
+    );
+  }
+  return buildDiscoveryDocument(services, {
+    baseUrl: baseUrl?.trim() || config.notifications.publicAppUrl,
+    x402Version
+  });
+}
+
 export async function getService(serviceId: string) {
   const store = await readStore();
-  return attachServiceTrust(visibleServicesForStore(store.services), store.payments).find((service) => service.id === serviceId || String(service.chainServiceId) === serviceId);
+  const services = attachServiceTrust(visibleServicesForStore(store.services), store.payments);
+  const exact = services.find((service) => service.id === serviceId);
+  if (exact) return exact;
+  const legacyMatches = services.filter((service) => String(service.chainServiceId) === serviceId);
+  return legacyMatches.length === 1 ? legacyMatches[0] : undefined;
 }
 
 export async function publishService(input: ServiceInput) {
+  const [service] = await publishServiceRoutes([input]);
+  if (!service) throw new Error("service publication failed");
+  return service;
+}
+
+/**
+ * Verifies a user-submitted Marketplace publication against the selected
+ * chain before it enters Nexora's catalog. Authentication proves who called
+ * the API; this check proves that the same wallet published the same active
+ * route, price, and endpoint on the configured ledger.
+ */
+export async function publishVerifiedService(input: ServiceInput, dependencies: MarketplacePublicationDependencies = {}) {
+  await verifyMarketplacePublication(input, dependencies);
+  return publishService(input);
+}
+
+export async function publishVerifiedServiceRoutes(inputs: ServiceInput[], dependencies: MarketplacePublicationDependencies = {}) {
+  for (const input of inputs) await verifyMarketplacePublication(input, dependencies);
+  return publishServiceRoutes(inputs);
+}
+
+async function verifyMarketplacePublication(input: ServiceInput, dependencies: MarketplacePublicationDependencies) {
+  if (!isAddress(input.publisherAddress)) throw new Error("publisherAddress must be a valid EVM address");
+  if (input.chainServiceId === undefined || input.chainServiceId === null) {
+    throw new Error("chainServiceId is required for an on-chain Marketplace publication");
+  }
+  if (!Number.isSafeInteger(input.chainServiceId) || input.chainServiceId <= 0) {
+    throw new Error("chainServiceId must be a positive integer");
+  }
+  if (input.settlementChainId === undefined || input.settlementChainId === null) {
+    throw new Error("settlementChainId is required for an on-chain Marketplace publication");
+  }
+  if (!input.txHash || !/^0x[0-9a-fA-F]{64}$/.test(input.txHash)) {
+    throw new Error("A valid publication transaction hash is required");
+  }
+
+  const runtime = marketplaceChainRuntimes().find((chain) => chain.chainId === input.settlementChainId);
+  if (!runtime || !isAddress(runtime.ledger)) {
+    throw new Error(`Marketplace publication verification is not configured for chain ${input.settlementChainId}`);
+  }
+  const client = dependencies.clientFactory?.({chainId: runtime.chainId, rpcUrl: runtime.rpcUrl})
+    ?? createPublicClient({transport: http(runtime.rpcUrl, {timeout: 20_000})}) as unknown as CanonicalRouteClient;
+  const receipt = await client.getTransactionReceipt({hash: input.txHash as Hex});
+  if (receipt.status !== "success") throw new Error("The Marketplace publication transaction reverted");
+
+  const expectedPrice = parseUnits(String(input.pricePerUnitUsdc), 6);
+  const matchingEvent = parseEventLogs({
+    abi: canonicalLedgerAbi,
+    eventName: "ServicePublished",
+    logs: receipt.logs as never,
+    strict: false
+  }).find((event) => (
+    event.address.toLowerCase() === runtime.ledger.toLowerCase()
+    && event.args.serviceId === BigInt(input.chainServiceId as number)
+    && event.args.publisher?.toLowerCase() === input.publisherAddress.toLowerCase()
+    && event.args.endpointHash?.trim().toLowerCase() === input.endpointHash.trim().toLowerCase()
+    && event.args.pricePerUnit === expectedPrice
+  ));
+  if (!matchingEvent) {
+    throw new Error("The transaction does not contain the submitted Marketplace publication");
+  }
+
+  const onchain = await client.readContract({
+    address: runtime.ledger as Address,
+    abi: canonicalLedgerAbi,
+    functionName: "services",
+    args: [BigInt(input.chainServiceId)]
+  }) as readonly [Address, string, bigint, boolean];
+  if (
+    onchain[0].toLowerCase() !== input.publisherAddress.toLowerCase()
+    || onchain[1].trim().toLowerCase() !== input.endpointHash.trim().toLowerCase()
+    || onchain[2] !== expectedPrice
+    || !onchain[3]
+  ) {
+    throw new Error("The submitted Marketplace route is not active or does not match the on-chain service");
+  }
+}
+
+export async function publishServiceRoutes(inputs: ServiceInput[]) {
+  if (inputs.length === 0 || inputs.length > 50) throw new Error("between 1 and 50 service routes are required");
   return updateStore((store) => {
-    const manifest = buildServiceManifest(input);
-    const service = {
-      id: input.chainServiceId ? String(input.chainServiceId) : crypto.randomUUID(),
-      chainServiceId: input.chainServiceId ?? null,
-      publisherAddress: input.publisherAddress,
-      name: input.name,
-      endpointHash: input.endpointHash,
-      pricePerUnitUsdc: input.pricePerUnitUsdc,
-      manifest,
-      active: true,
-      featured: Boolean(input.featured),
-      txHash: input.txHash ?? null,
-      createdAt: new Date().toISOString(),
-      archivedAt: null,
-      archiveReason: null
-    };
+    return inputs.map((input) => {
+      const manifest = buildServiceManifest(input);
+      const hasOnchainRoute = input.chainServiceId !== undefined && input.chainServiceId !== null;
+      if (hasOnchainRoute && (input.settlementChainId === undefined || input.settlementChainId === null)) {
+        throw new Error("settlementChainId is required for an on-chain marketplace route");
+      }
+      if (!hasOnchainRoute && input.settlementChainId !== undefined && input.settlementChainId !== null) {
+        throw new Error("chainServiceId is required when settlementChainId is provided");
+      }
+      const settlementChainId = hasOnchainRoute
+        ? requireMarketplaceSettlementChain(input.settlementChainId as number)
+        : null;
+      // Each ledger has its own service-id counter, so the local id is chain-scoped
+      // to avoid Arc #1 colliding with Base #1 or Arbitrum #1.
+      const id = hasOnchainRoute
+        ? `${settlementChainId}:${input.chainServiceId}`
+        : crypto.randomUUID();
+      const service = {
+        id,
+        chainServiceId: input.chainServiceId ?? null,
+        settlementChainId,
+        publisherAddress: input.publisherAddress,
+        name: input.name,
+        endpointHash: input.endpointHash,
+        pricePerUnitUsdc: input.pricePerUnitUsdc,
+        manifest,
+        active: true,
+        featured: Boolean(input.featured),
+        txHash: input.txHash ?? null,
+        createdAt: new Date().toISOString(),
+        archivedAt: null,
+        archiveReason: null
+      };
 
-    const existingIndex = store.services.findIndex(
-      (item) => item.id === service.id || (service.chainServiceId !== null && item.chainServiceId === service.chainServiceId)
-    );
-    if (existingIndex >= 0) store.services[existingIndex] = service;
-    else store.services.push(service);
-    pushNotification(store, {
-      operatorAddress: service.publisherAddress,
-      title: "API published",
-      detail: `${service.name} · ${service.pricePerUnitUsdc} USDC per call`,
-      kind: "system"
+      const existingIndex = store.services.findIndex(
+        (item) => item.id === service.id || (
+          service.chainServiceId !== null
+          && item.chainServiceId === service.chainServiceId
+          && (item.settlementChainId ?? config.arc.chainId) === settlementChainId
+        )
+      );
+      if (existingIndex >= 0) store.services[existingIndex] = service;
+      else store.services.push(service);
+      pushNotification(store, {
+        operatorAddress: service.publisherAddress,
+        title: "API published",
+        detail: `${service.name} · ${service.pricePerUnitUsdc} USDC per call`,
+        kind: "system"
+      });
+      return service;
     });
-
-    return service;
   });
+}
+
+function requireMarketplaceSettlementChain(chainId: number) {
+  const supported = new Set([
+    config.arc.chainId,
+    config.base.sepoliaChainId,
+    config.arbitrum.sepoliaChainId
+  ]);
+  if (!supported.has(chainId)) {
+    throw new Error(`Chain ${chainId} is not enabled for Nexora marketplace settlement`);
+  }
+  return chainId;
 }
 
 export async function featureService(input: {serviceId: string; operatorAddress: string}) {

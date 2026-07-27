@@ -1,8 +1,9 @@
 import {useState} from "react";
 import {useAccount} from "wagmi";
-import {chainLabel, contractAddressesForChain, publishX402Service} from "@/lib/contracts";
+import {CheckCircle2, Loader2} from "lucide-react";
+import {contractAddressesForChain, publishX402Service} from "@/lib/contracts";
 import {apiPost} from "@/lib/api";
-import {shortAddress} from "@/lib/arc";
+import {marketplaceSettlementChains, shortAddress, switchToChain} from "@/lib/arc";
 
 const serviceTemplates = [
   {
@@ -204,8 +205,7 @@ const serviceTemplates = [
 ] as const;
 
 export function PublishServiceForm() {
-  const {address, chain, isConnected} = useAccount();
-  const x402LedgerConfigured = Boolean(contractAddressesForChain(chain?.id).x402Ledger);
+  const {address, isConnected} = useAccount();
   const [name, setName] = useState("");
   const [endpointHash, setEndpointHash] = useState("");
   const [price, setPrice] = useState("0.025");
@@ -213,6 +213,9 @@ export function PublishServiceForm() {
   const [description, setDescription] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [status, setStatus] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [selectedChainIds, setSelectedChainIds] = useState<number[]>(marketplaceSettlementChains.map((chain) => chain.id));
+  const [publishedChainIds, setPublishedChainIds] = useState<number[]>([]);
   const platformFeeBps = 200;
 
   function applyTemplate(index: string) {
@@ -226,6 +229,7 @@ export function PublishServiceForm() {
   }
 
   async function publish() {
+    if (publishing) return;
     if (!isConnected || !address) {
       setStatus("Connect your wallet before publishing a service.");
       return;
@@ -234,29 +238,63 @@ export function PublishServiceForm() {
       setStatus("Add a service name and endpoint hash before publishing.");
       return;
     }
-    setStatus(x402LedgerConfigured ? `Publishing service on ${chainLabel(chain?.id)}...` : "Publishing service to Nexora registry...");
-    try {
-      const chainResult = x402LedgerConfigured ? await publishX402Service({endpointHash, pricePerUnitUsdc: price}) : null;
-      await apiPost("/api/marketplace/services", {
-        publisherAddress: address,
-        name,
-        endpointHash,
-        pricePerUnitUsdc: Number(price),
-        chainServiceId: chainResult?.chainServiceId ?? null,
-        txHash: chainResult?.txHash ?? null,
-        manifestKind,
-        description,
-        platformFeeBps,
-        webhookUrl: webhookUrl || null
-      });
-      setStatus(
-        chainResult
-          ? `Service #${chainResult.chainServiceId} submitted from ${shortAddress(address)}: ${chainResult.txHash}`
-          : `Service published from ${shortAddress(address)}. It is saved as a draft until on-chain publishing is available.`
-      );
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Publish failed");
+    const targetChains = marketplaceSettlementChains.filter((chain) => selectedChainIds.includes(chain.id));
+    if (targetChains.length === 0) {
+      setStatus("Select at least one settlement network.");
+      return;
     }
+    const unconfigured = targetChains.filter((chain) => !contractAddressesForChain(chain.id).x402Ledger);
+    if (unconfigured.length > 0) {
+      setStatus(`Marketplace ledger configuration is missing for ${unconfigured.map((chain) => chain.name).join(", ")}.`);
+      return;
+    }
+
+    setPublishing(true);
+    setPublishedChainIds([]);
+    const completed: number[] = [];
+    try {
+      for (const [index, target] of targetChains.entries()) {
+        setStatus(`Route ${index + 1} of ${targetChains.length}: confirm the switch to ${target.name}, then publish the service.`);
+        await switchToChain(target);
+        const chainResult = await publishX402Service({
+          endpointHash: endpointHash.trim(),
+          pricePerUnitUsdc: price,
+          chainId: target.id
+        });
+        await apiPost("/api/marketplace/services", {
+          publisherAddress: address,
+          name: name.trim(),
+          endpointHash: endpointHash.trim(),
+          pricePerUnitUsdc: Number(price),
+          chainServiceId: chainResult.chainServiceId,
+          settlementChainId: target.id,
+          txHash: chainResult.txHash,
+          manifestKind,
+          description,
+          platformFeeBps,
+          webhookUrl: webhookUrl || null
+        });
+        completed.push(target.id);
+        setPublishedChainIds([...completed]);
+      }
+      setStatus(`Published ${name.trim()} from ${shortAddress(address)} on ${targetChains.map((chain) => chain.name).join(", ")}.`);
+    } catch (error) {
+      const prefix = completed.length > 0
+        ? `${completed.length} of ${targetChains.length} routes were published and saved. `
+        : "";
+      setStatus(`${prefix}${error instanceof Error ? error.message : "Marketplace publishing failed."}`);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function toggleSettlementChain(chainId: number) {
+    if (publishing) return;
+    setSelectedChainIds((current) => (
+      current.includes(chainId)
+        ? current.filter((value) => value !== chainId)
+        : [...current, chainId]
+    ));
   }
 
   return (
@@ -334,8 +372,39 @@ export function PublishServiceForm() {
         Price per unit in USDC
         <input className="field" value={price} onChange={(event) => setPrice(event.target.value)} />
       </label>
-      <button type="button" onClick={publish} className="action-button" disabled={!isConnected}>
-        {x402LedgerConfigured ? `Publish x402 service on ${chainLabel(chain?.id)}` : "Publish service"}
+      <fieldset className="grid gap-3">
+        <legend className="text-sm text-slate-300">USDC settlement networks</legend>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {marketplaceSettlementChains.map((target) => {
+            const selected = selectedChainIds.includes(target.id);
+            const published = publishedChainIds.includes(target.id);
+            return (
+              <button
+                key={target.id}
+                type="button"
+                onClick={() => toggleSettlementChain(target.id)}
+                disabled={publishing}
+                aria-pressed={selected}
+                className={`flex min-h-12 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${
+                  selected
+                    ? "border-mint/35 bg-mint/10 text-white"
+                    : "border-white/[0.1] bg-white/[0.04] text-slate-400 hover:border-mint/25"
+                }`}
+              >
+                <span>
+                  <span className="block font-semibold">{target.name}</span>
+                  <span className="mt-1 block text-xs text-slate-500">USDC · Ledger route</span>
+                </span>
+                {published || selected ? <CheckCircle2 size={16} className={published ? "text-mint" : "text-slate-400"} /> : null}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-xs leading-5 text-slate-500">Each selected network creates its own on-chain service ID. Your wallet will request one network switch and publication transaction per route.</span>
+      </fieldset>
+      <button type="button" onClick={publish} className="action-button" disabled={!isConnected || publishing || selectedChainIds.length === 0}>
+        {publishing ? <Loader2 size={16} className="animate-spin" /> : null}
+        {publishing ? "Publishing routes…" : `Publish on ${selectedChainIds.length} network${selectedChainIds.length === 1 ? "" : "s"}`}
       </button>
       {status ? <p className="break-all rounded-md border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300">{status}</p> : null}
     </form>

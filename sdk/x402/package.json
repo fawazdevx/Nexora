@@ -1,7 +1,7 @@
 {
   "name": "@nexorafi/x402",
-  "version": "0.2.0",
-  "description": "Nexora x402 facilitator SDK and middleware for Arc USDC paid APIs.",
+  "version": "0.3.0",
+  "description": "Nexora x402 v1/v2 facilitator SDK and middleware for USDC paid APIs on Arc, Base, and Arbitrum.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -19,7 +19,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "peerDependencies": {
     "typescript": ">=5.0.0"

@@ -2,9 +2,9 @@ import {useEffect, useMemo, useState} from "react";
 import {AlertTriangle, CalendarClock, Clock, Copy, Database, Gauge, Loader2, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Timer, Users, Wallet, X} from "lucide-react";
 import toast from "react-hot-toast";
 import {useAccount} from "wagmi";
-import {chainLabel, contractAddressesForChain, writeAgentPolicy} from "@/lib/contracts";
-import {apiPost} from "@/lib/api";
-import {shortAddress} from "@/lib/arc";
+import {chainLabel, contractAddressesForChain, isNexoraPolicyChain, writeAgentPolicy} from "@/lib/contracts";
+import {apiPost, type AppSnapshot} from "@/lib/api";
+import {botChainTestnetWagmiChain, shortAddress} from "@/lib/arc";
 import {AgentPicker} from "@/components/AgentPicker";
 import {AgentAvatar} from "@/components/AgentAvatar";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
@@ -21,7 +21,10 @@ const POLICY_PRESETS: Array<{key: string; name: string; hint: string; icon: type
 export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: string; onSelectAgent?: (id: string) => void} = {}) {
   const {address, chain, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
+  const selectedChainId = chain?.id;
+  const isBotPolicy = selectedChainId === botChainTestnetWagmiChain.id;
   const chainContracts = useMemo(() => contractAddressesForChain(chain?.id), [chain?.id]);
+  const policyChainReady = isNexoraPolicyChain(chain?.id);
   const contractOptions = useMemo(() => [
     {label: "x402 payments", address: chainContracts.x402Ledger, description: "Marketplace API payments and settlement"},
     {label: "Reputation", address: chainContracts.reputation, description: "Operator reputation updates"},
@@ -29,6 +32,17 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   ].filter((item): item is {label: string; address: string; description: string} => Boolean(item.address?.startsWith("0x"))), [chainContracts]);
   const knownContracts = useMemo(() => new Set(contractOptions.map((item) => item.address.toLowerCase())), [contractOptions]);
   const agents = useMemo(() => snapshot.data?.agents ?? [], [snapshot.data?.agents]);
+  const circleAgents = useMemo(() => agents.filter((agent) => agent.walletKind !== "external_eoa"), [agents]);
+  const storedBotAgent = useMemo(() => (
+    address
+      ? agents.find((agent) => (
+        agent.walletKind === "external_eoa"
+        && agent.operatorAddress.toLowerCase() === address.toLowerCase()
+        && agent.chainWallets?.some((wallet) => wallet.chainId === botChainTestnetWagmiChain.id)
+      ))
+      : undefined
+  ), [address, agents]);
+  const draftBotAgent = useMemo(() => address ? externalBotAgentDraft(address) : undefined, [address]);
 
   const [internalId, setInternalId] = useState("");
   const agentId = selectedAgentId ?? internalId;
@@ -49,7 +63,26 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
 
-  const selectedAgent = agents.find((agent) => agent.id === agentId);
+  const selectedAgent = isBotPolicy
+    ? storedBotAgent ?? draftBotAgent
+    : circleAgents.find((agent) => agent.id === agentId);
+  const arcChainId = Number(import.meta.env.VITE_ARC_CHAIN_ID ?? 5042002);
+  const selectedChainWallet = selectedAgent?.chainWallets?.find((wallet) => wallet.chainId === selectedChainId)
+    ?? (selectedChainId === arcChainId && selectedAgent
+      ? {
+        address: selectedAgent.address,
+        circleWalletId: selectedAgent.circleWalletId ?? null,
+        chainId: selectedChainId,
+        chain: chainLabel(selectedChainId),
+        circleBlockchain: "ARC-TESTNET",
+        status: selectedAgent.circleWalletStatus,
+        updatedAt: selectedAgent.createdAt
+      }
+      : null);
+  const selectedDeployment = selectedAgent?.policy.deployments?.find((deployment) => deployment.chainId === selectedChainId)
+    ?? (selectedChainId === arcChainId && selectedAgent?.policy.txHash
+      ? {chainId: selectedChainId, txHash: selectedAgent.policy.txHash, updatedAt: selectedAgent.createdAt}
+      : null);
   const contractItems = splitAddresses(contractAllowlist);
   const recipientItems = splitAddresses(recipientAllowlist);
   const serviceItems = splitIdentifiers(serviceAllowlist);
@@ -84,11 +117,17 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       listKey(recipientAllowlist) !== listKey(selectedAgent.policy.recipientAllowlist.join("\n")) ||
       listKey(serviceAllowlist) !== listKey((selectedAgent.policy.v2?.serviceAllowlist ?? []).join("\n"))
     : false;
-  const canSave = Boolean(selectedAgent) && (dirty || !selectedAgent?.policy.txHash);
+  const canSave = Boolean(selectedAgent) && (dirty || !selectedDeployment);
 
   useEffect(() => {
-    if (!agentId && agents[0]) setAgentId(agents[0].id);
-  }, [agents, agentId, setAgentId]);
+    if (isBotPolicy) {
+      if (storedBotAgent && agentId !== storedBotAgent.id) setAgentId(storedBotAgent.id);
+      return;
+    }
+    if ((!agentId || !circleAgents.some((agent) => agent.id === agentId)) && circleAgents[0]) {
+      setAgentId(circleAgents[0].id);
+    }
+  }, [circleAgents, agentId, isBotPolicy, setAgentId, storedBotAgent]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -169,11 +208,11 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
     return out;
   }, [selectedAgent, dailyLimit, transactionCap, weeklyLimit, monthlyLimit, maxUnitsPerRequest, cooldownSeconds, expiresAt, requireOnchainPolicy, contractAllowlist, recipientAllowlist, serviceAllowlist, contractItems.length, recipientItems.length, serviceItems.length]);
 
-  const onchainFootgun = requireOnchainPolicy && Boolean(selectedAgent) && !selectedAgent?.address;
+  const onchainFootgun = requireOnchainPolicy && Boolean(selectedAgent) && !selectedChainWallet?.address;
 
   async function copyToOtherAgents() {
-    if (!address || !selectedAgent) return;
-    const targets = agents.filter((agent) => agent.id !== selectedAgent.id);
+    if (!address || !selectedAgent || isBotPolicy) return;
+    const targets = circleAgents.filter((agent) => agent.id !== selectedAgent.id);
     if (targets.length === 0) {
       toast.error("No other agents to copy to.");
       return;
@@ -190,6 +229,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             transactionCapUsdc: Number(transactionCap),
             contractAllowlist: contractItems,
             recipientAllowlist: recipientItems,
+            chainId: selectedChainId,
             policyV2: v2,
             txHash: null
           })
@@ -211,7 +251,13 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       return;
     }
     if (!selectedAgent) {
-      toast.error("Create or select an agent wallet before saving a policy.");
+      toast.error(isBotPolicy ? "Connect the BOT EOA that will sign payments." : "Create or select an agent wallet before saving a policy.");
+      return;
+    }
+    if (selectedChainWallet?.address && !policyChainReady) {
+      toast.error(isBotPolicy
+        ? "BOT policy contracts are not configured in this frontend yet. Add the deployed policy registry address and restart the app."
+        : `On-chain policies aren't available on ${chainLabel(chain?.id)}. Switch to Arc, Arbitrum, or Base to save this policy.`);
       return;
     }
     if (!hasPremiumAutomation && hasPremiumPolicySettings({
@@ -227,13 +273,19 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       return;
     }
     setSaving(true);
-    const toastId = toast.loading(selectedAgent.address ? `Saving policy on ${chainLabel(chain?.id)}…` : "Saving pending policy…");
+    const toastId = toast.loading(selectedChainWallet?.address ? `Saving policy on ${chainLabel(chain?.id)}…` : "Saving pending policy…");
     try {
-      const txHash = selectedAgent.address
+      const policyAgent = isBotPolicy
+        ? await apiPost<AppSnapshot["agents"][number]>("/api/agents/external-eoa", {
+            operatorAddress: address,
+            chainId: botChainTestnetWagmiChain.id
+          })
+        : selectedAgent;
+      const txHash = selectedChainWallet?.address
         ? await writeAgentPolicy({
-            agentWallet: selectedAgent.address,
-            operatorAddress: selectedAgent.operatorAddress,
-            arcName: selectedAgent.arcName,
+            agentWallet: selectedChainWallet.address,
+            operatorAddress: isBotPolicy ? address : policyAgent.operatorAddress,
+            arcName: policyAgent.arcName,
             dailyLimitUsdc: dailyLimit,
             transactionCapUsdc: transactionCap,
             contractAllowlist: contractItems,
@@ -252,12 +304,13 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
           })
         : null;
 
-      await apiPost(`/api/agents/${selectedAgent.id}/policies`, {
+      await apiPost(`/api/agents/${encodeURIComponent(policyAgent.id)}/policies`, {
         operatorAddress: address,
         dailyLimitUsdc: Number(dailyLimit),
         transactionCapUsdc: Number(transactionCap),
         contractAllowlist: contractItems,
         recipientAllowlist: recipientItems,
+        chainId: selectedChainId,
         policyV2: policyV2Payload({
           weeklyLimit,
           monthlyLimit,
@@ -271,7 +324,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       });
 
       await snapshot.refetch();
-      toast.success(txHash ? "Policy saved on-chain" : "Pending policy saved", {id: toastId});
+      toast.success(txHash ? `${isBotPolicy ? "BOT EOA" : "Agent"} policy saved on-chain` : "Pending policy saved", {id: toastId});
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Policy update failed", {id: toastId});
     } finally {
@@ -292,6 +345,24 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
 
   return (
     <div className="mt-6 space-y-5">
+      {isConnected && !policyChainReady ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber/25 bg-amber/10 p-3.5 text-[13px] leading-5 text-amber">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <span>
+            {isBotPolicy
+              ? "BOT Chain payment support is enabled, but this frontend does not have the BOT policy registry address. Add the deployed address before saving policies."
+              : `${chainLabel(chain?.id)} does not have a configured Nexora policy registry. Switch to Arc, Arbitrum, or Base to save an on-chain agent policy.`}
+          </span>
+        </div>
+      ) : null}
+      {isConnected && isBotPolicy && policyChainReady ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-cyan/25 bg-cyan/10 p-3.5 text-[13px] leading-5 text-cyan">
+          <ShieldCheck size={16} className="mt-0.5 shrink-0" />
+          <span>
+            BOT mode uses your connected EOA as the policy-controlled wallet. Nexora checks this policy before relaying a signed Permit2 payment to Meridian, then records spend and reputation after settlement.
+          </span>
+        </div>
+      ) : null}
       {/* Agent context */}
       <div className="surface flex flex-wrap items-center justify-between gap-3 p-4">
         <div className="flex min-w-0 items-center gap-3">
@@ -301,18 +372,18 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.1] bg-white/[0.04] text-slate-500"><ShieldCheck size={18} /></span>
           )}
           <div className="min-w-0">
-            <p className="truncate text-base font-semibold text-white">{selectedAgent ? selectedAgent.arcName ?? shortAddress(selectedAgent.operatorAddress) : "No agent selected"}</p>
-            <p className="font-mono text-[13px] text-slate-400">{selectedAgent?.address ? shortAddress(selectedAgent.address) : selectedAgent ? "Circle pending" : address ? shortAddress(address) : "Connect wallet"}</p>
+            <p className="truncate text-base font-semibold text-white">{selectedAgent ? isBotPolicy ? "Connected BOT EOA" : selectedAgent.arcName ?? shortAddress(selectedAgent.operatorAddress) : "No agent selected"}</p>
+            <p className="font-mono text-[13px] text-slate-400">{selectedChainWallet?.address ? shortAddress(selectedChainWallet.address) : selectedAgent ? `${chainLabel(selectedChainId)} wallet pending` : address ? shortAddress(address) : "Connect wallet"}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {selectedAgent ? (
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${selectedAgent.policy.txHash ? "border-mint/25 bg-mint/10 text-mint" : "border-amber/25 bg-amber/10 text-amber"}`}>
-              <span className={`h-2 w-2 rounded-full ${selectedAgent.policy.txHash ? "bg-mint" : "bg-amber"}`} />
-              {selectedAgent.policy.txHash ? "On-chain" : "Saved"}
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${selectedDeployment ? "border-mint/25 bg-mint/10 text-mint" : "border-amber/25 bg-amber/10 text-amber"}`}>
+              <span className={`h-2 w-2 rounded-full ${selectedDeployment ? "bg-mint" : "bg-amber"}`} />
+              {selectedDeployment ? `On-chain · ${chainLabel(selectedChainId)}` : "Saved off-chain"}
             </span>
           ) : null}
-          {selectedAgent && agents.length > 1 ? (
+          {selectedAgent && !isBotPolicy && circleAgents.length > 1 ? (
             <button type="button" onClick={() => void copyToOtherAgents()} disabled={copying} className="secondary-button min-h-9 px-3 py-1.5 text-xs">
               {copying ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
               Copy to others
@@ -322,11 +393,21 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
         </div>
       </div>
 
-      {/* Agent picker */}
+      {/* Policy subject */}
       <div>
-        <p className="mb-2 text-sm font-medium text-slate-300">Agent</p>
-        <AgentPicker agents={agents} value={selectedAgent} onChange={setAgentId} />
-        {agents.length === 0 ? (
+        <p className="mb-2 text-sm font-medium text-slate-300">{isBotPolicy ? "Policy wallet" : "Agent"}</p>
+        {isBotPolicy ? (
+          <div className="surface flex items-center justify-between gap-3 p-3.5">
+            <span>
+              <span className="block text-sm font-semibold text-white">Connected EOA</span>
+              <span className="mt-1 block font-mono text-xs text-slate-400">{address ?? "Connect a wallet to configure BOT policy controls"}</span>
+            </span>
+            <span className="rounded-full border border-cyan/25 bg-cyan/10 px-2.5 py-1 text-xs font-semibold text-cyan">External signer</span>
+          </div>
+        ) : (
+          <AgentPicker agents={circleAgents} value={selectedAgent} onChange={setAgentId} />
+        )}
+        {!isBotPolicy && circleAgents.length === 0 ? (
           <p className="mt-2 text-[13px] leading-5 text-slate-400">No agent is available yet. Create an agent wallet first; once Circle returns the wallet, it will appear here.</p>
         ) : null}
       </div>
@@ -533,9 +614,13 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
               <RotateCcw size={15} /> Reset
             </button>
           ) : null}
-          <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent || saving || !canSave}>
+          <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent || saving || !canSave || (Boolean(selectedAgent?.address) && !policyChainReady)}>
             {saving ? <Loader2 size={16} className="animate-spin" /> : null}
-            {saving ? "Saving policy…" : selectedAgent?.address ? `Save on ${chainLabel(chain?.id)}` : "Save pending policy"}
+            {saving
+              ? "Saving policy…"
+              : selectedAgent?.address
+                ? policyChainReady ? `Save ${isBotPolicy ? "EOA policy" : `on ${chainLabel(chain?.id)}`}` : `Not available on ${chainLabel(chain?.id)}`
+                : "Save pending policy"}
           </button>
         </div>
       </div>
@@ -900,6 +985,49 @@ function policyV2Payload(input: {
     serviceAllowlist: input.serviceAllowlist,
     previousServiceAllowlist: input.previousServiceAllowlist,
     requireOnchainPolicy: input.requireOnchainPolicy
+  };
+}
+
+function externalBotAgentDraft(address: string): AppSnapshot["agents"][number] {
+  const now = new Date().toISOString();
+  return {
+    id: `external-eoa-${botChainTestnetWagmiChain.id}-${address.toLowerCase()}`,
+    walletKind: "external_eoa",
+    operatorAddress: address,
+    arcName: null,
+    address,
+    circleWalletSetId: null,
+    circleWalletId: null,
+    circleAccountType: null,
+    settlementMode: null,
+    circleWalletStatus: "external_eoa_ready",
+    chainWallets: [{
+      chainId: botChainTestnetWagmiChain.id,
+      chain: botChainTestnetWagmiChain.name,
+      circleBlockchain: "EXTERNAL-EVM",
+      address,
+      circleWalletId: null,
+      status: "ready",
+      updatedAt: now
+    }],
+    createdAt: now,
+    policy: {
+      dailyLimitUsdc: 400,
+      transactionCapUsdc: 45,
+      contractAllowlist: [],
+      recipientAllowlist: [],
+      active: true,
+      deployments: [],
+      v2: {
+        weeklyLimitUsdc: 0,
+        monthlyLimitUsdc: 0,
+        maxUnitsPerRequest: 0,
+        cooldownSeconds: 0,
+        expiresAt: null,
+        serviceAllowlist: [],
+        requireOnchainPolicy: false
+      }
+    }
   };
 }
 

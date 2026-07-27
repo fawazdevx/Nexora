@@ -1,8 +1,8 @@
-import {createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, keccak256, parseEventLogs, parseUnits, stringToHex, type Address, type Hash} from "viem";
+import {createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, keccak256, pad, parseEventLogs, parseUnits, stringToHex, type Address, type Hash} from "viem";
 import {CurrencyAmount, Percent, Token, TradeType} from "@synthra-swap/sdk/core";
 import {Pool, Route} from "@synthra-swap/sdk/v3";
 import {SwapRouter as SynthraUniversalSwapRouter, Trade as SynthraUniversalTrade, UniswapTrade} from "@synthra-swap/sdk/universal-router";
-import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, baseSepoliaWagmiChain, supportedChains} from "@/lib/arc";
+import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, baseSepoliaWagmiChain, botChainTestnetWagmiChain, supportedChains} from "@/lib/arc";
 import {apiPost} from "@/lib/api";
 
 export const policyRegistryAbi = [
@@ -120,6 +120,16 @@ export const policyRegistryAbi = [
 
 export const x402LedgerAbi = [
   {
+    type: "event",
+    name: "ServicePublished",
+    inputs: [
+      {name: "serviceId", type: "uint256", indexed: true},
+      {name: "publisher", type: "address", indexed: true},
+      {name: "pricePerUnit", type: "uint256", indexed: false},
+      {name: "endpointHash", type: "string", indexed: false}
+    ]
+  },
+  {
     type: "function",
     name: "nextServiceId",
     stateMutability: "view",
@@ -135,6 +145,28 @@ export const x402LedgerAbi = [
       {name: "pricePerUnit", type: "uint256"}
     ],
     outputs: [{name: "serviceId", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "publishServices",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "endpointHashes", type: "string[]"},
+      {name: "pricesPerUnit", type: "uint256[]"}
+    ],
+    outputs: [{name: "serviceIds", type: "uint256[]"}]
+  },
+  {
+    type: "function",
+    name: "services",
+    stateMutability: "view",
+    inputs: [{name: "serviceId", type: "uint256"}],
+    outputs: [
+      {name: "publisher", type: "address"},
+      {name: "endpointHash", type: "string"},
+      {name: "pricePerUnit", type: "uint256"},
+      {name: "active", type: "bool"}
+    ]
   },
   {
     type: "function",
@@ -657,6 +689,19 @@ export function contractAddressesForChain(chainId?: number) {
       saveEarnDeployBlock: import.meta.env.VITE_ARB_ONE_SAVE_EARN_DEPLOY_BLOCK
     };
   }
+  if (id === botChainTestnetWagmiChain.id) {
+    // BOT x402 settles through Meridian. Nexora uses only the policy and
+    // reputation contracts here; there is no BOT-specific Marketplace ledger.
+    return {
+      usdc: envAddress(import.meta.env.VITE_BOTCHAIN_TESTNET_USDT_ADDRESS, ""),
+      policyRegistry: envAddress(import.meta.env.VITE_BOTCHAIN_TESTNET_POLICY_REGISTRY_ADDRESS, ""),
+      x402Ledger: envAddress(import.meta.env.VITE_BOTCHAIN_TESTNET_X402_LEDGER_ADDRESS, ""),
+      reputation: envAddress(import.meta.env.VITE_BOTCHAIN_TESTNET_REPUTATION_ADDRESS, ""),
+      saveEarnVault: "",
+      nexoraEscrow: "",
+      saveEarnDeployBlock: undefined
+    };
+  }
   return {
     usdc: import.meta.env.VITE_USDC_ADDRESS,
     policyRegistry: import.meta.env.VITE_POLICY_REGISTRY_ADDRESS,
@@ -676,11 +721,29 @@ function chainById(chainId?: number) {
   if (chainId === arbitrumSepoliaWagmiChain.id) return arbitrumSepoliaWagmiChain;
   if (chainId === baseSepoliaWagmiChain.id) return baseSepoliaWagmiChain;
   if (chainId === arbitrumOneWagmiChain.id) return arbitrumOneWagmiChain;
+  if (chainId === botChainTestnetWagmiChain.id) return botChainTestnetWagmiChain;
   return supportedChains.find((chain) => chain.id === chainId) ?? supportedChains[0];
 }
 
 export function isGatewayTestnetChain(chainId?: number) {
   return chainId === arcTestnet.id || chainId === arbitrumSepoliaWagmiChain.id || chainId === baseSepoliaWagmiChain.id;
+}
+
+// True only where Nexora's on-chain policy suite is configured. BOT Chain is
+// included only after its dedicated contracts are deployed and all addresses
+// are supplied; otherwise policy writes remain disabled there.
+export function isNexoraContractChain(chainId?: number) {
+  const contracts = contractAddressesForChain(chainId);
+  return Boolean(
+    contracts.policyRegistry?.startsWith("0x")
+    && contracts.x402Ledger?.startsWith("0x")
+    && contracts.reputation?.startsWith("0x")
+  );
+}
+
+/** True when the connected chain has a policy registry available for writes. */
+export function isNexoraPolicyChain(chainId?: number) {
+  return Boolean(contractAddressesForChain(chainId).policyRegistry?.startsWith("0x"));
 }
 
 async function connectedChainId() {
@@ -1230,23 +1293,90 @@ function expiryTimestamp(value?: string | null) {
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
 }
 
-export async function publishX402Service(input: {endpointHash: string; pricePerUnitUsdc: string}): Promise<{txHash: Hash; chainServiceId: number}> {
-  const {client, chainId, contracts} = await walletClient();
+export async function publishX402Service(input: {endpointHash: string; pricePerUnitUsdc: string; chainId: number}): Promise<{txHash: Hash; chainServiceId: number}> {
+  const {client, account, chainId, contracts} = await walletClient();
+  if (chainId !== input.chainId) {
+    throw new Error(`Switch to ${chainLabel(input.chainId)} before publishing this route.`);
+  }
   const address = requireAddress(contracts.x402Ledger, "x402 ledger address");
-  const chainServiceId = await (await publicClient(chainId)).readContract({
-    address,
-    abi: x402LedgerAbi,
-    functionName: "nextServiceId"
-  });
-
   const txHash = await client.writeContract({
     address,
     abi: x402LedgerAbi,
     functionName: "publishService",
     args: [input.endpointHash, parseUnits(input.pricePerUnitUsdc || "0", 6)]
   });
+  const receipt = await waitForSuccessfulReceipt(chainId, txHash, "Marketplace service publication");
+  const published = parseEventLogs({
+    abi: x402LedgerAbi,
+    eventName: "ServicePublished",
+    logs: receipt.logs
+  }).find((log) => (
+    log.address.toLowerCase() === address.toLowerCase()
+    && log.args.publisher.toLowerCase() === account.toLowerCase()
+    && log.args.endpointHash === input.endpointHash
+  ));
+  if (!published) throw new Error("Marketplace service publication event was not found.");
+  return {txHash, chainServiceId: Number(published.args.serviceId)};
+}
 
-  return {txHash, chainServiceId: Number(chainServiceId)};
+export async function publishX402Services(input: {
+  services: Array<{endpointHash: string; pricePerUnitUsdc: string}>;
+  chainId: number;
+}): Promise<Array<{txHash: Hash; chainServiceId: number}>> {
+  if (input.services.length === 0) return [];
+  const {client, account, chainId, contracts} = await walletClient();
+  if (chainId !== input.chainId) {
+    throw new Error(`Switch to ${chainLabel(input.chainId)} before publishing these routes.`);
+  }
+  const address = requireAddress(contracts.x402Ledger, "x402 ledger address");
+  const prices = input.services.map((service) => parseUnits(service.pricePerUnitUsdc || "0", 6));
+  const args = [input.services.map((service) => service.endpointHash), prices] as const;
+  const simulation = await (await publicClient(chainId)).simulateContract({
+      account,
+      address,
+      abi: x402LedgerAbi,
+      functionName: "publishServices",
+      args
+    }).catch(() => {
+      throw new Error(`${chainLabel(chainId)} Marketplace ledger does not support batched route publishing yet. Complete the ledger upgrade before publishing these routes.`);
+    });
+  const txHash = await client.writeContract(simulation.request);
+  const receipt = await waitForSuccessfulReceipt(chainId, txHash, "Marketplace route publication");
+  const published = parseEventLogs({
+    abi: x402LedgerAbi,
+    eventName: "ServicePublished",
+    logs: receipt.logs
+  }).filter((log) => (
+    log.address.toLowerCase() === address.toLowerCase()
+    && log.args.publisher.toLowerCase() === account.toLowerCase()
+  ));
+  if (published.length !== input.services.length) {
+    throw new Error("Not all Marketplace service publication events were found.");
+  }
+  for (const [index, event] of published.entries()) {
+    const expected = input.services[index];
+    if (!expected || event.args.endpointHash !== expected.endpointHash || event.args.pricePerUnit !== prices[index]) {
+      throw new Error("Marketplace publication events did not match the requested service order.");
+    }
+  }
+  return published.map((event) => ({txHash, chainServiceId: Number(event.args.serviceId)}));
+}
+
+export async function readX402MarketplaceService(input: {chainId: number; chainServiceId: number}) {
+  const contracts = contractAddressesForChain(input.chainId);
+  const ledger = requireAddress(contracts.x402Ledger, "x402 ledger address");
+  const result = await (await publicClient(input.chainId)).readContract({
+    address: ledger,
+    abi: x402LedgerAbi,
+    functionName: "services",
+    args: [BigInt(input.chainServiceId)]
+  });
+  return {
+    publisher: result[0],
+    endpointHash: result[1],
+    pricePerUnitUsdc: formatUnits(result[2], 6),
+    active: result[3]
+  };
 }
 
 export async function settleX402Request(input: {chainServiceId: number; requestHash: `0x${string}`; payer: string; units: number; amountUsdc: string; memo?: NexoraStructuredMemo | null}) {
@@ -1483,6 +1613,93 @@ export async function depositGatewayUsdc(amountUsdc: string): Promise<{approveHa
   return {approveHash, depositHash};
 }
 
+export type GatewayBurnIntent = {
+  maxBlockHeight: string;
+  maxFee: string;
+  spec: {
+    version: number;
+    sourceDomain: number;
+    destinationDomain: number;
+    sourceContract: `0x${string}`;
+    destinationContract: `0x${string}`;
+    sourceToken: `0x${string}`;
+    destinationToken: `0x${string}`;
+    sourceDepositor: `0x${string}`;
+    destinationRecipient: `0x${string}`;
+    sourceSigner: `0x${string}`;
+    destinationCaller: `0x${string}`;
+    value: string;
+    salt: `0x${string}`;
+    hookData: `0x${string}`;
+  };
+};
+
+export async function signGatewayBurnIntent(burnIntent: GatewayBurnIntent): Promise<Hash> {
+  const {client, account} = await walletClient();
+  const canonicalIntent = normalizeGatewayBurnIntentForSigning(burnIntent);
+  const signer = `0x${canonicalIntent.spec.sourceSigner.slice(-40)}`.toLowerCase();
+  if (signer !== account.toLowerCase()) {
+    throw new Error("The connected wallet does not match the Gateway source signer.");
+  }
+  return client.signTypedData({
+    account,
+    domain: {
+      name: "GatewayWallet",
+      version: "1"
+    },
+    types: {
+      TransferSpec: [
+        {name: "version", type: "uint32"},
+        {name: "sourceDomain", type: "uint32"},
+        {name: "destinationDomain", type: "uint32"},
+        {name: "sourceContract", type: "bytes32"},
+        {name: "destinationContract", type: "bytes32"},
+        {name: "sourceToken", type: "bytes32"},
+        {name: "destinationToken", type: "bytes32"},
+        {name: "sourceDepositor", type: "bytes32"},
+        {name: "destinationRecipient", type: "bytes32"},
+        {name: "sourceSigner", type: "bytes32"},
+        {name: "destinationCaller", type: "bytes32"},
+        {name: "value", type: "uint256"},
+        {name: "salt", type: "bytes32"},
+        {name: "hookData", type: "bytes"}
+      ],
+      BurnIntent: [
+        {name: "maxBlockHeight", type: "uint256"},
+        {name: "maxFee", type: "uint256"},
+        {name: "spec", type: "TransferSpec"}
+      ]
+    },
+    primaryType: "BurnIntent",
+    message: {
+      maxBlockHeight: BigInt(canonicalIntent.maxBlockHeight),
+      maxFee: BigInt(canonicalIntent.maxFee),
+      spec: {
+        ...canonicalIntent.spec,
+        value: BigInt(canonicalIntent.spec.value)
+      }
+    }
+  });
+}
+
+function normalizeGatewayBurnIntentForSigning(burnIntent: GatewayBurnIntent): GatewayBurnIntent {
+  const normalized = structuredClone(burnIntent);
+  const fields = [
+    "sourceContract", "destinationContract", "sourceToken", "destinationToken",
+    "sourceDepositor", "destinationRecipient", "sourceSigner", "destinationCaller", "salt"
+  ] as const;
+  for (const field of fields) {
+    const value = normalized.spec[field];
+    if (/^0x[a-fA-F0-9]{40}$/.test(value)) {
+      (normalized.spec[field] as `0x${string}`) = pad(value.toLowerCase() as `0x${string}`, {size: 32});
+    }
+    if (!/^0x[a-fA-F0-9]{64}$/.test(normalized.spec[field])) {
+      throw new Error("Gateway could not prepare this transfer. Refresh the estimate and try again.");
+    }
+  }
+  return normalized;
+}
+
 export async function payTreasuryUsdc(input: {treasury: string; amountUsdc: string}): Promise<{txHash: Hash; chainId: number}> {
   const {client, chainId, contracts} = await walletClient();
   if (chainId !== arcTestnet.id) {
@@ -1503,10 +1720,13 @@ export async function payTreasuryUsdc(input: {treasury: string; amountUsdc: stri
   return {txHash, chainId};
 }
 
-export async function fundAgentWalletUsdc(input: {agentAddress: string; amountUsdc: string}): Promise<{txHash: Hash; chainId: number}> {
+export async function fundAgentWalletUsdc(input: {agentAddress: string; amountUsdc: string; chainId: number}): Promise<{txHash: Hash; chainId: number}> {
   const {client, chainId, contracts} = await walletClient();
-  if (chainId !== arcTestnet.id) {
-    throw new Error("Switch to Arc Testnet to fund an agent wallet.");
+  if (!isGatewayTestnetChain(input.chainId)) {
+    throw new Error("Agent funding is available on Arc Testnet, Base Sepolia, and Arbitrum Sepolia.");
+  }
+  if (chainId !== input.chainId) {
+    throw new Error(`Switch to ${chainLabel(input.chainId)} to fund this agent wallet.`);
   }
   const usdc = requireAddress(contracts.usdc, "USDC token address");
   const agentAddress = requireAddress(input.agentAddress, "Agent wallet address");
@@ -1589,8 +1809,8 @@ export async function readSaveEarnPosition(account: string) {
   };
 }
 
-export async function readUsdcBalance(account: string) {
-  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+export async function readUsdcBalance(account: string, requestedChainId?: number) {
+  const chainId = requestedChainId ?? await connectedChainId().catch(() => arcTestnet.id);
   const contracts = contractAddressesForChain(chainId);
   const usdc = requireAddress(contracts.usdc, "USDC token address");
   const client = await publicClient(chainId);
@@ -1601,6 +1821,20 @@ export async function readUsdcBalance(account: string) {
     args: [account as Address]
   });
   return formatUnits(balance, 6);
+}
+
+export async function readAgentChainBalances(account: string, chainId: number) {
+  const chain = chainById(chainId);
+  const client = await publicClient(chainId);
+  const [usdc, native] = await Promise.all([
+    readUsdcBalance(account, chainId),
+    client.getBalance({address: account as Address})
+  ]);
+  return {
+    usdc,
+    native: formatUnits(native, chain.nativeCurrency.decimals),
+    nativeSymbol: chain.nativeCurrency.symbol
+  };
 }
 
 async function readSaveEarnEventTotals(account: string, vault: Address, fromBlock: bigint) {

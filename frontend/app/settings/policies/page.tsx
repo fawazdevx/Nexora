@@ -9,7 +9,7 @@ import {EmptyState} from "@/components/EmptyState";
 import {PolicySimulationPanel} from "@/components/PolicySimulationPanel";
 import {RiskAlertsPanel} from "@/components/RiskAlertsPanel";
 import {AgentCommandModal} from "@/components/AgentCommandModal";
-import {arcTestnet, shortAddress} from "@/lib/arc";
+import {arcTestnet, shortAddress, supportedChains} from "@/lib/arc";
 import {timeAgo} from "@/lib/time";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
@@ -24,8 +24,9 @@ export default function PoliciesPage() {
   const {isConnected} = useAccount();
   const snapshot = useAppSnapshot();
   const agents = snapshot.data?.agents ?? [];
+  const managedAgents = agents.filter((agent) => agent.walletKind !== "external_eoa");
   const activePolicies = agents.filter((agent) => agent.policy.active);
-  const onchainPolicies = agents.filter((agent) => agent.policy.txHash);
+  const onchainPolicies = agents.filter((agent) => (agent.policy.deployments?.length ?? 0) > 0 || agent.policy.txHash);
   const pendingApprovals = (snapshot.data?.approvalRequests ?? []).filter((request) => request.status === "pending");
   const riskAlerts = snapshot.data?.riskAlerts ?? [];
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -67,7 +68,7 @@ export default function PoliciesPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatMetric variant="panel" icon={ShieldCheck} label="Active policies" value={activePolicies.length} loading={snapshot.isLoading} accent />
         <StatMetric variant="panel" icon={Gauge} label="On-chain saves" value={onchainPolicies.length} loading={snapshot.isLoading} />
-        <StatMetric variant="panel" icon={Bot} label="Managed agents" value={agents.length} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={Bot} label="Managed agents" value={managedAgents.length} loading={snapshot.isLoading} />
         <StatMetric variant="panel" icon={ClipboardCheck} label="Open actions" value={pendingApprovals.length + riskAlerts.length} loading={snapshot.isLoading} />
       </div>
 
@@ -126,9 +127,9 @@ export default function PoliciesPage() {
                           <div className="flex items-center gap-3">
                             <AgentAvatar seed={agent.address ?? agent.id} label={agent.arcName ?? agent.address} size={38} />
                             <div className="min-w-0">
-                              <p className="text-[15px] font-semibold text-white">{agent.arcName ?? shortAddress(agent.operatorAddress)}</p>
+                              <p className="text-[15px] font-semibold text-white">{agent.walletKind === "external_eoa" ? "BOT EOA policy" : agent.arcName ?? shortAddress(agent.operatorAddress)}</p>
                               <p className="mt-0.5 flex items-center gap-1.5 font-mono text-[13px] text-slate-400">
-                                {agent.address ? shortAddress(agent.address) : "Circle pending"}
+                                {agent.address ? shortAddress(agent.address) : agent.walletKind === "external_eoa" ? "External EOA" : "Circle pending"}
                                 {agent.createdAt ? <span className="text-slate-500">· {timeAgo(agent.createdAt)}</span> : null}
                               </p>
                             </div>
@@ -158,8 +159,8 @@ export default function PoliciesPage() {
                       <div className="flex min-w-0 items-center gap-3">
                         <AgentAvatar seed={agent.address ?? agent.id} label={agent.arcName ?? agent.address} size={38} />
                         <div className="min-w-0">
-                          <p className="truncate text-[15px] font-semibold text-white">{agent.arcName ?? shortAddress(agent.operatorAddress)}</p>
-                          <p className="mt-0.5 font-mono text-[13px] text-slate-400">{agent.address ? shortAddress(agent.address) : "Circle pending"}</p>
+                          <p className="truncate text-[15px] font-semibold text-white">{agent.walletKind === "external_eoa" ? "BOT EOA policy" : agent.arcName ?? shortAddress(agent.operatorAddress)}</p>
+                          <p className="mt-0.5 font-mono text-[13px] text-slate-400">{agent.address ? shortAddress(agent.address) : agent.walletKind === "external_eoa" ? "External EOA" : "Circle pending"}</p>
                         </div>
                       </div>
                       <StatusPill agent={agent} />
@@ -258,17 +259,24 @@ function formatCooldown(seconds: number) {
 }
 
 function StatusPill({agent}: {agent: Agent}) {
-  const onchain = Boolean(agent.policy.txHash);
+  const deployments = agent.policy.deployments?.length
+    ? agent.policy.deployments
+    : agent.policy.txHash
+      ? [{chainId: arcTestnet.id, txHash: agent.policy.txHash}]
+      : [];
+  const onchain = deployments.length > 0;
+  const deployment = deployments[0];
+  const explorer = supportedChains.find((chain) => chain.id === deployment?.chainId)?.blockExplorers.default.url ?? arcTestnet.explorerUrl;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${onchain ? "border-mint/25 bg-mint/10 text-mint" : "border-amber/25 bg-amber/10 text-amber"}`}>
       <span className="relative flex h-2 w-2">
         {onchain ? <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint opacity-75" /> : null}
         <span className={`relative inline-flex h-2 w-2 rounded-full ${onchain ? "bg-mint" : "bg-amber"}`} />
       </span>
-      {onchain ? "On-chain" : "Saved"}
-      {onchain && agent.policy.txHash ? (
+      {onchain ? `On-chain · ${deployments.length}` : "Saved"}
+      {deployment ? (
         <a
-          href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${agent.policy.txHash}`}
+          href={`${explorer.replace(/\/$/, "")}/tx/${deployment.txHash}`}
           target="_blank"
           rel="noreferrer"
           onClick={(event) => event.stopPropagation()}

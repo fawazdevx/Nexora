@@ -26,6 +26,7 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
 
     event TreasuryUpdated(address indexed treasury);
     event FeeUpdated(uint16 feeBps);
+    event UsdcMigrated(address indexed previousUsdc, address indexed newUsdc);
     event ServicePublished(uint256 indexed serviceId, address indexed publisher, uint256 pricePerUnit, string endpointHash);
     event ServiceStatusUpdated(uint256 indexed serviceId, bool active);
     event RequestSettled(
@@ -54,6 +55,9 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
     error ZeroUnits();
     error PolicyRejected();
     error TransferFailed();
+    error InvalidUsdc();
+    error UnexpectedUsdc();
+    error InvalidBatch();
 
     function initialize(
         address initialOwner,
@@ -64,7 +68,7 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
         uint16 feeBps_
     ) external {
         __Nexora_init(initialOwner);
-        require(usdc_ != address(0), "ZERO_USDC");
+        _validateUsdc(usdc_);
         require(policyRegistry_ != address(0), "ZERO_POLICY");
         require(reputation_ != address(0), "ZERO_REPUTATION");
         require(treasury_ != address(0), "ZERO_TREASURY");
@@ -92,17 +96,50 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
         emit FeeUpdated(newFeeBps);
     }
 
+    /// @notice Atomically replace a misconfigured payment token while guarding
+    ///         against upgrading the wrong proxy or chain.
+    /// @dev Intended to be called through upgradeToAndCall so the implementation
+    ///      and token correction happen in one owner transaction.
+    function migrateUsdc(address expectedCurrentUsdc, address newUsdc) external onlyOwner {
+        if (address(usdc) != expectedCurrentUsdc) revert UnexpectedUsdc();
+        _validateUsdc(newUsdc);
+        address previousUsdc = address(usdc);
+        usdc = IERC20(newUsdc);
+        emit UsdcMigrated(previousUsdc, newUsdc);
+    }
+
     function publishService(string calldata endpointHash, uint256 pricePerUnit) external returns (uint256 serviceId) {
+        return _publishService(msg.sender, endpointHash, pricePerUnit);
+    }
+
+    /// @notice Publish multiple routes owned by the same publisher in one
+    ///         transaction. Every service still receives its own id and event.
+    function publishServices(string[] calldata endpointHashes, uint256[] calldata pricesPerUnit)
+        external
+        returns (uint256[] memory serviceIds)
+    {
+        uint256 length = endpointHashes.length;
+        if (length == 0 || length != pricesPerUnit.length || length > 50) revert InvalidBatch();
+        serviceIds = new uint256[](length);
+        for (uint256 i = 0; i < length; i++) {
+            serviceIds[i] = _publishService(msg.sender, endpointHashes[i], pricesPerUnit[i]);
+        }
+    }
+
+    function _publishService(address publisher, string calldata endpointHash, uint256 pricePerUnit)
+        internal
+        returns (uint256 serviceId)
+    {
         require(pricePerUnit > 0, "ZERO_PRICE");
         require(bytes(endpointHash).length > 0, "EMPTY_ENDPOINT");
         serviceId = nextServiceId++;
         services[serviceId] = Service({
-            publisher: msg.sender,
+            publisher: publisher,
             endpointHash: endpointHash,
             pricePerUnit: pricePerUnit,
             active: true
         });
-        emit ServicePublished(serviceId, msg.sender, pricePerUnit, endpointHash);
+        emit ServicePublished(serviceId, publisher, pricePerUnit, endpointHash);
     }
 
     function setServiceStatus(uint256 serviceId, bool active) external {
@@ -190,5 +227,11 @@ contract X402FacilitatorLedger is NexoraUpgradeable {
             grossAmount,
             platformFee
         );
+    }
+
+    function _validateUsdc(address candidate) internal view {
+        if (candidate == address(0) || candidate.code.length == 0) revert InvalidUsdc();
+        (bool ok, bytes memory result) = candidate.staticcall(abi.encodeWithSignature("decimals()"));
+        if (!ok || result.length < 32 || abi.decode(result, (uint256)) != 6) revert InvalidUsdc();
     }
 }

@@ -68,11 +68,33 @@ export const arbitrumOneWagmiChain = {
   testnet: false
 } as const;
 
+// BOT Chain testnet. x402 payments here settle via Permit2 through Meridian's
+// facilitator (USDT has no EIP-3009), not Nexora's Arc self-settle path.
+export const botChainTestnetWagmiChain = {
+  id: Number(import.meta.env.VITE_BOTCHAIN_TESTNET_CHAIN_ID ?? 968),
+  name: "BOT Chain Testnet",
+  nativeCurrency: {name: "BOT", symbol: "tBOT", decimals: 18},
+  rpcUrls: {
+    default: {http: [import.meta.env.VITE_BOTCHAIN_TESTNET_RPC_URL ?? "https://rpc.bohr.life"]}
+  },
+  blockExplorers: {
+    default: {name: "BOT Chain Explorer", url: import.meta.env.VITE_BOTCHAIN_TESTNET_EXPLORER_URL ?? "https://rpc.bohr.life"}
+  },
+  testnet: true
+} as const;
+
 export const supportedChains = [
   arcTestnetWagmiChain,
-  ...(import.meta.env.VITE_ENABLE_ARBITRUM_SEPOLIA === "true" ? [arbitrumSepoliaWagmiChain] : []),
-  ...(import.meta.env.VITE_ENABLE_BASE_SEPOLIA === "true" ? [baseSepoliaWagmiChain] : []),
-  ...(import.meta.env.VITE_ENABLE_ARBITRUM_ONE === "true" ? [arbitrumOneWagmiChain] : [])
+  arbitrumSepoliaWagmiChain,
+  baseSepoliaWagmiChain,
+  ...(import.meta.env.VITE_ENABLE_ARBITRUM_ONE === "true" ? [arbitrumOneWagmiChain] : []),
+  ...(import.meta.env.VITE_ENABLE_BOTCHAIN_TESTNET === "true" ? [botChainTestnetWagmiChain] : [])
+] as const;
+
+export const marketplaceSettlementChains = [
+  arcTestnetWagmiChain,
+  baseSepoliaWagmiChain,
+  arbitrumSepoliaWagmiChain
 ] as const;
 
 export const arcNamesConfig = {

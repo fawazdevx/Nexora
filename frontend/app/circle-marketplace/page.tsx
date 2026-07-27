@@ -8,6 +8,7 @@ import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
 import {apiGet, apiPost} from "@/lib/api";
 import {shortAddress} from "@/lib/arc";
+import {preferredAgentChainId, savePreferredAgentChainId} from "@/lib/agent-chain-preferences";
 import {navigateTo} from "@/lib/router";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 
@@ -16,9 +17,12 @@ type Readiness = {
   configured: boolean;
   status: string;
   defaultChain: string;
+  supportedChains: string[];
   maxPaymentUsdc: number;
   message: string;
 };
+
+type Agent = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["agents"][number];
 
 type CircleService = {
   name: string;
@@ -28,6 +32,7 @@ type CircleService = {
   publisherAddress: string | null;
   acceptedChains: string[];
   paymentScheme: string | null;
+  method: string;
   inputSchema: unknown;
 };
 
@@ -74,12 +79,12 @@ type PaymentIntent = {
   receiptId?: string | null;
 };
 
-const chainOptions = ["ARC", "BASE", "BASE_SEPOLIA", "ARB", "ARB_SEPOLIA", "MATIC"];
+const defaultChainOptions = ["ARC", "BASE_SEPOLIA", "ARB_SEPOLIA"];
 
 export default function CircleMarketplacePage() {
   const {address, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
-  const agents = snapshot.data?.agents ?? [];
+  const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [query, setQuery] = useState("market data");
   const [services, setServices] = useState<CircleService[]>([]);
@@ -87,7 +92,7 @@ export default function CircleMarketplacePage() {
   const [inspection, setInspection] = useState<CircleService | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
-  const [chain, setChain] = useState("BASE");
+  const [chain, setChain] = useState("BASE_SEPOLIA");
   const [payload, setPayload] = useState("{\n  \"query\": \"USDC\"\n}");
   const [guard, setGuard] = useState<GuardResult | null>(null);
   const [createdIntent, setCreatedIntent] = useState<PaymentIntent | null>(null);
@@ -96,6 +101,7 @@ export default function CircleMarketplacePage() {
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
   const selectedService = inspection ?? services.find((service) => service.url === selectedUrl) ?? null;
   const intentQueueEnabled = readiness?.enabled === true;
+  const chainOptions = readiness?.supportedChains?.length ? readiness.supportedChains : defaultChainOptions;
   const data = useMemo(() => parsePayload(payload), [payload]);
 
   useEffect(() => {
@@ -122,8 +128,13 @@ export default function CircleMarketplacePage() {
   useEffect(() => {
     if (!selectedAgent) return;
     setSelectedAgentId((current) => current || selectedAgent.id);
-    setWalletAddress((current) => current || selectedAgent.address || "");
-  }, [selectedAgent]);
+    const preferredChain = circleChainForId(preferredAgentChainId(selectedAgent));
+    const preferredRoute = chainOptions.includes(preferredChain) ? preferredChain : chain;
+    if (preferredRoute !== chain) setChain(preferredRoute);
+    const chainWallet = selectedAgent.chainWallets?.find((wallet) => wallet.circleBlockchain === circleBlockchain(preferredRoute))
+      ?? (preferredRoute === "ARC" ? {address: selectedAgent.address} : null);
+    setWalletAddress(chainWallet?.address ?? "");
+  }, [selectedAgent, chain, chainOptions]);
 
   async function searchServices() {
     setBusy("search");
@@ -152,7 +163,11 @@ export default function CircleMarketplacePage() {
       const result = await apiPost<{service: CircleService}>("/api/circle/agent-marketplace/inspect", {serviceUrl});
       setInspection(result.service);
       setSelectedUrl(result.service.url);
-      if (result.service.acceptedChains[0]) setChain(result.service.acceptedChains[0]);
+      const preferredRoute = selectedAgent ? circleChainForId(preferredAgentChainId(selectedAgent)) : null;
+      const supportedRoute = preferredRoute && result.service.acceptedChains.includes(preferredRoute)
+        ? preferredRoute
+        : result.service.acceptedChains.find((item) => chainOptions.includes(item));
+      if (supportedRoute) setChain(supportedRoute);
     } catch (error) {
       toast.error(circleUiMessage(error, "Circle service details are temporarily unavailable."));
     } finally {
@@ -281,7 +296,9 @@ export default function CircleMarketplacePage() {
                   </span>
                 </span>
                 <span className="mt-3 flex flex-wrap gap-2">
-                  {service.acceptedChains.slice(0, 4).map((item) => <span key={item} className="status-pill">{item}</span>)}
+                  {service.acceptedChains.slice(0, 6).map((item) => <span key={item} className="status-pill">{circleNetworkLabel(item)}</span>)}
+                  {isMainnetOnly(service.acceptedChains) ? <span className="status-pill border-cyan/25 bg-cyan/10 text-cyan">Mainnet service</span> : null}
+                  {!service.acceptedChains.some((item) => chainOptions.includes(item)) ? <span className="status-pill border-amber/25 bg-amber/10 text-amber">No compatible wallet route</span> : null}
                 </span>
               </button>
             ))}
@@ -332,14 +349,20 @@ export default function CircleMarketplacePage() {
 
             <label className="grid gap-2 text-sm font-semibold text-slate-300">
               Agent wallet address
-              <input value={walletAddress} onChange={(event) => setWalletAddress(event.target.value)} className="field font-mono text-xs" placeholder="0x..." />
+              <input value={walletAddress} readOnly className="field font-mono text-xs" placeholder="Select a ready agent wallet" />
             </label>
 
             <label className="grid gap-2 text-sm font-semibold text-slate-300">
               Payment chain
-              <select value={chain} onChange={(event) => setChain(event.target.value)} className="field bg-slate-950 text-white">
+              <select value={chain} onChange={(event) => {
+                const value = event.target.value;
+                setChain(value);
+                if (selectedAgent) {
+                  savePreferredAgentChainId(selectedAgent, chainIdForCircleChain(value));
+                  setWalletAddress(agentWalletAddressForCircleChain(selectedAgent, value));
+                }
+              }} className="field bg-slate-950 text-white">
                 {chainOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-                {selectedService?.acceptedChains.filter((item) => !chainOptions.includes(item)).map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
 
@@ -353,7 +376,7 @@ export default function CircleMarketplacePage() {
                 {busy === "guard" ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
                 Run guard
               </button>
-              <button type="button" onClick={() => void createIntent()} className="action-button flex-1" disabled={Boolean(busy) || !selectedService || !intentQueueEnabled}>
+              <button type="button" onClick={() => void createIntent()} className="action-button flex-1" disabled={Boolean(busy) || !selectedService || !intentQueueEnabled || guard?.allowed !== true}>
                 {busy === "intent" ? <Loader2 size={16} className="animate-spin" /> : <ReceiptText size={16} />}
                 Create payment intent
               </button>
@@ -366,6 +389,32 @@ export default function CircleMarketplacePage() {
       {createdIntent ? <IntentPanel intent={createdIntent} /> : null}
     </div>
   );
+}
+
+function circleBlockchain(chain: string) {
+  if (chain === "ARC") return "ARC-TESTNET";
+  if (chain === "BASE_SEPOLIA") return "BASE-SEPOLIA";
+  if (chain === "ARB_SEPOLIA") return "ARB-SEPOLIA";
+  if (chain === "BASE") return "BASE";
+  if (chain === "ARB") return "ARB";
+  return chain.replaceAll("_", "-");
+}
+
+function circleChainForId(chainId: number) {
+  if (chainId === 5042002) return "ARC";
+  if (chainId === 84532) return "BASE_SEPOLIA";
+  if (chainId === 421614) return "ARB_SEPOLIA";
+  if (chainId === 8453) return "BASE";
+  if (chainId === 42161) return "ARB";
+  return "ARC";
+}
+
+function chainIdForCircleChain(chain: string) {
+  if (chain === "BASE_SEPOLIA") return 84532;
+  if (chain === "ARB_SEPOLIA") return 421614;
+  if (chain === "BASE") return 8453;
+  if (chain === "ARB") return 42161;
+  return 5042002;
 }
 
 function GuardPanel({guard}: {guard: GuardResult}) {
@@ -458,11 +507,12 @@ function StatusPanel({icon: Icon, label, value, loading, accent}: {icon: LucideI
 
 function readinessCopy(readiness: Readiness) {
   if (readiness.configured) return "Circle service payments are ready.";
-  if (readiness.status === "not_logged_in") return "Live service discovery is available. Connect your Circle agent wallet before executing approved payments from Payments.";
-  if (readiness.status === "terms_required") return "Live service discovery is available. Complete Circle wallet setup before executing approved payments from Payments.";
+  if (readiness.status === "managed_wallet_unavailable") return "Service discovery, guards, and approvals are available. Managed execution needs Circle developer-wallet credentials; external Circle Agent Stack wallets can complete approved intents through the Nexora SDK.";
+  if (readiness.status === "not_logged_in") return "Service discovery, guards, and approvals are available. A local Agent Stack wallet can complete an approved intent through the Nexora SDK.";
+  if (readiness.status === "terms_required") return "Service discovery, guards, and approvals are available. Complete the local Circle Agent Stack wallet setup before paying an approved intent.";
   if (readiness.status === "disabled") return "Circle service intake is not enabled for this workspace.";
-  if (readiness.status === "cli_missing") return "Live service discovery is available. Circle wallet execution is not configured for this workspace yet.";
-  return circleUiMessage(readiness.message, "Circle payment execution is temporarily unavailable. You can still search services and queue policy review when service details load.");
+  if (readiness.status === "cli_missing") return "Service discovery, guards, and approvals remain available. Configure managed Circle wallet execution or use the external Agent Stack SDK flow.";
+  return circleUiMessage(readiness.message, "Circle execution is temporarily unavailable. You can still search services, run guards, and queue approvals.");
 }
 
 function circleUiMessage(error: unknown, fallback: string) {
@@ -470,6 +520,34 @@ function circleUiMessage(error: unknown, fallback: string) {
   if (!message) return fallback;
   if (isInternalCircleMessage(message)) return fallback;
   return message;
+}
+
+function circleNetworkLabel(network: string) {
+  const labels: Record<string, string> = {
+    ARC: "Arc Testnet",
+    BASE_SEPOLIA: "Base Sepolia",
+    ARB_SEPOLIA: "Arbitrum Sepolia",
+    BASE: "Base",
+    ARB: "Arbitrum",
+    ETH: "Ethereum",
+    AVAX: "Avalanche",
+    OP: "Optimism",
+    MATIC: "Polygon",
+    UNI: "Unichain"
+  };
+  return labels[network] ?? network.replaceAll("_", " ");
+}
+
+function isMainnetOnly(networks: string[]) {
+  const mainnets = new Set(["BASE", "ARB", "ETH", "AVAX", "OP", "MATIC", "UNI"]);
+  return networks.length > 0 && networks.every((network) => mainnets.has(network));
+}
+
+function agentWalletAddressForCircleChain(agent: Agent, chain: string) {
+  const blockchain = circleBlockchain(chain);
+  return agent.chainWallets?.find((wallet) => wallet.circleBlockchain === blockchain)?.address
+    ?? (chain === "ARC" ? agent.address : null)
+    ?? "";
 }
 
 function isInternalCircleMessage(message: string) {

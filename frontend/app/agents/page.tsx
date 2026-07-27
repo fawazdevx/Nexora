@@ -3,17 +3,18 @@ import {Bot, Check, Coins, Copy, ExternalLink, Gauge, Loader2, Plus, RefreshCw, 
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
 import {apiPost} from "@/lib/api";
+import {circleAgentWalletChainIds, preferredAgentChainId, savePreferredAgentChainId} from "@/lib/agent-chain-preferences";
 import {useArcName} from "@/hooks/useArcName";
 import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
 import {AgentAvatar} from "@/components/AgentAvatar";
 import {EmptyState} from "@/components/EmptyState";
-import {arcTestnet, shortAddress} from "@/lib/arc";
+import {arcTestnet, shortAddress, supportedChains, switchToChain} from "@/lib/arc";
 import {timeAgo} from "@/lib/time";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {navigateTo} from "@/lib/router";
 import {PlanSubscriptionCard} from "@/components/PlanSubscriptionCard";
-import {fundAgentWalletUsdc, readUsdcBalance} from "@/lib/contracts";
+import {fundAgentWalletUsdc, readAgentChainBalances} from "@/lib/contracts";
 
 type Agent = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["agents"][number];
 
@@ -40,7 +41,7 @@ export default function AgentsPage() {
   const {arcName} = useArcName(address);
   const [creating, setCreating] = useState(false);
   const snapshot = useAppSnapshot();
-  const agents = snapshot.data?.agents ?? [];
+  const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
   const existingReadyWallet = agents.find((agent) => agent.operatorAddress.toLowerCase() === address?.toLowerCase() && agent.address);
 
   const readyCount = agents.filter((agent) => Boolean(agent.address) || agent.circleWalletStatus === "ready").length;
@@ -154,11 +155,45 @@ export default function AgentsPage() {
 }
 
 function AgentCard({agent}: {agent: Agent}) {
-  const hasAddress = Boolean(agent.address);
+  const chainWallets = agent.chainWallets?.length
+    ? agent.chainWallets
+    : [{
+      chainId: arcTestnet.id,
+      chain: arcTestnet.name,
+      circleBlockchain: "ARC-TESTNET",
+      address: agent.address,
+      circleWalletId: agent.circleWalletId ?? null,
+      status: agent.circleWalletStatus,
+      updatedAt: agent.createdAt
+    }];
+  const hasAddress = chainWallets.some((wallet) => Boolean(wallet.address));
   const visual = statusVisual(agent.circleWalletStatus, hasAddress);
   const name = agent.arcName ?? agent.address ?? shortAddress(agent.operatorAddress);
   const contracts = agent.policy.contractAllowlist;
   const recipients = agent.policy.recipientAllowlist;
+  const [backfilling, setBackfilling] = useState(false);
+  const missingChains = supportedChains.filter((chain) => (
+    circleAgentWalletChainIds.includes(chain.id as typeof circleAgentWalletChainIds[number])
+    && !chainWallets.some((wallet) => wallet.chainId === chain.id)
+  ));
+
+  async function addMissingWallets() {
+    setBackfilling(true);
+    const toastId = toast.loading("Adding missing agent chain wallets…");
+    try {
+      const result = await apiPost<{added: Array<{chain: string}>; failed: Array<{chain: string; error: string}>}>(`/api/agents/${agent.id}/chain-wallets/backfill`, {operatorAddress: agent.operatorAddress});
+      if (result.failed.length > 0) {
+        toast.error(`Added ${result.added.length} wallet(s). ${result.failed.map((item) => `${item.chain}: ${item.error}`).join(" ")}`, {id: toastId});
+      } else {
+        toast.success(result.added.length ? `Added ${result.added.map((item) => item.chain).join(" and ")} wallets.` : "This agent already has every enabled wallet.", {id: toastId});
+      }
+      window.location.reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not add chain wallets", {id: toastId});
+    } finally {
+      setBackfilling(false);
+    }
+  }
 
   return (
     <article className="panel relative overflow-hidden">
@@ -187,27 +222,36 @@ function AgentCard({agent}: {agent: Agent}) {
       <p className="mb-4 text-sm text-slate-400">{statusCopy(agent.circleWalletStatus)}</p>
 
       <div className="grid gap-2 text-sm text-slate-300">
-        <div className="surface flex items-center justify-between gap-2 px-3 py-2">
-          <span className="text-slate-400">Wallet</span>
-          <span className="flex items-center gap-1.5">
-            <b className="text-white">{agent.address ? shortAddress(agent.address) : "Circle pending"}</b>
-            {agent.address ? (
-              <>
-                <CopyButton value={agent.address} label="wallet address" />
-                <a href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/address/${agent.address}`} target="_blank" rel="noreferrer" className="text-slate-500 transition hover:text-orchid" aria-label="View on explorer">
-                  <ExternalLink size={13} />
-                </a>
-              </>
-            ) : null}
-          </span>
-        </div>
-        <div className="surface flex items-center justify-between gap-2 px-3 py-2">
-          <span className="text-slate-400">Circle ID</span>
-          <span className="flex items-center gap-1.5">
-            <b className="text-white">{agent.circleWalletId ? shortAddress(agent.circleWalletId) : "pending"}</b>
-            {agent.circleWalletId ? <CopyButton value={agent.circleWalletId} label="Circle ID" /> : null}
-          </span>
-        </div>
+        {chainWallets.map((wallet) => {
+          const chain = supportedChains.find((item) => item.id === wallet.chainId);
+          return (
+            <div key={wallet.chainId} className="surface px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-slate-300">{wallet.chain}</span>
+                <span className={wallet.address ? "text-mint" : "text-amber"}>{wallet.address ? "Ready" : "Pending"}</span>
+              </div>
+              <div className="mt-1.5 flex items-center justify-between gap-2 text-xs">
+                <span className="text-slate-500">Wallet</span>
+                <span className="flex items-center gap-1.5">
+                  <b className="font-mono text-white">{wallet.address ? shortAddress(wallet.address) : "Circle pending"}</b>
+                  {wallet.address ? <CopyButton value={wallet.address} label={`${wallet.chain} wallet address`} /> : null}
+                  {wallet.address && chain ? (
+                    <a href={`${chain.blockExplorers.default.url.replace(/\/$/, "")}/address/${wallet.address}`} target="_blank" rel="noreferrer" className="text-slate-500 transition hover:text-orchid" aria-label={`View ${wallet.chain} wallet`}>
+                      <ExternalLink size={13} />
+                    </a>
+                  ) : null}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+                <span className="text-slate-500">Circle ID</span>
+                <span className="flex items-center gap-1.5">
+                  <b className="font-mono text-white">{wallet.circleWalletId ? shortAddress(wallet.circleWalletId) : "pending"}</b>
+                  {wallet.circleWalletId ? <CopyButton value={wallet.circleWalletId} label={`${wallet.chain} Circle ID`} /> : null}
+                </span>
+              </div>
+            </div>
+          );
+        })}
         <div className="grid grid-cols-2 gap-2">
           <div className="surface flex items-center justify-between px-3 py-2"><span className="text-slate-400">Account</span><b className="text-white">{agent.circleAccountType ?? "Unknown"}</b></div>
           <div className="surface flex items-center justify-between px-3 py-2"><span className="text-slate-400">Mode</span><b className="text-white">{agent.settlementMode === "eoa_memo" ? "EOA memo" : agent.settlementMode === "sca_direct" ? "SCA direct" : "Not set"}</b></div>
@@ -223,7 +267,14 @@ function AgentCard({agent}: {agent: Agent}) {
         <AllowlistGroup label="Recipients" items={recipients} />
       </div>
 
-      {agent.address ? <AgentFundingControls agent={agent} /> : null}
+      {hasAddress ? <AgentFundingControls agent={agent} /> : null}
+
+      {missingChains.length > 0 ? (
+        <button type="button" onClick={() => void addMissingWallets()} className="secondary-button mt-3 w-full justify-center" disabled={backfilling}>
+          {backfilling ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+          {backfilling ? "Adding chain wallets…" : `Add ${missingChains.map((chain) => chain.name).join(" + ")} wallets`}
+        </button>
+      ) : null}
 
       <button type="button" onClick={() => navigateTo("/settings/policies")} className="secondary-button mt-4 w-full justify-center">
         <Settings size={15} />
@@ -234,24 +285,43 @@ function AgentCard({agent}: {agent: Agent}) {
 }
 
 function AgentFundingControls({agent}: {agent: Agent}) {
+  const {chain: connectedChain} = useAccount();
+  const chainWallets = (agent.chainWallets?.length
+    ? agent.chainWallets
+    : [{
+      chainId: arcTestnet.id,
+      chain: arcTestnet.name,
+      circleBlockchain: "ARC-TESTNET",
+      address: agent.address,
+      circleWalletId: agent.circleWalletId ?? null,
+      status: agent.circleWalletStatus,
+      updatedAt: agent.createdAt
+    }]).filter((wallet) => Boolean(wallet.address));
+  const [selectedChainId, setSelectedChainId] = useState(() => preferredAgentChainId(agent));
+  const selectedWallet = chainWallets.find((wallet) => wallet.chainId === selectedChainId) ?? chainWallets[0];
+  const selectedChain = supportedChains.find((chain) => chain.id === selectedWallet?.chainId);
   const [amount, setAmount] = useState("0.25");
-  const [balance, setBalance] = useState<string | null>(null);
+  const [balances, setBalances] = useState<{usdc: string; native: string; nativeSymbol: string} | null>(null);
   const [checking, setChecking] = useState(false);
   const [funding, setFunding] = useState(false);
 
   useEffect(() => {
-    if (!agent.address) {
-      setBalance(null);
+    setSelectedChainId(preferredAgentChainId(agent));
+  }, [agent]);
+
+  useEffect(() => {
+    if (!selectedWallet?.address) {
+      setBalances(null);
       return;
     }
     let active = true;
     setChecking(true);
-    readUsdcBalance(agent.address)
+    readAgentChainBalances(selectedWallet.address, selectedWallet.chainId)
       .then((value) => {
-        if (active) setBalance(value);
+        if (active) setBalances(value);
       })
       .catch(() => {
-        if (active) setBalance(null);
+        if (active) setBalances(null);
       })
       .finally(() => {
         if (active) setChecking(false);
@@ -259,13 +329,13 @@ function AgentFundingControls({agent}: {agent: Agent}) {
     return () => {
       active = false;
     };
-  }, [agent.address]);
+  }, [selectedWallet?.address, selectedWallet?.chainId]);
 
   async function refreshBalance() {
-    if (!agent.address) return;
+    if (!selectedWallet?.address) return;
     setChecking(true);
     try {
-      setBalance(await readUsdcBalance(agent.address));
+      setBalances(await readAgentChainBalances(selectedWallet.address, selectedWallet.chainId));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not read agent balance");
     } finally {
@@ -274,7 +344,7 @@ function AgentFundingControls({agent}: {agent: Agent}) {
   }
 
   async function fundAgent() {
-    if (!agent.address) return;
+    if (!selectedWallet?.address || !selectedChain) return;
     const parsedAmount = Number(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       toast.error("Enter a USDC amount greater than zero.");
@@ -283,12 +353,19 @@ function AgentFundingControls({agent}: {agent: Agent}) {
     setFunding(true);
     const toastId = toast.loading(`Funding agent wallet with ${amount} USDC...`);
     try {
-      const result = await fundAgentWalletUsdc({agentAddress: agent.address, amountUsdc: amount});
+      if (connectedChain?.id !== selectedWallet.chainId) {
+        await switchToChain(selectedChain);
+      }
+      const result = await fundAgentWalletUsdc({
+        agentAddress: selectedWallet.address,
+        amountUsdc: amount,
+        chainId: selectedWallet.chainId
+      });
       await refreshBalance();
       toast.success(
         <span>
           Agent funded.{" "}
-          <a href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${result.txHash}`} target="_blank" rel="noreferrer" className="font-semibold text-mint underline-offset-2 hover:underline">
+          <a href={`${selectedChain.blockExplorers.default.url.replace(/\/$/, "")}/tx/${result.txHash}`} target="_blank" rel="noreferrer" className="font-semibold text-mint underline-offset-2 hover:underline">
             View tx
           </a>
         </span>,
@@ -306,15 +383,33 @@ function AgentFundingControls({agent}: {agent: Agent}) {
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-white">
           <Coins size={15} className="shrink-0 text-mint" />
-          <span>Agent USDC</span>
+          <span>Agent funding</span>
         </div>
         <div className="flex items-center gap-2">
-          <b className="text-sm text-mint">{checking ? "Checking..." : balance === null ? "--" : `$${formatUsdc(balance)}`}</b>
+          <b className="text-sm text-mint">{checking ? "Checking..." : balances === null ? "--" : `$${formatUsdc(balances.usdc)}`}</b>
           <button type="button" onClick={() => void refreshBalance()} className="text-slate-500 transition hover:text-white" aria-label="Refresh agent balance" disabled={checking}>
             <RefreshCw size={13} className={checking ? "animate-spin" : ""} />
           </button>
         </div>
       </div>
+      <select
+        className="field mt-3 w-full py-2 text-sm"
+        value={selectedWallet?.chainId ?? ""}
+        onChange={(event) => {
+          const chainId = Number(event.target.value);
+          setSelectedChainId(chainId);
+          savePreferredAgentChainId(agent, chainId);
+        }}
+        aria-label="Agent funding network"
+      >
+        {chainWallets.map((wallet) => <option key={wallet.chainId} value={wallet.chainId}>{wallet.chain}</option>)}
+      </select>
+      {balances && balances.nativeSymbol !== "USDC" ? (
+        <p className={`mt-2 text-xs ${Number(balances.native) > 0 ? "text-slate-500" : "text-amber"}`}>
+          Gas balance: {formatNative(balances.native)} {balances.nativeSymbol}
+          {Number(balances.native) > 0 ? "" : " — send test ETH before autonomous contract calls."}
+        </p>
+      ) : null}
       <div className="mt-3 flex gap-2">
         <input
           className="field min-w-0 flex-1 py-2 text-sm"
@@ -331,6 +426,14 @@ function AgentFundingControls({agent}: {agent: Agent}) {
       </div>
     </div>
   );
+}
+
+function formatNative(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return value;
+  if (parsed === 0) return "0";
+  if (parsed < 0.0001) return parsed.toFixed(8);
+  return parsed.toFixed(4);
 }
 
 function formatUsdc(value: string) {

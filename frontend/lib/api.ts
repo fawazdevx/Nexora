@@ -88,6 +88,7 @@ export async function apiDelete<T>(path: string, body?: unknown): Promise<T> {
 export type AppSnapshot = {
   agents: Array<{
     id: string;
+    walletKind?: "circle_developer" | "external_eoa";
     operatorAddress: string;
     arcName: string | null;
     address: string | null;
@@ -95,6 +96,15 @@ export type AppSnapshot = {
     circleWalletId?: string | null;
     circleAccountType?: "EOA" | "SCA" | null;
     settlementMode?: "eoa_memo" | "sca_direct" | null;
+    chainWallets?: Array<{
+      chainId: number;
+      chain: string;
+      circleBlockchain: string;
+      address: string | null;
+      circleWalletId: string | null;
+      status: string;
+      updatedAt: string;
+    }>;
     circleWalletStatus: string;
     createdAt: string;
     policy: {
@@ -104,6 +114,12 @@ export type AppSnapshot = {
       recipientAllowlist: string[];
       active: boolean;
       txHash?: string | null;
+      deployments?: Array<{
+        chainId: number;
+        txHash: string;
+        policyRegistry?: string | null;
+        updatedAt: string;
+      }>;
       v2?: {
         weeklyLimitUsdc: number;
         monthlyLimitUsdc: number;
@@ -118,6 +134,7 @@ export type AppSnapshot = {
   services: Array<{
     id: string;
     chainServiceId: number | null;
+    settlementChainId?: number | null;
     publisherAddress: string;
     name: string;
     endpointHash: string;
@@ -184,13 +201,16 @@ export type AppSnapshot = {
     } | null;
     txHash?: string | null;
     external?: {
-      provider: "circle_agent_marketplace";
+      provider: "circle_agent_marketplace" | "meridian";
       serviceUrl: string;
       chain: string;
       chainId?: number | null;
       network?: string | null;
       paymentScheme?: string | null;
       resultSummary?: string | null;
+      accountingStatus?: "recorded" | "pending" | null;
+      accountingTxHashes?: string[] | null;
+      assetSymbol?: string | null;
     } | null;
     createdAt: string;
     settledAt?: string | null;
@@ -217,6 +237,7 @@ export type AppSnapshot = {
       chainId?: number | null;
       network?: string | null;
       paymentScheme?: string | null;
+      assetAddress?: string | null;
       inputSchema?: unknown;
     };
     data: Record<string, unknown>;

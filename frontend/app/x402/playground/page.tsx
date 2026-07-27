@@ -9,8 +9,13 @@ import {EmptyState} from "@/components/EmptyState";
 import {JsonViewer, type JsonStatus} from "@/components/JsonViewer";
 import {apiGet, apiPost, apiUrlFor} from "@/lib/api";
 import {navigateTo} from "@/lib/router";
-import {arcTestnet, shortAddress, switchToArc} from "@/lib/arc";
+import {arcTestnet, shortAddress, supportedChains, switchToArc, switchToChain} from "@/lib/arc";
 import {timeAgo} from "@/lib/time";
+import {BotchainPaymentPanel} from "@/components/BotchainPaymentPanel";
+import {SettlementPanel} from "@/components/SettlementPanel";
+import {enabledX402SignNetworks, x402SignNetwork, type X402SignNetwork} from "@/lib/x402-networks";
+import {readAgentChainBalances} from "@/lib/contracts";
+import {userFacingPaymentError} from "@/lib/user-errors";
 
 type Analytics = {
   summary: {
@@ -85,7 +90,7 @@ const endpoints: Array<{method: "GET" | "POST"; path: string}> = [
   {method: "POST", path: "/x402/settle"}
 ];
 
-const sdkSnippet = `npm install @nexorafi/x402
+const sdkSnippet = `npm install @nexorafi/x402@0.3
 
 import { nexoraX402 } from "@nexorafi/x402";
 
@@ -95,7 +100,8 @@ app.get("/paid-report",
     payTo: "0xYourPublisherWallet",
     asset: "0x3600000000000000000000000000000000000000",
     price: "0.05",
-    network: "arc-testnet"
+    network: "arc-testnet",
+    x402Version: 2
   }),
   (_req, res) => res.json({ ok: true })
 );`;
@@ -123,6 +129,30 @@ export default function X402PlaygroundPage() {
   const [query, setQuery] = useState("");
   const [signAmount, setSignAmount] = useState("0.01");
   const [signPayTo, setSignPayTo] = useState("");
+  const [signNetworkId, setSignNetworkId] = useState("arc-testnet");
+  const [protocolVersion, setProtocolVersion] = useState<1 | 2>(2);
+  const [signerBalances, setSignerBalances] = useState<{usdc: string; native: string; nativeSymbol: string} | null>(null);
+  const signNetworks = useMemo(() => enabledX402SignNetworks(), []);
+  const selectedSignNetwork = x402SignNetwork(signNetworkId);
+  const paymentHeaderPreview = useMemo(() => {
+    try {
+      const body = JSON.parse(requestText) as {paymentPayload?: unknown};
+      if (!body.paymentPayload) return null;
+      const payloadVersion = Number((body.paymentPayload as {x402Version?: unknown}).x402Version) === 2 ? 2 : 1;
+      return {
+        name: payloadVersion === 2 ? "PAYMENT-SIGNATURE" : "X-PAYMENT",
+        value: encodeBase64Json(body.paymentPayload)
+      };
+    } catch {
+      return null;
+    }
+  }, [requestText]);
+  const paymentRequiredPreview = useMemo(() => createPaymentRequiredPreview({
+    version: protocolVersion,
+    network: selectedSignNetwork,
+    payTo: isAddress(signPayTo) ? signPayTo : address ?? "",
+    amount: signAmount
+  }), [protocolVersion, selectedSignNetwork, signPayTo, address, signAmount]);
 
   const jsonError = useMemo(() => {
     try {
@@ -174,7 +204,7 @@ export default function X402PlaygroundPage() {
       setAnalytics(analyticsResult);
       setReadiness(readinessResult);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Facilitator console unavailable");
+      toast.error(userFacingPaymentError(error, "Facilitator console unavailable."));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -189,6 +219,24 @@ export default function X402PlaygroundPage() {
   useEffect(() => {
     if (!signPayTo && address) setSignPayTo(address);
   }, [address, signPayTo]);
+
+  useEffect(() => {
+    if (!address || !selectedSignNetwork) {
+      setSignerBalances(null);
+      return;
+    }
+    let active = true;
+    readAgentChainBalances(address, selectedSignNetwork.chainId)
+      .then((value) => {
+        if (active) setSignerBalances(value);
+      })
+      .catch(() => {
+        if (active) setSignerBalances(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [address, selectedSignNetwork]);
 
   async function signRealSample() {
     if (!isConnected || !address) {
@@ -212,8 +260,19 @@ export default function X402PlaygroundPage() {
       return;
     }
 
-    if (chain?.id !== arcTestnet.id) {
-      await switchToArc();
+    const network = x402SignNetwork(signNetworkId);
+    if (!network) {
+      toast.error("Select a supported network.");
+      return;
+    }
+
+    if (chain?.id !== network.chainId) {
+      const target = supportedChains.find((item) => item.id === network.chainId);
+      if (!target) {
+        toast.error(`${network.label} is not enabled in this build.`);
+        return;
+      }
+      await switchToChain(target);
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -233,10 +292,10 @@ export default function X402PlaygroundPage() {
     try {
       const signature = await signTypedDataAsync({
         domain: {
-          name: "USDC",
-          version: "2",
-          chainId: arcTestnet.id,
-          verifyingContract: ARC_USDC_ADDRESS
+          name: network.domainName,
+          version: network.domainVersion,
+          chainId: network.chainId,
+          verifyingContract: network.usdc
         },
         types: {
           TransferWithAuthorization: [
@@ -252,6 +311,8 @@ export default function X402PlaygroundPage() {
         message
       });
       const signedBody = createSignedSampleBody({
+        version: protocolVersion,
+        network,
         from: address,
         to: payTo,
         value: value.toString(),
@@ -267,9 +328,9 @@ export default function X402PlaygroundPage() {
       setSettleResult(null);
       setVerifyStatus(undefined);
       setSettleStatus(undefined);
-      toast.success("Signed x402 sample filled into verify and settle requests.", {id: toastId});
+      toast.success(`Signed x402 v${protocolVersion} sample filled into verify and settle requests.`, {id: toastId});
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Signature rejected", {id: toastId});
+      toast.error(userFacingPaymentError(error, "The payment signature was not completed."), {id: toastId});
     }
   }
 
@@ -291,9 +352,10 @@ export default function X402PlaygroundPage() {
       void refresh();
     } catch (error) {
       const ms = Math.round(performance.now() - startedAt);
-      setVerifyResult({error: error instanceof Error ? error.message : "Verification failed"});
+      const message = userFacingPaymentError(error, "The payment authorization could not be verified.");
+      setVerifyResult({error: message});
       setVerifyStatus({label: "Request failed", tone: "error", detail: `${ms} ms`});
-      toast.error(error instanceof Error ? error.message : "Verification request failed.", {id: toastId});
+      toast.error(message, {id: toastId});
     } finally {
       setRunning(false);
     }
@@ -308,7 +370,7 @@ export default function X402PlaygroundPage() {
     const toastId = toast.loading("Sending settlement request...");
     const startedAt = performance.now();
     try {
-      const result = await apiPost<Record<string, unknown>>("/x402/settle", JSON.parse(settleText));
+      const result = await apiPost<Record<string, unknown>>("/api/x402/facilitator-settle", JSON.parse(settleText));
       const ms = Math.round(performance.now() - startedAt);
       const success = Boolean(result?.success);
       setSettleResult(result);
@@ -317,9 +379,10 @@ export default function X402PlaygroundPage() {
       void refresh();
     } catch (error) {
       const ms = Math.round(performance.now() - startedAt);
-      setSettleResult({error: error instanceof Error ? error.message : "Settlement failed"});
+      const message = userFacingPaymentError(error, "The payment could not be settled.");
+      setSettleResult({error: message});
       setSettleStatus({label: "Request failed", tone: "error", detail: `${ms} ms`});
-      toast.error(error instanceof Error ? error.message : "Settlement failed", {id: toastId});
+      toast.error(message, {id: toastId});
     } finally {
       setSettling(false);
     }
@@ -418,7 +481,7 @@ export default function X402PlaygroundPage() {
             ))}
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <MiniFact icon={<Server size={16} />} label="Network" value="Arc Testnet" />
+            <MiniFact icon={<Server size={16} />} label="Networks" value="Arc · Base · Arbitrum" />
             <MiniFact icon={<ShieldCheck size={16} />} label="Scheme" value="exact" />
             <MiniFact icon={<KeyRound size={16} />} label="Asset" value="USDC" />
           </div>
@@ -432,13 +495,34 @@ export default function X402PlaygroundPage() {
             <p className="section-kicker">Signed demo</p>
             <h2 className="mt-2 text-2xl font-semibold text-white">Generate a real x402 authorization</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-              Sign a small Arc USDC authorization with your connected wallet. Verify should pass immediately. Settle will submit the transferWithAuthorization transaction, so the signing wallet must hold at least this ERC-20 USDC amount.
+              Pick a network and sign a small USDC authorization with your connected wallet. Verify should pass immediately. Settle submits the transferWithAuthorization transaction, so the signing wallet must hold at least this USDC amount — and on Base/Arbitrum the facilitator needs native ETH for gas.
             </p>
           </div>
           <span className="rounded-full border border-amber/25 bg-amber/10 px-3 py-1 text-xs font-semibold text-amber">Testnet USDC</span>
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+        <div className="mt-5 grid gap-3 lg:grid-cols-[0.7fr_1fr_1.4fr_1fr_auto]">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Protocol</span>
+            <select
+              value={protocolVersion}
+              onChange={(event) => setProtocolVersion(Number(event.target.value) as 1 | 2)}
+              className="field mt-2 w-full"
+            >
+              <option value={2}>x402 v2</option>
+              <option value={1}>x402 v1</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Network</span>
+            <select
+              value={signNetworkId}
+              onChange={(event) => setSignNetworkId(event.target.value)}
+              className="field mt-2 w-full"
+            >
+              {signNetworks.map((net) => <option key={net.id} value={net.id}>{net.label}</option>)}
+            </select>
+          </label>
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">payTo</span>
             <input
@@ -465,9 +549,52 @@ export default function X402PlaygroundPage() {
           </div>
         </div>
         <p className="mt-3 text-xs leading-5 text-slate-500">
-          For a no-recipient demo, leave payTo as your own wallet address. Verify proves the signature path. Settle consumes the nonce and creates an Arc transaction.
+          Signer balance: {signerBalances ? `${Number(signerBalances.usdc).toFixed(4)} USDC · ${Number(signerBalances.native).toFixed(6)} ${signerBalances.nativeSymbol}` : "unavailable"} on {selectedSignNetwork?.label ?? "the selected network"}.
+          Settle consumes the nonce. Base and Arbitrum settlement gas is paid by the configured facilitator wallet in ETH.
         </p>
       </section>
+
+      <section className="grid gap-5 xl:grid-cols-3">
+        <div className="panel">
+          <p className="section-kicker">Step 1 · 402</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Payment required</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">The protected API returns this challenge before any paid request is processed.</p>
+          <div className="mt-4">
+            <JsonViewer title="402-response.json" code={JSON.stringify(paymentRequiredPreview, null, 2)} maxHeight="300px" />
+          </div>
+        </div>
+        <div className="panel">
+          <p className="section-kicker">Step 2 · Sign</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Payment header</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">The signed payload is base64 encoded into the version-specific request header.</p>
+          <div className="mt-4">
+            <JsonViewer
+              title="request-headers.json"
+              code={JSON.stringify(paymentHeaderPreview ?? {message: "Sign a sample to generate the header."}, null, 2)}
+              maxHeight="300px"
+            />
+          </div>
+        </div>
+        <div className="panel">
+          <p className="section-kicker">Step 3 · Replay</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Verify and settle</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">Replay the original request with the payment header, then inspect PAYMENT-RESPONSE or X-PAYMENT-RESPONSE.</p>
+          <div className="mt-4">
+            <JsonViewer
+              title="response-headers.json"
+              code={JSON.stringify({
+                expected: protocolVersion === 2 ? "PAYMENT-RESPONSE" : "X-PAYMENT-RESPONSE",
+                settlement: settleResult ?? "Run settlement to inspect the receipt."
+              }, null, 2)}
+              maxHeight="300px"
+            />
+          </div>
+        </div>
+      </section>
+
+      <BotchainPaymentPanel />
+
+      <SettlementPanel />
 
       <section className="grid gap-5 xl:grid-cols-2">
         <div className="panel">
@@ -627,7 +754,7 @@ export default function X402PlaygroundPage() {
                           {event.payTo ? <><span className="text-slate-700">→</span><span className="font-mono">{shortAddress(event.payTo)}</span></> : null}
                           {event.reason ? <><span className="text-slate-700">·</span><span className="truncate">{event.reason}</span></> : null}
                           {event.txHash ? (
-                            <a href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${event.txHash}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-orchid transition hover:text-white">
+                            <a href={`${explorerForNetwork(event.network).replace(/\/$/, "")}/tx/${event.txHash}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-orchid transition hover:text-white">
                               View tx <ExternalLink size={11} />
                             </a>
                           ) : null}
@@ -659,6 +786,8 @@ function MiniFact({icon, label, value}: {icon: React.ReactNode; label: string; v
 }
 
 function createSignedSampleBody(input: {
+  version: 1 | 2;
+  network: X402SignNetwork;
   from: string;
   to: string;
   value: string;
@@ -667,24 +796,61 @@ function createSignedSampleBody(input: {
   nonce: Hex;
   signature: Hex;
 }) {
+  if (input.version === 2) {
+    const accepted = {
+      scheme: "exact",
+      network: `eip155:${input.network.chainId}`,
+      amount: input.value,
+      payTo: input.to,
+      maxTimeoutSeconds: 120,
+      asset: input.network.usdc,
+      extra: {
+        name: input.network.domainName,
+        version: input.network.domainVersion
+      }
+    };
+    return {
+      paymentRequirements: accepted,
+      paymentPayload: {
+        x402Version: 2,
+        resource: {
+          url: "https://api.example.com/nexora-showcase-report",
+          description: "Nexora signed x402 showcase report",
+          mimeType: "application/json"
+        },
+        accepted,
+        payload: {
+          authorization: {
+            from: input.from,
+            to: input.to,
+            value: input.value,
+            validAfter: input.validAfter,
+            validBefore: input.validBefore,
+            nonce: input.nonce
+          },
+          signature: input.signature
+        }
+      }
+    };
+  }
   return {
     paymentRequirements: {
       scheme: "exact",
-      network: "arc-testnet",
+      network: input.network.id,
       maxAmountRequired: input.value,
       resource: "https://api.example.com/nexora-showcase-report",
       description: "Nexora signed x402 showcase report",
       payTo: input.to,
-      asset: ARC_USDC_ADDRESS,
+      asset: input.network.usdc,
       extra: {
-        name: "USDC",
-        version: "2"
+        name: input.network.domainName,
+        version: input.network.domainVersion
       }
     },
     paymentPayload: {
       x402Version: 1,
       scheme: "exact",
-      network: "arc-testnet",
+      network: input.network.id,
       payload: {
         authorization: {
           from: input.from,
@@ -698,6 +864,61 @@ function createSignedSampleBody(input: {
       }
     }
   };
+}
+
+function createPaymentRequiredPreview(input: {
+  version: 1 | 2;
+  network?: X402SignNetwork;
+  payTo: string;
+  amount: string;
+}) {
+  if (!input.network || !isAddress(input.payTo)) return {message: "Connect a wallet and select a valid payment recipient."};
+  let amount = "0";
+  try {
+    amount = parseUnits(input.amount || "0", 6).toString();
+  } catch {
+    // Keep the preview usable while the amount field is being edited.
+  }
+  const common = {
+    scheme: "exact",
+    network: input.version === 2 ? `eip155:${input.network.chainId}` : input.network.id,
+    payTo: input.payTo,
+    asset: input.network.usdc,
+    maxTimeoutSeconds: 120,
+    extra: {name: input.network.domainName, version: input.network.domainVersion}
+  };
+  return input.version === 2
+    ? {
+      x402Version: 2,
+      error: "PAYMENT-SIGNATURE header is required",
+      resource: {
+        url: "https://api.example.com/nexora-showcase-report",
+        description: "Nexora signed x402 showcase report",
+        mimeType: "application/json"
+      },
+      accepts: [{...common, amount}]
+    }
+    : {
+      x402Version: 1,
+      error: "X-PAYMENT header is required",
+      accepts: [{
+        ...common,
+        maxAmountRequired: amount,
+        resource: "https://api.example.com/nexora-showcase-report",
+        description: "Nexora signed x402 showcase report",
+        mimeType: "application/json"
+      }]
+    };
+}
+
+function encodeBase64Json(value: unknown) {
+  return btoa(unescape(encodeURIComponent(JSON.stringify(value))));
+}
+
+function explorerForNetwork(network?: string | null) {
+  const signNetwork = enabledX402SignNetworks().find((item) => item.id === network || `eip155:${item.chainId}` === network);
+  const chain = supportedChains.find((item) => item.id === signNetwork?.chainId);
+  return chain?.blockExplorers.default.url ?? arcTestnet.explorerUrl;
 }
 
 function randomBytes32() {

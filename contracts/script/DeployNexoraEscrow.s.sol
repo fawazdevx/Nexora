@@ -13,7 +13,6 @@ interface Vm {
 
 contract DeployNexoraEscrow {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    address internal constant ARC_TESTNET_USDC = 0x3600000000000000000000000000000000000000;
 
     struct DeployedEscrow {
         address escrowImplementation;
@@ -22,7 +21,7 @@ contract DeployNexoraEscrow {
 
     function run() external returns (DeployedEscrow memory deployed) {
         address owner = vm.envOr("OWNER_ADDRESS", tx.origin);
-        address usdc = vm.envOr("USDC_ADDRESS", ARC_TESTNET_USDC);
+        address usdc = vm.envAddress("USDC_ADDRESS");
         address treasury = vm.envAddress("TREASURY_ADDRESS");
 
         vm.startBroadcast();

@@ -1,14 +1,16 @@
 import {execFile} from "node:child_process";
 import {createHash} from "node:crypto";
 import {promisify} from "node:util";
-import {isAddress} from "viem";
+import {createPublicClient, http, isAddress, parseAbi, parseEventLogs, type Hex} from "viem";
+import {agentChainContexts} from "../chains.js";
 import {config} from "../config.js";
 import {dispatchNotification} from "../notifications.js";
 import {evaluateAutomationRecipesForOperator} from "../automation/recipes.js";
-import {evaluateAgentPolicy} from "../policies/engine.js";
+import {evaluateAgentPolicy, type PolicyRemediation} from "../policies/engine.js";
 import {safeHttpUrl} from "../security.js";
-import {isVisibleAgent, pushNotification, readStore, updateStore} from "../store.js";
+import {insertPayment, insertPaymentIntent, isVisibleAgent, pushNotification, readStore, updatePaymentIntentById, withAgentSpendLock} from "../store.js";
 import type {AgentWalletRecord, PaymentIntentRecord, PaymentRecord, ServiceRecord} from "../store.js";
+import {executeCircleDeveloperWalletX402, type CircleDeveloperWalletX402Result} from "./developer-wallet-x402.js";
 
 export type CircleCliRunner = (args: string[], options?: {timeoutMs?: number}) => Promise<{stdout: string; stderr: string}>;
 export type CircleDiscoveryFetcher = (url: string) => Promise<unknown>;
@@ -19,18 +21,21 @@ export type CircleAgentService = {
   url: string;
   priceUsdc: number;
   publisherAddress: string | null;
+  assetAddress: string | null;
   acceptedChains: string[];
   paymentScheme: string | null;
+  method: string;
   inputSchema: unknown;
 };
 
 export type CircleAgentMarketplaceReadiness = {
   enabled: boolean;
   configured: boolean;
-  status: "disabled" | "ready" | "cli_missing" | "terms_required" | "not_logged_in" | "wallet_status_error";
+  status: "disabled" | "ready" | "managed_wallet_unavailable" | "cli_missing" | "terms_required" | "not_logged_in" | "wallet_status_error";
   cliPath: string;
   cliVersion: string | null;
   defaultChain: string;
+  supportedChains: string[];
   requireConfirmation: boolean;
   maxPaymentUsdc: number;
   requiredEnv: string[];
@@ -50,6 +55,7 @@ export type CirclePaymentGuard = {
   policy: {
     allowed: boolean;
     reason: string | null;
+    remediation: PolicyRemediation | null;
     dailySpentUsdc: number;
     weeklySpentUsdc: number;
     monthlySpentUsdc: number;
@@ -64,7 +70,20 @@ type CircleMarketplaceOptions = Partial<{
   defaultChain: string;
   requireConfirmation: boolean;
   maxPaymentUsdc: number;
+  executor: CirclePaymentExecutor;
 }>;
+
+export type CirclePaymentExecutor = (input: {
+  payment: CirclePaymentInput;
+  guard: CirclePaymentGuard;
+  walletId: string;
+  method: string;
+}) => Promise<CircleDeveloperWalletX402Result>;
+
+export type ExternalCircleSettlementVerifier = (input: {
+  intent: PaymentIntentRecord;
+  txHash: Hex;
+}) => Promise<void>;
 
 type CirclePaymentInput = {
   operatorAddress: string;
@@ -92,12 +111,13 @@ type CirclePaymentIntentExecutionInput = {
 const execFileAsync = promisify(execFile);
 const requiredEnv = [
   "NEXORA_CIRCLE_AGENT_MARKETPLACE_ENABLED",
-  "NEXORA_CIRCLE_CLI_PATH",
+  "CIRCLE_API_KEY",
+  "CIRCLE_ENTITY_SECRET",
   "NEXORA_CIRCLE_DEFAULT_CHAIN",
-  "NEXORA_CIRCLE_PAYMENT_REQUIRE_CONFIRMATION",
   "NEXORA_CIRCLE_PAYMENT_MAX_USDC"
 ];
 const zeroAddress = "0x0000000000000000000000000000000000000000";
+const erc20TransferAbi = parseAbi(["event Transfer(address indexed from,address indexed to,uint256 value)"]);
 
 export const defaultCircleCliRunner: CircleCliRunner = async (args, options) => {
   const result = await execFileAsync(config.circle.agentMarketplace.cliPath, args, {
@@ -126,6 +146,22 @@ export async function circleAgentMarketplaceReadiness(options: CircleMarketplace
       status: "disabled",
       cliVersion: null,
       message: "Circle service payments are not enabled for this workspace."
+    });
+  }
+
+  // An explicitly injected runner is retained as a local test/development
+  // adapter. Production web requests never depend on one shared Circle CLI
+  // login: each payment signs from the selected developer-controlled wallet.
+  if (!options.runner) {
+    const configured = Boolean(options.executor || (config.circle.apiKey && config.circle.entitySecret));
+    return readiness({
+      settings,
+      configured,
+      status: configured ? "ready" : "managed_wallet_unavailable",
+      cliVersion: null,
+      message: configured
+        ? "Managed Circle wallet execution is ready."
+        : "Service discovery and Nexora approvals are available. Managed execution needs Circle developer-wallet credentials; external Agent Stack wallets can complete approved intents through the SDK."
     });
   }
 
@@ -177,16 +213,15 @@ export async function searchCircleAgentServices(query: string, options: CircleMa
   if (!keyword) throw httpError("query is required", 400);
   if (keyword.length > 160) throw httpError("query is too long", 400);
   let services: CircleAgentService[] = [];
-  try {
-    const output = await runCircleCli(settings, ["services", "search", keyword, "--output", "json"], {timeoutMs: 30_000});
-    services = serviceArrayFromPayload(parseCliJson(output.stdout, "Circle services search")).map((item) => normalizeCircleService(item, null));
-  } catch {
-    services = serviceArrayFromPayload(await discoveryPayload(settings, {query: keyword, label: "search"})).map((item) => normalizeCircleService(item, null));
+  if (options.runner) {
+    try {
+      const output = await runCircleCli(settings, ["services", "search", keyword, "--output", "json"], {timeoutMs: 30_000});
+      services = serviceArrayFromPayload(parseCliJson(output.stdout, "Circle services search")).map((item) => normalizeCircleService(item, null));
+    } catch {
+      services = [];
+    }
   }
-  if (services.length === 0) {
-    const discoveryServices = serviceArrayFromPayload(await discoveryPayload(settings, {query: keyword, label: "search"})).map((item) => normalizeCircleService(item, null));
-    if (discoveryServices.length > 0) services = discoveryServices;
-  }
+  if (services.length === 0) services = serviceArrayFromPayload(await discoveryPayload(settings, {query: keyword, label: "search"})).map((item) => normalizeCircleService(item, null));
   return {
     query: keyword,
     services
@@ -198,11 +233,13 @@ export async function inspectCircleAgentService(serviceUrl: string, options: Cir
   assertMarketplaceEnabled(settings);
   const url = safeHttpUrl(serviceUrl, "serviceUrl");
   let service: CircleAgentService | null = null;
-  try {
-    const output = await runCircleCli(settings, ["services", "inspect", url, "--output", "json"], {timeoutMs: 30_000});
-    service = normalizeCircleService(parseCliJson(output.stdout, "Circle services inspect"), url);
-  } catch {
-    service = null;
+  if (options.runner) {
+    try {
+      const output = await runCircleCli(settings, ["services", "inspect", url, "--output", "json"], {timeoutMs: 30_000});
+      service = normalizeCircleService(parseCliJson(output.stdout, "Circle services inspect"), url);
+    } catch {
+      service = null;
+    }
   }
   if (!service || !hasPayableServiceDetails(service)) {
     const payload = await discoveryPayload(settings, {query: url, label: "inspect"});
@@ -227,6 +264,7 @@ export async function preflightCircleAgentPayment(input: CirclePaymentInput, opt
   const inspection = await inspectCircleAgentService(serviceUrl, {...options, ...settings});
   const service = inspection.service;
   const checks: CirclePaymentGuard["checks"] = [];
+  const chainSupported = settings.supportedChains.includes(chain);
 
   const requestHash = paymentRequestHash({
     operatorAddress,
@@ -236,6 +274,7 @@ export async function preflightCircleAgentPayment(input: CirclePaymentInput, opt
     data: input.data ?? {}
   });
 
+  checks.push(check(chainSupported, "Nexora chain supported", chainSupported ? `${chain} is enabled for Nexora agent payments.` : `Supported routes: ${settings.supportedChains.join(", ")}.`));
   checks.push(check(service.priceUsdc > 0, "Price available", service.priceUsdc > 0 ? `${service.priceUsdc} USDC per call` : "Service details did not include a positive USDC price."));
   checks.push(check(service.priceUsdc <= settings.maxPaymentUsdc, "Workspace payment cap", `${settings.maxPaymentUsdc} USDC max per Circle service call`));
   checks.push(check(Boolean(service.publisherAddress), "Seller wallet available", service.publisherAddress ?? "Service details did not include the recipient wallet."));
@@ -247,7 +286,16 @@ export async function preflightCircleAgentPayment(input: CirclePaymentInput, opt
     agentId: input.agentId ?? null,
     walletAddress
   });
-  const syntheticService = circleServiceRecord(service);
+  const settlementChainId = chainSupported ? chainIdForCircleChain(chain) : null;
+  const routeWallet = settlementChainId && agent ? agentWalletForChain(agent, settlementChainId) : null;
+  checks.push(check(
+    Boolean(routeWallet && routeWallet.toLowerCase() === walletAddress.toLowerCase()),
+    "Agent wallet route",
+    routeWallet
+      ? `Using the agent wallet provisioned for ${networkNameForCircleChain(chain)}.`
+      : `This agent does not have a ready wallet for ${networkNameForCircleChain(chain)}.`
+  ));
+  const syntheticService = circleServiceRecord(service, chain);
   const policy = evaluateAgentPolicy({
     agent,
     service: syntheticService,
@@ -270,6 +318,7 @@ export async function preflightCircleAgentPayment(input: CirclePaymentInput, opt
     policy: {
       allowed: policy.allowed,
       reason: policy.reason ?? null,
+      remediation: policy.remediation ?? null,
       dailySpentUsdc: policy.v2?.dailySpentUsdc ?? 0,
       weeklySpentUsdc: policy.v2?.weeklySpentUsdc ?? 0,
       monthlySpentUsdc: policy.v2?.monthlySpentUsdc ?? 0
@@ -285,18 +334,86 @@ export async function payCircleAgentService(input: CirclePayInput, options: Circ
     throw httpError("payment confirmation is required before spending USDC", 428);
   }
 
-  const guard = await preflightCircleAgentPayment(input, {...options, ...settings});
-  if (!guard.allowed) {
-    const payment = await recordCirclePayment({
-      input,
-      guard,
-      status: "policy_blocked",
-      policyReason: guard.checks.find((item) => item.status === "fail")?.detail ?? "Circle payment blocked by pre-payment guard"
-    });
-    throw Object.assign(new Error(payment.policyReason ?? "Circle payment blocked by pre-payment guard"), {status: 402, paymentId: payment.id});
+  // Serialize the spend-check → CLI pay → record critical section per agent so
+  // two concurrent payments cannot both clear a daily/weekly/monthly cap on a
+  // stale spend snapshot and overspend it. In file mode this is a passthrough
+  // (the blob write queue already serializes); in DB mode it takes a Postgres
+  // advisory lock keyed by the agent, closing the daily-limit TOCTOU.
+  return withAgentSpendLock(input.agentId ?? null, async () => {
+    const guard = await preflightCircleAgentPayment(input, {...options, ...settings});
+    if (!guard.allowed) {
+      const payment = await recordCirclePayment({
+        input,
+        guard,
+        status: "policy_blocked",
+        policyReason: guard.checks.find((item) => item.status === "fail")?.detail ?? "Circle payment blocked by pre-payment guard"
+      });
+      throw Object.assign(new Error(payment.policyReason ?? "Circle payment blocked by pre-payment guard"), {status: 402, paymentId: payment.id});
+    }
+
+    try {
+      const execution = await executeCirclePayment(input, guard, settings, options);
+      const receipt = await recordCirclePayment({
+        input,
+        guard,
+        status: "settled",
+        txHash: execution.txHash,
+        resultSummary: resultSummary(execution.result),
+        paymentScheme: execution.paymentScheme || guard.payment.service.paymentScheme
+      });
+      await evaluateAutomationRecipesForOperator(input.operatorAddress).catch(() => undefined);
+      return {
+        status: "settled",
+        guard,
+        receipt,
+        result: execution.result,
+        paymentResponse: execution.paymentResponse
+      };
+    } catch (error) {
+      if (isHttpError(error) && httpStatus(error) < 500) throw error;
+      const payment = await recordCirclePayment({
+        input,
+        guard,
+        status: "failed",
+        policyReason: compactText(errorMessage(error))
+      });
+      const wrapped = httpError(errorMessage(error), httpStatus(error) || 502) as Error & {paymentId?: string};
+      wrapped.paymentId = payment.id;
+      throw wrapped;
+    }
+  });
+}
+
+async function executeCirclePayment(
+  input: CirclePaymentInput,
+  guard: CirclePaymentGuard,
+  settings: ReturnType<typeof marketplaceSettings>,
+  options: CircleMarketplaceOptions
+): Promise<CircleDeveloperWalletX402Result> {
+  const store = await readStore();
+  const agent = findOperatorAgent(store.agents, {
+    operatorAddress: input.operatorAddress,
+    agentId: input.agentId ?? null,
+    walletAddress: guard.payment.walletAddress
+  });
+  const chainId = chainIdForCircleChain(guard.payment.chain);
+  const route = chainId && agent ? agentChainWalletForChain(agent, chainId) : null;
+  if (!route?.circleWalletId || !route.address || route.address.toLowerCase() !== guard.payment.walletAddress.toLowerCase()) {
+    throw httpError("The selected agent does not have a ready Circle wallet on this service network.", 409);
   }
 
-  try {
+  if (options.executor) {
+    return options.executor({
+      payment: input,
+      guard,
+      walletId: route.circleWalletId,
+      method: guard.payment.service.method
+    });
+  }
+
+  // Explicit runner injection remains useful for deterministic tests and local
+  // Agent Stack experiments. It is never the production default.
+  if (options.runner) {
     const maxAmount = Math.min(settings.maxPaymentUsdc, guard.payment.amountUsdc);
     const output = await runCircleCli(settings, [
       "services",
@@ -315,41 +432,30 @@ export async function payCircleAgentService(input: CirclePayInput, options: Circ
     ], {timeoutMs: 90_000});
     const payload = parseCliJson(output.stdout, "Circle services pay");
     assertCirclePaymentSucceeded(payload);
-    const result = paymentResultPayload(payload);
-    const receipt = await recordCirclePayment({
-      input,
-      guard,
-      status: "settled",
-      txHash: txHashFromPayload(payload),
-      resultSummary: resultSummary(result),
-      paymentScheme: guard.payment.service.paymentScheme
-    });
-    await evaluateAutomationRecipesForOperator(input.operatorAddress).catch(() => undefined);
     return {
-      status: "settled",
-      guard,
-      receipt,
-      result
+      result: paymentResultPayload(payload),
+      txHash: txHashFromPayload(payload),
+      paymentResponse: payload,
+      paymentScheme: guard.payment.service.paymentScheme ?? "x402"
     };
-  } catch (error) {
-    if (isHttpError(error) && httpStatus(error) < 500) throw error;
-    const payment = await recordCirclePayment({
-      input,
-      guard,
-      status: "failed",
-      policyReason: compactText(errorMessage(error))
-    });
-    const wrapped = httpError(errorMessage(error), httpStatus(error) || 502) as Error & {paymentId?: string};
-    wrapped.paymentId = payment.id;
-    throw wrapped;
   }
+
+  return executeCircleDeveloperWalletX402({
+    walletId: route.circleWalletId,
+    walletAddress: route.address,
+    chain: guard.payment.chain,
+    serviceUrl: guard.payment.service.url,
+    method: guard.payment.service.method,
+    data: input.data ?? {},
+    maxAmountUsdc: Math.min(settings.maxPaymentUsdc, guard.payment.amountUsdc)
+  });
 }
 
 export async function createCircleAgentPaymentIntent(input: CirclePaymentInput, options: CircleMarketplaceOptions = {}) {
   const settings = marketplaceSettings(options);
   assertMarketplaceEnabled(settings);
   const guard = await preflightCircleAgentPayment(input, {...options, ...settings});
-  const service = circleServiceRecord(guard.payment.service);
+  const service = circleServiceRecord(guard.payment.service, guard.payment.chain);
   const now = new Date();
   const status: PaymentIntentRecord["status"] = guard.allowed ? "pending_approval" : "policy_blocked";
   const intent: PaymentIntentRecord = {
@@ -374,12 +480,14 @@ export async function createCircleAgentPaymentIntent(input: CirclePaymentInput, 
       chainId: chainIdForCircleChain(guard.payment.chain),
       network: networkNameForCircleChain(guard.payment.chain),
       paymentScheme: guard.payment.service.paymentScheme ?? null,
+      assetAddress: guard.payment.service.assetAddress ?? agentChainContexts().find((item) => item.chainId === chainIdForCircleChain(guard.payment.chain))?.usdc ?? null,
       inputSchema: guard.payment.service.inputSchema ?? null
     },
     data: input.data ?? {},
     policy: {
       allowed: guard.policy.allowed,
       reason: guard.policy.reason ?? failedCheckDetail(guard) ?? null,
+      remediation: guard.policy.remediation ?? null,
       dailySpentUsdc: guard.policy.dailySpentUsdc,
       weeklySpentUsdc: guard.policy.weeklySpentUsdc,
       monthlySpentUsdc: guard.policy.monthlySpentUsdc,
@@ -405,9 +513,7 @@ export async function createCircleAgentPaymentIntent(input: CirclePaymentInput, 
     updatedAt: now.toISOString()
   };
 
-  const result = await updateStore((store) => {
-    store.paymentIntents.unshift(intent);
-    store.paymentIntents = store.paymentIntents.slice(0, 500);
+  const result = await insertPaymentIntent(intent, (store) => {
     const notification = pushNotification(store, {
       operatorAddress: intent.operatorAddress,
       title: status === "pending_approval" ? "Circle payment approval requested" : "Circle payment blocked",
@@ -415,13 +521,15 @@ export async function createCircleAgentPaymentIntent(input: CirclePaymentInput, 
       kind: status === "pending_approval" ? "payment" : "policy",
       actionHref: "/payments"
     });
-    return {intent, notification};
+    return {notification};
   });
-  await dispatchNotification({
-    notification: result.notification,
-    event: status === "pending_approval" ? "paymentReceipts" : "policyAlerts"
-  }).catch(() => undefined);
-  return result.intent;
+  if (result?.notification) {
+    await dispatchNotification({
+      notification: result.notification,
+      event: status === "pending_approval" ? "paymentReceipts" : "policyAlerts"
+    }).catch(() => undefined);
+  }
+  return intent;
 }
 
 export async function approveCircleAgentPaymentIntent(id: string, input: CirclePaymentIntentDecisionInput) {
@@ -444,8 +552,8 @@ export async function executeCircleAgentPaymentIntent(id: string, input: CircleP
       data: intent.data,
       confirmed: input.confirmed
     }, options);
-    const updated = await updateStore((store) => {
-      const current = paymentIntentForUpdate(store.paymentIntents, id, input.operatorAddress);
+    const updated = await updatePaymentIntentById(id, (current) => {
+      assertIntentOperator(current, input.operatorAddress);
       current.status = "settled";
       current.execution = {
         paymentId: result.receipt.id,
@@ -468,8 +576,8 @@ export async function executeCircleAgentPaymentIntent(id: string, input: CircleP
   } catch (error) {
     const paymentId = typeof error === "object" && error && "paymentId" in error ? String((error as {paymentId?: unknown}).paymentId ?? "") : null;
     const status = typeof error === "object" && error && "status" in error && Number((error as {status?: unknown}).status) === 402 ? "policy_blocked" : "failed";
-    await updateStore((store) => {
-      const current = paymentIntentForUpdate(store.paymentIntents, id, input.operatorAddress);
+    await updatePaymentIntentById(id, (current) => {
+      assertIntentOperator(current, input.operatorAddress);
       current.status = status;
       current.execution = {
         ...current.execution,
@@ -485,16 +593,98 @@ export async function executeCircleAgentPaymentIntent(id: string, input: CircleP
   }
 }
 
+export async function completeCircleAgentPaymentIntentFromReceipt(id: string, input: {
+  operatorAddress: string;
+  paymentResponse: unknown;
+  result?: unknown;
+}, options: {verifySettlement?: ExternalCircleSettlementVerifier} = {}) {
+  const intent = await markPaymentIntentExecuting(id, input.operatorAddress);
+  try {
+    const normalized = validateExternalCircleReceipt(intent, input.paymentResponse);
+    await (options.verifySettlement ?? verifyExternalCircleSettlement)({intent, txHash: normalized.txHash});
+    const guard = guardFromIntent(intent);
+    const payment = await recordCirclePayment({
+      input: {
+        operatorAddress: intent.operatorAddress,
+        agentId: intent.agentId ?? null,
+        walletAddress: intent.agentWallet ?? "",
+        serviceUrl: intent.source.serviceUrl,
+        chain: intent.normalized.chain,
+        data: intent.data
+      },
+      guard,
+      status: "settled",
+      txHash: normalized.txHash,
+      resultSummary: resultSummary(input.result),
+      paymentScheme: intent.normalized.paymentScheme ?? "circle-agent-stack",
+      requestHash: `0x${stableHash(`circle-external:${intent.normalized.chainId}:${normalized.txHash.toLowerCase()}`)}`
+    });
+    const updated = await updatePaymentIntentById(id, (current) => {
+      assertIntentOperator(current, input.operatorAddress);
+      current.status = "settled";
+      current.execution = {
+        paymentId: payment.id,
+        txHash: payment.txHash ?? null,
+        resultSummary: resultSummary(input.result),
+        error: null,
+        executedAt: new Date().toISOString()
+      };
+      current.receiptId = payment.id;
+      current.updatedAt = new Date().toISOString();
+      return current;
+    });
+    await evaluateAutomationRecipesForOperator(input.operatorAddress).catch(() => undefined);
+    return {status: "settled", intent: updated, receipt: payment, result: input.result ?? null};
+  } catch (error) {
+    await updatePaymentIntentById(id, (current) => {
+      assertIntentOperator(current, input.operatorAddress);
+      current.status = "failed";
+      current.execution = {
+        ...current.execution,
+        error: externalReceiptError(error),
+        executedAt: new Date().toISOString()
+      };
+      current.updatedAt = new Date().toISOString();
+      return current;
+    });
+    throw httpError(externalReceiptError(error), 400);
+  }
+}
+
+export async function circleAgentPaymentIntentAuthorization(id: string, operatorAddress: string) {
+  const store = await readStore();
+  const intent = store.paymentIntents.find((item) => item.id === id);
+  if (!intent) throw httpError("payment intent not found", 404);
+  assertIntentOperator(intent, operatorAddress);
+  return {
+    intentId: intent.id,
+    approved: intent.status === "approved" && !isExpired(intent),
+    status: intent.status,
+    expiresAt: intent.approval.expiresAt ?? null,
+    payment: {
+      serviceUrl: intent.source.serviceUrl,
+      walletAddress: intent.agentWallet,
+      chain: intent.normalized.chain,
+      amountUsdc: intent.normalized.amountUsdc,
+      payTo: intent.normalized.payTo,
+      assetAddress: intent.normalized.assetAddress ?? null,
+      data: intent.data
+    }
+  };
+}
+
 async function decideCircleAgentPaymentIntent(id: string, input: CirclePaymentIntentDecisionInput, status: "approved" | "rejected") {
-  const result = await updateStore((store) => {
-    const intent = paymentIntentForUpdate(store.paymentIntents, id, input.operatorAddress);
+  const result = await updatePaymentIntentById(id, (intent, store) => {
+    assertIntentOperator(intent, input.operatorAddress);
     if (intent.status !== "pending_approval") {
       throw httpError(intent.status === "settled" ? "payment intent already executed" : "payment intent is not pending approval", 409);
     }
+    // The expiry transition must persist even though the call is rejected, so it
+    // is returned (committed) then thrown after the write lands.
     if (isExpired(intent)) {
       intent.status = "expired";
       intent.updatedAt = new Date().toISOString();
-      throw httpError("payment intent approval window has expired", 410);
+      return {expired: true as const, intent, notification: null};
     }
     if (status === "approved" && !intent.policy.allowed) {
       throw httpError(intent.policy.reason ?? "payment intent is blocked by policy", 402);
@@ -522,36 +712,42 @@ async function decideCircleAgentPaymentIntent(id: string, input: CirclePaymentIn
       kind: status === "approved" ? "payment" : "policy",
       actionHref: "/payments"
     });
-    return {intent, notification};
+    return {expired: false as const, intent, notification};
   });
-  await dispatchNotification({
-    notification: result.notification,
-    event: status === "approved" ? "paymentReceipts" : "policyAlerts"
-  }).catch(() => undefined);
+  if (result.expired) throw httpError("payment intent approval window has expired", 410);
+  if (result.notification) {
+    await dispatchNotification({
+      notification: result.notification,
+      event: status === "approved" ? "paymentReceipts" : "policyAlerts"
+    }).catch(() => undefined);
+  }
   return result.intent;
 }
 
 async function markPaymentIntentExecuting(id: string, operatorAddress: string) {
-  return updateStore((store) => {
-    const intent = paymentIntentForUpdate(store.paymentIntents, id, operatorAddress);
+  // The expiry transition must persist even though the call is then rejected,
+  // so it is returned (committed) rather than thrown from inside the mutate.
+  // Pure validation failures throw inside the mutate to roll the write back.
+  const outcome = await updatePaymentIntentById(id, (intent) => {
+    assertIntentOperator(intent, operatorAddress);
     if (intent.status === "settled") throw httpError("payment intent already executed", 409);
     if (intent.status === "executing") throw httpError("payment intent is already executing", 409);
     if (intent.status !== "approved") throw httpError("payment intent must be approved before execution", 428);
     if (isExpired(intent)) {
       intent.status = "expired";
       intent.updatedAt = new Date().toISOString();
-      throw httpError("payment intent approval window has expired", 410);
+      return {expired: true as const, intent};
     }
     if (!intent.agentWallet) throw httpError("payment intent is missing an agent wallet", 400);
     intent.status = "executing";
     intent.updatedAt = new Date().toISOString();
-    return intent;
+    return {expired: false as const, intent};
   });
+  if (outcome.expired) throw httpError("payment intent approval window has expired", 410);
+  return outcome.intent;
 }
 
-function paymentIntentForUpdate(paymentIntents: PaymentIntentRecord[], id: string, operatorAddress: string) {
-  const intent = paymentIntents.find((item) => item.id === id);
-  if (!intent) throw httpError("payment intent not found", 404);
+function assertIntentOperator(intent: PaymentIntentRecord, operatorAddress: string) {
   if (intent.operatorAddress.toLowerCase() !== operatorAddress.toLowerCase()) {
     throw httpError("payment intent operator wallet required", 403);
   }
@@ -591,12 +787,148 @@ function riskFlagsFromGuard(guard: CirclePaymentGuard): PaymentIntentRecord["pol
   return flags;
 }
 
+function validateExternalCircleReceipt(intent: PaymentIntentRecord, value: unknown) {
+  const parsed = parseExternalReceipt(value);
+  const record = objectValue(parsed);
+  const nested = objectValue(record.settlement);
+  const source = Object.keys(nested).length > 0 ? {...record, ...nested} : record;
+  const status = stringValue(source.status ?? source.state);
+  if (source.success === false || (status && /fail|error|reject|denied/i.test(status))) {
+    throw new Error("The Circle service reported an unsuccessful payment.");
+  }
+  if (source.success !== true && !(status && /success|settled|complete|confirmed/i.test(status))) {
+    throw new Error("A successful Circle payment response is required.");
+  }
+
+  const network = stringValue(source.network ?? source.chain);
+  if (network && normalizeChain(network) !== normalizeChain(intent.normalized.chain)) {
+    throw new Error("The Circle payment response network does not match the approved intent.");
+  }
+  const payer = stringValue(source.payer ?? source.from ?? source.walletAddress);
+  if (payer && (!isAddress(payer) || payer.toLowerCase() !== intent.agentWallet?.toLowerCase())) {
+    throw new Error("The Circle payment response payer does not match the approved agent wallet.");
+  }
+  const payTo = stringValue(source.payTo ?? source.recipient ?? source.to);
+  if (payTo && (!isAddress(payTo) || payTo.toLowerCase() !== intent.normalized.payTo.toLowerCase())) {
+    throw new Error("The Circle payment response recipient does not match the approved intent.");
+  }
+  const amount = receiptUsdcAmount(source.amount ?? source.value ?? source.amountUsdc);
+  if (amount !== null && Math.abs(amount - intent.normalized.amountUsdc) > 0.000001) {
+    throw new Error("The Circle payment response amount does not match the approved intent.");
+  }
+  const txHash = txHashFromPayload(source);
+  if (!txHash) throw new Error("The Circle payment response must include a verifiable transaction hash.");
+  return {txHash: txHash as Hex};
+}
+
+async function verifyExternalCircleSettlement(input: {intent: PaymentIntentRecord; txHash: Hex}) {
+  const chainId = input.intent.normalized.chainId ?? chainIdForCircleChain(input.intent.normalized.chain);
+  const context = agentChainContexts().find((item) => item.chainId === chainId);
+  const asset = input.intent.normalized.assetAddress || context?.usdc;
+  if (!context?.rpcUrl || !asset || !isAddress(asset)) {
+    throw new Error("The approved Circle payment chain or USDC asset is not configured for receipt verification.");
+  }
+  if (!input.intent.agentWallet || !isAddress(input.intent.agentWallet) || !isAddress(input.intent.normalized.payTo)) {
+    throw new Error("The approved Circle payment route is incomplete.");
+  }
+
+  const client = createPublicClient({transport: http(context.rpcUrl, {timeout: 20_000})});
+  const receipt = await client.getTransactionReceipt({hash: input.txHash});
+  if (receipt.status !== "success") throw new Error("The Circle payment transaction reverted.");
+  const expectedAmount = BigInt(Math.round(input.intent.normalized.amountUsdc * 1_000_000));
+  const transfer = parseEventLogs({
+    abi: erc20TransferAbi,
+    eventName: "Transfer",
+    logs: receipt.logs,
+    strict: false
+  }).find((event) => (
+    event.address.toLowerCase() === asset.toLowerCase()
+    && event.args.from?.toLowerCase() === input.intent.agentWallet?.toLowerCase()
+    && event.args.to?.toLowerCase() === input.intent.normalized.payTo.toLowerCase()
+    && event.args.value === expectedAmount
+  ));
+  if (!transfer) throw new Error("The transaction does not contain the approved USDC payment transfer.");
+}
+
+function parseExternalReceipt(value: unknown) {
+  if (value && typeof value === "object") return value;
+  if (typeof value !== "string" || !value.trim()) throw new Error("paymentResponse is required");
+  const candidates = [value.trim()];
+  try {
+    candidates.push(Buffer.from(value.trim(), "base64").toString("utf8"));
+  } catch {
+    // The plain JSON candidate below will produce the public validation error.
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      // Try the next supported encoding.
+    }
+  }
+  throw new Error("paymentResponse must be JSON or base64-encoded JSON");
+}
+
+function receiptUsdcAmount(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string" || !/^\d+(?:\.\d+)?$/.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return value.includes(".") || parsed < 1_000 ? parsed : parsed / 1_000_000;
+}
+
+function guardFromIntent(intent: PaymentIntentRecord): CirclePaymentGuard {
+  const service: CircleAgentService = {
+    name: intent.normalized.serviceName.replace(/^Circle:\s*/i, ""),
+    description: intent.normalized.description,
+    url: intent.source.serviceUrl,
+    priceUsdc: intent.normalized.amountUsdc,
+    publisherAddress: intent.normalized.payTo,
+    assetAddress: intent.normalized.assetAddress ?? null,
+    acceptedChains: [intent.normalized.chain],
+    paymentScheme: intent.normalized.paymentScheme ?? null,
+    method: "POST",
+    inputSchema: intent.normalized.inputSchema ?? null
+  };
+  return {
+    allowed: true,
+    decision: "allow",
+    payment: {
+      walletAddress: intent.agentWallet ?? "",
+      chain: intent.normalized.chain,
+      amountUsdc: intent.normalized.amountUsdc,
+      requestHash: intent.requestHash,
+      service
+    },
+    policy: {
+      allowed: intent.policy.allowed,
+      reason: intent.policy.reason ?? null,
+      remediation: intent.policy.remediation ?? null,
+      dailySpentUsdc: intent.policy.dailySpentUsdc,
+      weeklySpentUsdc: intent.policy.weeklySpentUsdc,
+      monthlySpentUsdc: intent.policy.monthlySpentUsdc
+    },
+    checks: intent.policy.checks
+  };
+}
+
+function externalReceiptError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (/Circle payment response|paymentResponse|successful Circle/i.test(message)) return message;
+  return "The external Circle payment receipt could not be validated.";
+}
+
 function marketplaceSettings(options: CircleMarketplaceOptions) {
+  const supportedChains = supportedCirclePaymentChains();
+  const requestedDefaultChain = normalizeChain(options.defaultChain ?? config.circle.agentMarketplace.defaultChain);
   return {
     enabled: options.enabled ?? config.circle.agentMarketplace.enabled,
     runner: options.runner ?? defaultCircleCliRunner,
     discoveryFetch: options.discoveryFetch ?? defaultCircleDiscoveryFetcher,
-    defaultChain: normalizeChain(options.defaultChain ?? config.circle.agentMarketplace.defaultChain),
+    defaultChain: supportedChains.includes(requestedDefaultChain)
+      ? requestedDefaultChain
+      : supportedChains.find((chain) => chain === "BASE_SEPOLIA") ?? supportedChains[0] ?? "ARC",
+    supportedChains,
     requireConfirmation: options.requireConfirmation ?? config.circle.agentMarketplace.requireConfirmation,
     maxPaymentUsdc: positiveUsdc(options.maxPaymentUsdc ?? config.circle.agentMarketplace.maxPaymentUsdc, 5),
     cliPath: config.circle.agentMarketplace.cliPath
@@ -617,6 +949,7 @@ function readiness(input: {
     cliPath: input.settings.cliPath,
     cliVersion: input.cliVersion,
     defaultChain: input.settings.defaultChain,
+    supportedChains: input.settings.supportedChains,
     requireConfirmation: input.settings.requireConfirmation,
     maxPaymentUsdc: input.settings.maxPaymentUsdc,
     requiredEnv,
@@ -651,10 +984,14 @@ async function discoveryPayload(settings: ReturnType<typeof marketplaceSettings>
 function serviceArrayFromPayload(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload;
   const record = objectValue(payload);
-  const candidates = [record.services, record.results, record.items, record.data];
+  // `resources` is the x402 discovery convention (what Circle's discovery API and
+  // Nexora's own /api/discovery/resources both emit); the others cover assorted
+  // provider shapes we normalize from.
+  const candidates = [record.resources, record.services, record.results, record.items, record.data];
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) return candidate;
     const nested = objectValue(candidate);
+    if (Array.isArray(nested.resources)) return nested.resources;
     if (Array.isArray(nested.services)) return nested.services;
     if (Array.isArray(nested.results)) return nested.results;
   }
@@ -678,10 +1015,17 @@ function normalizeCircleService(value: unknown, fallbackUrl: string | null): Cir
     url,
     priceUsdc,
     publisherAddress,
+    assetAddress: assetFromSource(source, accepts),
     acceptedChains,
     paymentScheme: stringValue(source.scheme ?? source.paymentScheme ?? accepts[0]?.scheme ?? accepts[0]?.paymentScheme ?? objectValue(accepts[0]?.extra).name),
+    method: normalizeHttpMethod(source.method ?? source.httpMethod ?? objectValue(source.request).method ?? metadata.method),
     inputSchema: source.inputSchema ?? source.schema ?? source.requestSchema ?? metadata.input ?? null
   };
+}
+
+function normalizeHttpMethod(value: unknown) {
+  const method = String(value ?? "POST").trim().toUpperCase();
+  return ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"].includes(method) ? method : "POST";
 }
 
 function hasPayableServiceDetails(service: CircleAgentService) {
@@ -728,11 +1072,22 @@ function publisherFromSource(source: Record<string, unknown>, accepts: Array<Rec
   return null;
 }
 
-function circleServiceRecord(service: CircleAgentService): ServiceRecord {
+function assetFromSource(source: Record<string, unknown>, accepts: Array<Record<string, unknown>>) {
+  const direct = stringValue(source.asset ?? source.assetAddress ?? source.token ?? source.tokenAddress);
+  if (direct && isAddress(direct)) return direct;
+  for (const accept of accepts) {
+    const value = stringValue(accept.asset ?? accept.assetAddress ?? accept.token ?? accept.tokenAddress);
+    if (value && isAddress(value)) return value;
+  }
+  return null;
+}
+
+function circleServiceRecord(service: CircleAgentService, chain?: string | null): ServiceRecord {
   const id = circleServiceId(service.url);
   return {
     id,
     chainServiceId: null,
+    settlementChainId: chain ? chainIdForCircleChain(chain) : null,
     publisherAddress: service.publisherAddress ?? zeroAddress,
     name: `Circle: ${service.name}`,
     endpointHash: `circle-agent-marketplace:${stableHash(service.url)}`,
@@ -764,6 +1119,7 @@ function findOperatorAgent(agents: AgentWalletRecord[], input: {operatorAddress:
     && (
       (input.agentId ? item.id === input.agentId : false)
       || item.address?.toLowerCase() === input.walletAddress.toLowerCase()
+      || item.chainWallets?.some((wallet) => wallet.address?.toLowerCase() === input.walletAddress.toLowerCase())
     )
   ));
 }
@@ -776,8 +1132,9 @@ async function recordCirclePayment(input: {
   resultSummary?: string | null;
   paymentScheme?: string | null;
   policyReason?: string | null;
+  requestHash?: string;
 }) {
-  const service = circleServiceRecord(input.guard.payment.service);
+  const service = circleServiceRecord(input.guard.payment.service, input.guard.payment.chain);
   const now = new Date().toISOString();
   const agentId = input.input.agentId ?? null;
   const payment: PaymentRecord = {
@@ -795,7 +1152,7 @@ async function recordCirclePayment(input: {
     publisherNetUsdc: input.status === "settled" ? input.guard.payment.amountUsdc : 0,
     facilitatorFeeBps: 0,
     units: 1,
-    requestHash: input.guard.payment.requestHash,
+    requestHash: input.requestHash ?? input.guard.payment.requestHash,
     status: input.status,
     policyReason: input.policyReason ?? null,
     memo: null,
@@ -813,8 +1170,7 @@ async function recordCirclePayment(input: {
     settledAt: input.status === "settled" ? now : null
   };
 
-  const result = await updateStore((store) => {
-    store.payments.push(payment);
+  const result = await insertPayment(payment, (store) => {
     const notification = pushNotification(store, {
       operatorAddress: payment.payer,
       title: input.status === "settled" ? "Circle payment settled" : input.status === "failed" ? "Circle payment failed" : "Circle payment blocked",
@@ -824,14 +1180,16 @@ async function recordCirclePayment(input: {
       receiptId: payment.id,
       actionHref: `/receipts/${encodeURIComponent(payment.id)}`
     });
-    return {payment, notification};
+    return {notification};
   });
-  await dispatchNotification({
-    notification: result.notification,
-    event: input.status === "settled" ? "paymentReceipts" : "policyAlerts",
-    receiptId: payment.id
-  }).catch(() => undefined);
-  return result.payment;
+  if (result?.notification) {
+    await dispatchNotification({
+      notification: result.notification,
+      event: input.status === "settled" ? "paymentReceipts" : "policyAlerts",
+      receiptId: payment.id
+    }).catch(() => undefined);
+  }
+  return payment;
 }
 
 function paymentResultPayload(payload: unknown) {
@@ -852,13 +1210,15 @@ function txHashFromPayload(payload: unknown): string | null {
   const candidates = [
     record.txHash,
     record.transactionHash,
+    record.transaction,
     record.hash,
     objectValue(record.payment).txHash,
     objectValue(record.payment).transactionHash,
     objectValue(record.receipt).txHash,
     objectValue(record.receipt).transactionHash,
     objectValue(record.settlement).txHash,
-    objectValue(record.settlement).transactionHash
+    objectValue(record.settlement).transactionHash,
+    objectValue(record.settlement).transaction
   ];
   for (const candidate of candidates) {
     const value = stringValue(candidate);
@@ -925,6 +1285,9 @@ function normalizeChain(value: unknown) {
   const text = String(value ?? "").trim();
   if (!text) return "BASE";
   const upper = text.toUpperCase().replace(/\s+/g, "_").replace(/-/g, "_");
+  if (upper === `EIP155:${config.arc.chainId}`) return "ARC";
+  if (upper === `EIP155:${config.base.sepoliaChainId}`) return "BASE_SEPOLIA";
+  if (upper === `EIP155:${config.arbitrum.sepoliaChainId}`) return "ARB_SEPOLIA";
   if (upper === "EIP155:1") return "ETH";
   if (upper === "EIP155:10") return "OP";
   if (upper === "EIP155:130") return "UNI";
@@ -939,6 +1302,29 @@ function normalizeChain(value: unknown) {
   if (upper === "ARBITRUM_SEPOLIA" || upper === "ARB_SEPOLIA") return "ARB_SEPOLIA";
   if (upper === "ARC_TESTNET") return "ARC";
   return upper;
+}
+
+function supportedCirclePaymentChains() {
+  return [...new Set(agentChainContexts().map((context) => normalizeChain(context.circleBlockchain)))];
+}
+
+function agentWalletForChain(agent: AgentWalletRecord, chainId: number) {
+  return agentChainWalletForChain(agent, chainId)?.address ?? null;
+}
+
+function agentChainWalletForChain(agent: AgentWalletRecord, chainId: number) {
+  const chainWallet = agent.chainWallets?.find((wallet) => wallet.chainId === chainId);
+  if (chainWallet) return chainWallet;
+  if (chainId !== config.arc.chainId) return null;
+  return {
+    chainId,
+    chain: "Arc Testnet",
+    circleBlockchain: "ARC-TESTNET",
+    address: agent.address,
+    circleWalletId: agent.circleWalletId ?? null,
+    status: agent.circleWalletStatus,
+    updatedAt: agent.createdAt
+  };
 }
 
 function chainIdForCircleChain(chain: string) {

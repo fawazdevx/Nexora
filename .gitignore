@@ -20,6 +20,7 @@ backend/node_modules/
 skills-lock.json
 # Docs
 docs/
+!docs/
 wallet.txt
 # Dotenv file
 .env
@@ -32,3 +33,5 @@ contracts/.env.arbitrum-sepolia
 contracts/.env.arbitrum-one
 contracts/.env.base-sepolia
 *.tsbuildinfo
+# WSL download-marker cruft
+*:Zone.Identifier

@@ -1,10 +1,10 @@
 import {config} from "./config.js";
-import {createPublicClient, formatUnits, http, isAddress, parseAbi} from "viem";
-import {authorizeX402, paymentRequired, settleX402} from "./x402/facilitator.js";
-import {createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy} from "./circle/agent-wallets.js";
-import {approveCircleAgentPaymentIntent, circleAgentMarketplaceReadiness, createCircleAgentPaymentIntent, executeCircleAgentPaymentIntent, inspectCircleAgentService, payCircleAgentService, preflightCircleAgentPayment, rejectCircleAgentPaymentIntent, searchCircleAgentServices} from "./circle/agent-marketplace.js";
+import {createPublicClient, formatUnits, http, isAddress, pad, parseAbi, zeroAddress, type Hex} from "viem";
+import {authorizeX402, paymentRequired, PolicyBlockedError, settleX402} from "./x402/facilitator.js";
+import {addMissingAgentChainWallets, createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy, upsertExternalPolicyWallet} from "./circle/agent-wallets.js";
+import {approveCircleAgentPaymentIntent, circleAgentMarketplaceReadiness, circleAgentPaymentIntentAuthorization, completeCircleAgentPaymentIntentFromReceipt, createCircleAgentPaymentIntent, executeCircleAgentPaymentIntent, inspectCircleAgentService, payCircleAgentService, preflightCircleAgentPayment, rejectCircleAgentPaymentIntent, searchCircleAgentServices} from "./circle/agent-marketplace.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
-import {activatePlan, executeBuiltInService, executeMarketplaceService, featureService, getService, listServices, platformPlans, publishService, requirePlatformPlan, subscribePlan} from "./marketplace/services.js";
+import {activatePlan, canonicalMarketplaceCatalog, discoveryDocument, executeBuiltInService, executeMarketplaceService, featureService, getService, listServices, platformPlans, publishService, publishVerifiedService, publishVerifiedServiceRoutes, reconcileCanonicalMarketplaceRoutes, requirePlatformPlan, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
 import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
@@ -38,8 +38,10 @@ import {
   verifyAuthSignature,
   type AuthContext
 } from "./security.js";
-import {appSnapshot, archiveWorkspaceTestData, beginTelegramNotificationLink, isVisibleAgent, pushNotification, readStore, storageFriendlyError, updateNotificationPreferences, updateStore, visibleServicesForStore} from "./store.js";
+import {agentWalletAddresses, appSnapshot, archiveWorkspaceTestData, beginTelegramNotificationLink, isVisibleAgent, pushNotification, readStore, storageFriendlyError, updateNotificationPreferences, updateStore, visibleServicesForStore} from "./store.js";
 import {settleFacilitatorPayment, supportedX402, verifyFacilitatorPayment} from "./x402/protocol-facilitator.js";
+import {isMeridianNetwork, settleGuardedMeridianPayment, supportedMeridianKinds, verifyMeridianPayment} from "./x402/meridian-facilitator.js";
+import {buildSettlementRequirements, settlementConfigured, verifySettlementTx} from "./x402/settlement.js";
 import {evaluateAgentPolicy} from "./policies/engine.js";
 import type {AgentApprovalRequestRecord, EscrowRecord, IndexedChainEventRecord, PaymentRecord, SubscriptionRecord} from "./store.js";
 
@@ -75,20 +77,94 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
     }
 
     if (req.method === "GET" && (path === "/x402/supported" || path === "/api/x402/supported")) {
-      return ok(supportedX402());
+      const base = supportedX402();
+      // Merge the Arc EIP-3009 kinds with any Meridian Permit2 kinds (BotChain).
+      // Meridian kinds are empty unless a Meridian API key is configured, so this
+      // degrades to Arc-only when BotChain settlement is not set up.
+      return ok({...base, kinds: [...base.kinds, ...supportedMeridianKinds()]});
+    }
+
+    // Public x402 discovery (task 4). Unauthenticated GET so external agents /
+    // x402 clients can find Nexora's payable services. normalizePath rewrites a
+    // non-/api/ path to /api/..., so /.well-known/x402 arrives as
+    // /api/.well-known/x402 — match both. Same document as /api/discovery/resources.
+    if (
+      req.method === "GET"
+      && (path === "/api/.well-known/x402" || path === "/.well-known/x402" || path === "/api/discovery/resources")
+    ) {
+      const query = url.searchParams.get("query") ?? undefined;
+      const version = url.searchParams.get("x402Version") === "2" || url.searchParams.get("version") === "2" ? 2 : 1;
+      return ok(await discoveryDocument(publicBaseUrl(req), query, version));
     }
 
     if (req.method === "POST" && (path === "/x402/verify" || path === "/api/x402/verify")) {
+      const verifyNetwork = ((body.paymentRequirements as {network?: unknown} | undefined)?.network);
+      if (isMeridianNetwork(verifyNetwork)) {
+        return ok(verifyMeridianPayment({
+          paymentPayload: (body.paymentPayload ?? body.payment) as Parameters<typeof verifyMeridianPayment>[0]["paymentPayload"],
+          paymentRequirements: body.paymentRequirements as Parameters<typeof verifyMeridianPayment>[0]["paymentRequirements"]
+        }));
+      }
       return ok(await verifyFacilitatorPayment({
         paymentPayload: body.paymentPayload ?? body.payment,
         paymentRequirements: body.paymentRequirements
       }));
     }
 
-    if (req.method === "POST" && (path === "/x402/settle" || path === "/api/x402/facilitator-settle")) {
+    // Keep the public facilitator endpoint separate from Nexora Marketplace's
+    // authorization-id settlement endpoint. `normalizePath()` intentionally
+    // maps public paths under `/api`, so matching `path === "/x402/settle"`
+    // can never work and previously sent public x402 clients to the Marketplace
+    // handler below. Match the original public path or the stable internal path.
+    if (req.method === "POST" && (rawPath === "/x402/settle" || path === "/api/x402/facilitator-settle")) {
+      const paymentPayload = body.paymentPayload ?? body.payment;
+      const paymentRequirements = body.paymentRequirements;
+      // BotChain (and other Permit2 networks) settle through Meridian's hosted
+      // facilitator, not Nexora's self-submitted Arc path. Route by network.
+      const settleNetwork = (paymentRequirements as {network?: unknown} | undefined)?.network;
+      if (isMeridianNetwork(settleNetwork)) {
+        return ok(await settleGuardedMeridianPayment({
+          paymentPayload: paymentPayload as Parameters<typeof settleGuardedMeridianPayment>[0]["paymentPayload"],
+          paymentRequirements: paymentRequirements as Parameters<typeof settleGuardedMeridianPayment>[0]["paymentRequirements"]
+        }));
+      }
       return ok(await settleFacilitatorPayment({
-        paymentPayload: body.paymentPayload ?? body.payment,
-        paymentRequirements: body.paymentRequirements
+        paymentPayload,
+        paymentRequirements
+      }));
+    }
+
+    // Build seller-side requirements for the Nexora-owned settlement contract:
+    // payTo = contract, seller + fee ceiling bound into the signed nonce. The
+    // payer signs receiveWithAuthorization to the contract and submits settle()
+    // themselves, so Nexora pays no gas and still earns feeBps.
+    if (req.method === "POST" && path === "/api/x402/settlement/requirements") {
+      const network = requiredLimitedString(body.network, "network", 40);
+      if (!settlementConfigured(network)) {
+        const error = new Error(`x402 settlement contract is not configured for ${network}`);
+        (error as Error & {status?: number}).status = 400;
+        throw error;
+      }
+      return ok(await buildSettlementRequirements({
+        network,
+        amountBaseUnits: requiredLimitedString(body.amountBaseUnits, "amountBaseUnits", 40),
+        resource: requiredLimitedString(body.resource, "resource", 2_048),
+        seller: requiredAddress(body.seller, "seller"),
+        salt: requiredBytes32(body.salt, "salt") as `0x${string}`,
+        maxFeeBps: optionalNumber(body.maxFeeBps),
+        description: optionalLimitedString(body.description, "description", 1_000)
+      }));
+    }
+
+    // Verify a settlement the payer/seller already broadcast, by reading the
+    // on-chain SettlementCompleted event. The backend trusts the chain, not the
+    // caller — nonce + seller must match what was signed.
+    if (req.method === "POST" && path === "/api/x402/settlement/verify") {
+      return ok(await verifySettlementTx({
+        network: requiredLimitedString(body.network, "network", 40),
+        txHash: requiredTxHash(body.txHash, "txHash"),
+        expectedNonce: requiredBytes32(body.nonce, "nonce") as `0x${string}`,
+        seller: requiredAddress(body.seller, "seller")
       }));
     }
 
@@ -185,12 +261,29 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       }));
     }
 
+    if (req.method === "POST" && path === "/api/agents/external-eoa") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await upsertExternalPolicyWallet({
+        operatorAddress,
+        chainId: requiredPositiveInteger(body.chainId, "chainId")
+      }));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/agents/") && path.endsWith("/chain-wallets/backfill")) {
+      const agentId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await addMissingAgentChainWallets({agentId, operatorAddress}));
+    }
+
     if ((req.method === "PATCH" || req.method === "POST") && path.startsWith("/api/agents/") && path.endsWith("/policies")) {
       const agentId = path.split("/")[3] ?? "local";
       const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
       assertTokenAddress(auth, operatorAddress, "operatorAddress");
       return ok(await updateAgentPolicy(agentId, {
         operatorAddress,
+        chainId: optionalNumber(body.chainId),
         dailyLimitUsdc: requiredUsdcAmount(body.dailyLimitUsdc, "dailyLimitUsdc"),
         transactionCapUsdc: requiredUsdcAmount(body.transactionCapUsdc, "transactionCapUsdc"),
         contractAllowlist: addressArray(body.contractAllowlist, "contractAllowlist"),
@@ -291,6 +384,10 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({services: await listServices()});
     }
 
+    if (req.method === "GET" && path === "/api/marketplace/canonical-catalog") {
+      return ok(await canonicalMarketplaceCatalog());
+    }
+
     if (req.method === "GET" && path === "/api/circle/agent-marketplace/readiness") {
       return ok(await circleAgentMarketplaceReadiness());
     }
@@ -370,6 +467,24 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok(await executeCircleAgentPaymentIntent(intentId, {
         operatorAddress,
         confirmed: Boolean(body.confirmed)
+      }));
+    }
+
+    if (req.method === "GET" && path.startsWith("/api/payment-intents/") && path.endsWith("/authorization")) {
+      const intentId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(url.searchParams.get("operatorAddress"), "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await circleAgentPaymentIntentAuthorization(intentId, operatorAddress));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/payment-intents/") && path.endsWith("/external-receipt")) {
+      const intentId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await completeCircleAgentPaymentIntentFromReceipt(intentId, {
+        operatorAddress,
+        paymentResponse: body.paymentResponse,
+        result: body.result
       }));
     }
 
@@ -458,15 +573,52 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       }));
     }
 
+    if (req.method === "POST" && path === "/api/marketplace/service-routes") {
+      if (!Array.isArray(body.routes) || body.routes.length === 0 || body.routes.length > 50) {
+        throw new Error("routes must contain between 1 and 50 service routes");
+      }
+      const routes = body.routes.map((raw, index) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`routes[${index}] must be an object`);
+        const route = raw as Record<string, unknown>;
+        const publisherAddress = requiredAddress(route.publisherAddress, `routes[${index}].publisherAddress`);
+        assertTokenAddress(auth, publisherAddress, `routes[${index}].publisherAddress`);
+        return {
+          publisherAddress,
+          name: requiredLimitedString(route.name, `routes[${index}].name`, 120),
+          endpointHash: requiredLimitedString(route.endpointHash, `routes[${index}].endpointHash`, 120),
+          pricePerUnitUsdc: requiredUsdcAmount(route.pricePerUnitUsdc, `routes[${index}].pricePerUnitUsdc`, 10_000),
+          chainServiceId: optionalNumber(route.chainServiceId),
+          settlementChainId: optionalNumber(route.settlementChainId),
+          txHash: optionalTxHash(route.txHash),
+          manifestKind: optionalLimitedString(route.manifestKind, `routes[${index}].manifestKind`, 80) as Parameters<typeof publishService>[0]["manifestKind"],
+          description: optionalLimitedString(route.description, `routes[${index}].description`, 1_000),
+          webhookUrl: optionalLimitedString(route.webhookUrl, `routes[${index}].webhookUrl`, 2_048),
+          platformFeeBps: optionalBps(route.platformFeeBps, 200, 1000)
+        };
+      });
+      return response(201, {services: await publishVerifiedServiceRoutes(routes)});
+    }
+
+    if (req.method === "POST" && path === "/api/marketplace/canonical-routes/reconcile") {
+      const publisherAddress = requiredAddress(body.publisherAddress, "publisherAddress");
+      assertTokenAddress(auth, publisherAddress, "publisherAddress");
+      return ok(await reconcileCanonicalMarketplaceRoutes({
+        publisherAddress,
+        settlementChainId: requiredPositiveInteger(body.settlementChainId, "settlementChainId"),
+        txHash: requiredTxHash(body.txHash, "txHash")
+      }));
+    }
+
     if (req.method === "POST" && path === "/api/marketplace/services") {
       const publisherAddress = requiredAddress(body.publisherAddress, "publisherAddress");
       assertTokenAddress(auth, publisherAddress, "publisherAddress");
-      return response(201, await publishService({
+      return response(201, await publishVerifiedService({
         publisherAddress,
         name: requiredLimitedString(body.name, "name", 120),
         endpointHash: requiredLimitedString(body.endpointHash, "endpointHash", 120),
         pricePerUnitUsdc: requiredUsdcAmount(body.pricePerUnitUsdc, "pricePerUnitUsdc", 10_000),
         chainServiceId: optionalNumber(body.chainServiceId),
+        settlementChainId: optionalNumber(body.settlementChainId),
         txHash: optionalTxHash(body.txHash),
         manifestKind: optionalLimitedString(body.manifestKind, "manifestKind", 80) as Parameters<typeof publishService>[0]["manifestKind"],
         description: optionalLimitedString(body.description, "description", 1_000),
@@ -546,7 +698,8 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
         requestHash: requiredBytes32(body.requestHash, "requestHash"),
         units: requiredPositiveInteger(body.units, "units", 1_000),
         agentId: optionalLimitedString(body.agentId, "agentId", 120),
-        privacyScope: optionalMemoPrivacyScope(body.privacyScope)
+        privacyScope: optionalMemoPrivacyScope(body.privacyScope),
+        autoRetry: body.autoRetry === true
       }));
     }
 
@@ -566,6 +719,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
           requestHash: payment.requestHash,
           amountUsdc: payment.amountUsdc,
           units: payment.units,
+          settlementChainId: service.settlementChainId,
           memo: normalizeMemo(body.memo) ?? normalizeMemo(payment.memo)
         });
         if (circleSettlement.state === "PENDING") {
@@ -576,7 +730,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
           });
         }
         if (!circleSettlement.txHash) {
-          throw new Error("Circle settlement completed without an Arc transaction hash");
+          throw new Error("Circle settlement completed without a network transaction hash");
         }
         const settlement = await settleX402({
           authorizationId,
@@ -614,6 +768,29 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path === "/api/gateway/balances") {
       return ok(await gatewayBalances(requiredAddress(url.searchParams.get("address"), "address")));
+    }
+
+    if (req.method === "POST" && path === "/api/gateway/estimate") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await gatewayEstimate({
+        sourceChainId: requiredPositiveInteger(body.sourceChainId, "sourceChainId", 100_000_000),
+        destinationChainId: requiredPositiveInteger(body.destinationChainId, "destinationChainId", 100_000_000),
+        sourceDepositor: operatorAddress,
+        destinationRecipient: requiredAddress(body.destinationRecipient, "destinationRecipient"),
+        amountUsdc: requiredUsdcAmount(body.amountUsdc, "amountUsdc", config.gateway.maxTransferUsdc),
+        salt: requiredBytes32(body.salt, "salt")
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/gateway/transfer") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await gatewayTransfer({
+        operatorAddress,
+        burnIntent: requiredGatewayBurnIntent(body.burnIntent),
+        signature: requiredGatewaySignature(body.signature)
+      }));
     }
 
     if (req.method === "GET" && path === "/api/indexer/arc/status") {
@@ -746,6 +923,14 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     return response(404, {error: "not_found", path: rawPath, normalizedPath: path});
   } catch (error) {
+    if (error instanceof PolicyBlockedError) {
+      return response(error.status, {
+        error: storageFriendlyError(error),
+        code: "policy_blocked",
+        paymentId: error.paymentId,
+        remediation: error.remediation ?? null
+      });
+    }
     return response(statusFromError(error), {error: storageFriendlyError(error)});
   }
 }
@@ -755,8 +940,8 @@ export function corsHeaders(origin?: string) {
     ...securityHeaders(),
     "access-control-allow-origin": corsOrigin(origin),
     "access-control-allow-methods": "GET,POST,PATCH,HEAD,OPTIONS",
-    "access-control-allow-headers": "content-type,authorization,x-payment,x-accept-payment,x402-version,x-admin-secret,x-webhook-secret,x-indexer-secret,x-telegram-bot-api-secret-token",
-    "access-control-expose-headers": "x-accept-payment,x-payment-response,x402-version",
+    "access-control-allow-headers": "content-type,authorization,payment-signature,x-payment,x-accept-payment,x402-version,x-admin-secret,x-webhook-secret,x-indexer-secret,x-telegram-bot-api-secret-token",
+    "access-control-expose-headers": "payment-required,payment-response,x-accept-payment,x-payment-response,x402-version",
     "vary": "Origin"
   };
 }
@@ -789,6 +974,16 @@ function assertAllowedRequestOrigin(req: AppRequest) {
     (error as Error & {status?: number}).status = 403;
     throw error;
   }
+}
+
+// Derive the externally reachable base URL for discovery resource links. Prefer
+// the request host (correct behind the actual public domain); the config public
+// URL is the fallback (used when host is absent, e.g. in tests).
+function publicBaseUrl(req: AppRequest): string | undefined {
+  const host = req.host;
+  if (!host) return undefined;
+  const proto = header(req, "x-forwarded-proto") ?? (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  return `${proto}://${host}`;
 }
 
 function optionalNumber(value: unknown) {
@@ -977,9 +1172,9 @@ function limitedStringArray(value: unknown, label: string, maxItems: number, max
 }
 
 const gatewayDomains = [
-  {domain: 26, chainId: config.arc.chainId, chain: "Arc Testnet"},
-  {domain: 3, chainId: config.arbitrum.sepoliaChainId, chain: "Arbitrum Sepolia"},
-  {domain: 6, chainId: config.base.sepoliaChainId, chain: "Base Sepolia"}
+  {domain: 26, chainId: config.arc.chainId, chain: "Arc Testnet", usdc: config.contracts.usdc},
+  {domain: 3, chainId: config.arbitrum.sepoliaChainId, chain: "Arbitrum Sepolia", usdc: config.arbitrum.sepoliaUsdc},
+  {domain: 6, chainId: config.base.sepoliaChainId, chain: "Base Sepolia", usdc: config.base.sepoliaUsdc}
 ] as const;
 
 type GatewayBalanceResponse = {
@@ -991,27 +1186,38 @@ type GatewayBalanceResponse = {
   }>;
 };
 
+type GatewayDepositsResponse = {
+  token?: string;
+  deposits?: Array<{
+    depositor?: string;
+    domain?: number;
+    transactionHash?: string;
+    amount?: string;
+    status?: string;
+    blockHeight?: string;
+    blockHash?: string;
+    blockTimestamp?: string;
+  }>;
+};
+
 async function gatewayBalances(address: string) {
-  const apiUrl = config.gateway.apiUrl.replace(/\/+$/, "");
-  const upstream = await fetch(`${apiUrl}/balances`, {
-    method: "POST",
-    headers: {"content-type": "application/json"},
-    body: JSON.stringify({
+  const [aggregate, perDomain, pending] = await Promise.all([
+    gatewayPost<GatewayBalanceResponse>("/balances", {
+      token: config.gateway.token,
+      sources: [{depositor: address}]
+    }),
+    gatewayPost<GatewayBalanceResponse>("/balances", {
       token: config.gateway.token,
       sources: gatewayDomains.map(({domain}) => ({domain, depositor: address}))
-    })
-  });
-
-  const raw = await upstream.text().catch(() => "");
-  const parsed = raw ? tryJson<GatewayBalanceResponse>(raw) : {};
-  if (!upstream.ok) {
-    const error = new Error(gatewayErrorMessage(parsed, raw, upstream.status));
-    (error as Error & {status?: number}).status = 502;
-    throw error;
-  }
+    }),
+    gatewayPost<GatewayDepositsResponse>("/deposits", {
+      token: config.gateway.token,
+      sources: [{depositor: address}]
+    }).catch(() => ({token: config.gateway.token, deposits: []}))
+  ]);
 
   const balances = gatewayDomains.map((domain) => {
-    const match = parsed.balances?.find((item) => item.domain === domain.domain);
+    const match = perDomain.balances?.find((item) => item.domain === domain.domain);
     const balanceUsdc = parseGatewayBalance(match?.balance);
     return {
       ...domain,
@@ -1020,17 +1226,239 @@ async function gatewayBalances(address: string) {
       balance: balanceUsdc.toFixed(6)
     };
   });
+  const totalBalanceUsdc = parseGatewayBalance(aggregate.balances?.[0]?.balance);
+  const deposits = (pending.deposits ?? []).map((deposit) => {
+    const domain = gatewayDomains.find((item) => item.domain === deposit.domain);
+    return {
+      ...deposit,
+      chainId: domain?.chainId ?? null,
+      chain: domain?.chain ?? `Domain ${deposit.domain ?? "unknown"}`,
+      amountUsdc: parseGatewayBalance(deposit.amount)
+    };
+  });
 
   return {
-    token: parsed.token ?? config.gateway.token,
-    totalBalanceUsdc: roundUsdc(balances.reduce((sum, item) => sum + item.balanceUsdc, 0)),
+    token: aggregate.token ?? perDomain.token ?? config.gateway.token,
+    totalBalanceUsdc,
+    unifiedAvailableUsdc: totalBalanceUsdc,
     balances,
+    pendingDeposits: deposits,
     gateway: {
-      environment: apiUrl.includes("testnet") ? "testnet" : "mainnet",
-      apiUrl
+      environment: gatewayApiUrl().includes("testnet") ? "testnet" : "mainnet",
+      apiUrl: gatewayApiUrl()
     },
     updatedAt: new Date().toISOString()
   };
+}
+
+async function gatewayEstimate(input: {
+  sourceChainId: number;
+  destinationChainId: number;
+  sourceDepositor: string;
+  destinationRecipient: string;
+  amountUsdc: number;
+  salt: string;
+}) {
+  const source = requiredGatewayDomain(input.sourceChainId);
+  const destination = requiredGatewayDomain(input.destinationChainId);
+  if (source.domain === destination.domain) throw new Error("Gateway source and destination chains must differ");
+  if (!source.usdc || !destination.usdc) throw new Error("Gateway USDC is not configured for the selected chains");
+  const spec = {
+    version: 1,
+    sourceDomain: source.domain,
+    destinationDomain: destination.domain,
+    sourceContract: gatewayBytes32(config.gateway.walletAddress),
+    destinationContract: gatewayBytes32(config.gateway.minterAddress),
+    sourceToken: gatewayBytes32(source.usdc),
+    destinationToken: gatewayBytes32(destination.usdc),
+    sourceDepositor: gatewayBytes32(input.sourceDepositor),
+    destinationRecipient: gatewayBytes32(input.destinationRecipient),
+    sourceSigner: gatewayBytes32(input.sourceDepositor),
+    destinationCaller: gatewayBytes32(zeroAddress),
+    value: String(Math.round(input.amountUsdc * 1_000_000)),
+    salt: input.salt,
+    hookData: "0x"
+  };
+  const estimate = await gatewayPost<{
+    body?: Array<{burnIntent?: GatewayBurnIntent}>;
+    fees?: unknown;
+  }>("/estimate?enableForwarder=true", [{spec}]);
+  const burnIntent = estimate.body?.[0]?.burnIntent;
+  if (!burnIntent) throw gatewayUpstreamError("Gateway estimate did not return a burn intent");
+  const canonicalBurnIntent = normalizeGatewayBurnIntent(burnIntent);
+  return {
+    burnIntent: canonicalBurnIntent,
+    fees: estimate.fees ?? null,
+    source: {chainId: source.chainId, chain: source.chain, domain: source.domain},
+    destination: {chainId: destination.chainId, chain: destination.chain, domain: destination.domain},
+    destinationRecipient: input.destinationRecipient
+  };
+}
+
+function normalizeGatewayBurnIntent(value: GatewayBurnIntent): GatewayBurnIntent {
+  const normalized = structuredClone(value);
+  const fields: Array<keyof GatewayBurnIntent["spec"]> = [
+    "sourceContract", "destinationContract", "sourceToken", "destinationToken",
+    "sourceDepositor", "destinationRecipient", "sourceSigner", "destinationCaller", "salt"
+  ];
+  for (const field of fields) {
+    const candidate = normalized.spec[field];
+    if (typeof candidate !== "string") throw gatewayUpstreamError("Gateway returned an invalid transfer estimate");
+    if (/^0x[a-fA-F0-9]{40}$/.test(candidate)) {
+      (normalized.spec[field] as string) = pad(candidate.toLowerCase() as Hex, {size: 32});
+    }
+    if (!/^0x[a-fA-F0-9]{64}$/.test(normalized.spec[field] as string)) {
+      throw gatewayUpstreamError("Gateway returned an invalid transfer estimate");
+    }
+  }
+  return normalized;
+}
+
+type GatewayBurnIntent = {
+  maxBlockHeight: string;
+  maxFee: string;
+  spec: {
+    version: number;
+    sourceDomain: number;
+    destinationDomain: number;
+    sourceContract: string;
+    destinationContract: string;
+    sourceToken: string;
+    destinationToken: string;
+    sourceDepositor: string;
+    destinationRecipient: string;
+    sourceSigner: string;
+    destinationCaller: string;
+    value: string;
+    salt: string;
+    hookData: string;
+  };
+};
+
+async function gatewayTransfer(input: {operatorAddress: string; burnIntent: GatewayBurnIntent; signature: string}) {
+  const signer = gatewayAddressFromBytes32(input.burnIntent.spec.sourceSigner);
+  const depositor = gatewayAddressFromBytes32(input.burnIntent.spec.sourceDepositor);
+  if (signer.toLowerCase() !== input.operatorAddress.toLowerCase() || depositor.toLowerCase() !== input.operatorAddress.toLowerCase()) {
+    const error = new Error("Gateway burn intent must be signed for the connected depositor");
+    (error as Error & {status?: number}).status = 403;
+    throw error;
+  }
+  const source = gatewayDomains.find((item) => item.domain === input.burnIntent.spec.sourceDomain);
+  const destination = gatewayDomains.find((item) => item.domain === input.burnIntent.spec.destinationDomain);
+  if (!source || !destination) throw new Error("Gateway burn intent uses an unsupported domain");
+  if (source.domain === destination.domain) throw new Error("Gateway source and destination chains must differ");
+  if (input.burnIntent.spec.sourceContract.toLowerCase() !== gatewayBytes32(config.gateway.walletAddress).toLowerCase()) {
+    throw new Error("Gateway burn intent source contract mismatch");
+  }
+  if (input.burnIntent.spec.destinationContract.toLowerCase() !== gatewayBytes32(config.gateway.minterAddress).toLowerCase()) {
+    throw new Error("Gateway burn intent destination contract mismatch");
+  }
+  if (input.burnIntent.spec.sourceToken.toLowerCase() !== gatewayBytes32(source.usdc).toLowerCase()) {
+    throw new Error("Gateway burn intent source token mismatch");
+  }
+  if (input.burnIntent.spec.destinationToken.toLowerCase() !== gatewayBytes32(destination.usdc).toLowerCase()) {
+    throw new Error("Gateway burn intent destination token mismatch");
+  }
+  if (input.burnIntent.spec.destinationCaller.toLowerCase() !== gatewayBytes32(zeroAddress).toLowerCase()) {
+    throw new Error("Gateway destination caller is not supported");
+  }
+  const maxTransferAtomic = BigInt(Math.round(config.gateway.maxTransferUsdc * 1_000_000));
+  if (BigInt(input.burnIntent.spec.value) > maxTransferAtomic) {
+    throw new Error(`Gateway transfer exceeds the ${config.gateway.maxTransferUsdc} USDC limit`);
+  }
+  const result = await gatewayPost<Record<string, unknown>>("/transfer?enableForwarder=true", [{
+    burnIntent: input.burnIntent,
+    signature: input.signature
+  }]);
+  return {
+    ...result,
+    source: {chainId: source.chainId, chain: source.chain, domain: source.domain},
+    destination: {
+      chainId: destination.chainId,
+      chain: destination.chain,
+      domain: destination.domain,
+      recipient: gatewayAddressFromBytes32(input.burnIntent.spec.destinationRecipient)
+    },
+    forwarded: true
+  };
+}
+
+function requiredGatewayBurnIntent(value: unknown): GatewayBurnIntent {
+  if (!value || typeof value !== "object") throw new Error("burnIntent is required");
+  const burnIntent = value as GatewayBurnIntent;
+  const spec = burnIntent.spec;
+  if (!spec || typeof spec !== "object") throw new Error("burnIntent.spec is required");
+  if (spec.version !== 1) throw new Error("unsupported Gateway burn intent version");
+  for (const [label, candidate] of Object.entries({
+    sourceContract: spec.sourceContract,
+    destinationContract: spec.destinationContract,
+    sourceToken: spec.sourceToken,
+    destinationToken: spec.destinationToken,
+    sourceDepositor: spec.sourceDepositor,
+    destinationRecipient: spec.destinationRecipient,
+    sourceSigner: spec.sourceSigner,
+    destinationCaller: spec.destinationCaller,
+    salt: spec.salt
+  })) {
+    if (typeof candidate !== "string" || !/^0x[a-fA-F0-9]{64}$/.test(candidate)) throw new Error(`burnIntent.spec.${label} must be bytes32`);
+  }
+  if (!/^\d+$/.test(String(burnIntent.maxBlockHeight))) throw new Error("burnIntent.maxBlockHeight is invalid");
+  if (!/^\d+$/.test(String(burnIntent.maxFee))) throw new Error("burnIntent.maxFee is invalid");
+  if (!/^\d+$/.test(String(spec.value)) || BigInt(spec.value) <= 0n) throw new Error("burnIntent.spec.value is invalid");
+  if (typeof spec.hookData !== "string" || !/^0x(?:[a-fA-F0-9]{2})*$/.test(spec.hookData)) throw new Error("burnIntent.spec.hookData is invalid");
+  return burnIntent;
+}
+
+function requiredGatewaySignature(value: unknown) {
+  const signature = requiredLimitedString(value, "signature", 512);
+  if (!/^0x[a-fA-F0-9]+$/.test(signature)) throw new Error("signature must be hex");
+  return signature;
+}
+
+function requiredGatewayDomain(chainId: number) {
+  const domain = gatewayDomains.find((item) => item.chainId === chainId);
+  if (!domain) throw new Error(`Chain ${chainId} is not supported by Nexora Gateway`);
+  return domain;
+}
+
+function gatewayBytes32(address: string) {
+  if (!isAddress(address)) throw new Error("Gateway address is not configured");
+  return pad(address.toLowerCase() as Hex, {size: 32});
+}
+
+function gatewayAddressFromBytes32(value: string) {
+  const address = `0x${value.slice(-40)}`;
+  if (!isAddress(address)) throw new Error("Gateway bytes32 address is invalid");
+  return address;
+}
+
+function gatewayApiUrl() {
+  return config.gateway.apiUrl.replace(/\/+$/, "");
+}
+
+async function gatewayPost<T>(path: string, body: unknown): Promise<T> {
+  const upstream = await fetch(`${gatewayApiUrl()}${path}`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  return parseGatewayResponse<T>(upstream);
+}
+
+async function parseGatewayResponse<T>(upstream: Response): Promise<T> {
+  const raw = await upstream.text().catch(() => "");
+  const parsed = raw ? tryJson<T & {success?: boolean; error?: string; message?: string}>(raw) : {} as T;
+  if (!upstream.ok || (parsed && typeof parsed === "object" && "success" in parsed && parsed.success === false)) {
+    const error = gatewayUpstreamError(gatewayErrorMessage(parsed, raw, upstream.status));
+    throw error;
+  }
+  return parsed as T;
+}
+
+function gatewayUpstreamError(message: string) {
+  const error = new Error(message);
+  (error as Error & {status?: number}).status = 502;
+  return error;
 }
 
 function parseGatewayBalance(value: unknown) {
@@ -1069,6 +1497,7 @@ async function simulateAgentPolicy(input: {operatorAddress: string; agentId: str
   return {
     allowed: evaluation.allowed,
     reason: evaluation.reason ?? null,
+    remediation: evaluation.remediation ?? null,
     agent: {
       id: agent.id,
       address: agent.address,
@@ -1225,7 +1654,7 @@ async function platformRevenueDashboard() {
   const visibleAgents = store.agents.filter(isVisibleAgent);
   const visibleServiceIds = new Set(visibleServices.map((service) => service.id));
   const visibleAgentIds = new Set(visibleAgents.map((agent) => agent.id));
-  const visibleAgentWallets = new Set(visibleAgents.map((agent) => agent.address?.toLowerCase()).filter(Boolean) as string[]);
+  const visibleAgentWallets = new Set(visibleAgents.flatMap(agentWalletAddresses));
   const visiblePayments = store.payments.filter((payment) => {
     if (!visibleServiceIds.has(payment.serviceId)) return false;
     if (payment.agentId && !visibleAgentIds.has(payment.agentId)) return false;
@@ -1610,7 +2039,7 @@ async function agentFinancialMemory(operatorAddress: string) {
   const operator = operatorAddress.toLowerCase();
   const agents = store.agents.filter((agent) => isVisibleAgent(agent) && agent.operatorAddress.toLowerCase() === operator);
   const agentIds = new Set(agents.map((agent) => agent.id));
-  const agentWallets = new Set(agents.map((agent) => agent.address?.toLowerCase()).filter(Boolean));
+  const agentWallets = new Set(agents.flatMap(agentWalletAddresses));
   const visibleServiceIds = new Set(visibleServicesForStore(store.services).map((service) => service.id));
   const payments = store.payments
     .filter((payment) => (

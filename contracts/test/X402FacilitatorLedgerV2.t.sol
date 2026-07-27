@@ -10,6 +10,10 @@ contract MockUsdc {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
+    function decimals() external pure returns (uint8) {
+        return 6;
+    }
+
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
     }
@@ -38,6 +42,7 @@ contract MockUsdc {
 
 interface Vm {
     function prank(address sender) external;
+    function expectRevert(bytes4 selector) external;
 }
 
 contract X402FacilitatorLedgerV2Test {
@@ -82,6 +87,42 @@ contract X402FacilitatorLedgerV2Test {
 
         vm.prank(AGENT);
         ledger.settleAgentRequest(1, bytes32(uint256(1)), 2);
+    }
+
+    function testBatchPublishCreatesSequentialServicesForOnePublisher() external {
+        MockUsdc usdc = new MockUsdc();
+        NexoraPolicyRegistry policy = deployPolicyRegistry();
+        OperatorReputation reputation = deployReputation();
+        X402FacilitatorLedger ledger = deployLedger(address(usdc), address(policy), address(reputation));
+
+        string[] memory endpoints = new string[](2);
+        endpoints[0] = "service:one";
+        endpoints[1] = "service:two";
+        uint256[] memory prices = new uint256[](2);
+        prices[0] = 1e6;
+        prices[1] = 2e6;
+
+        vm.prank(PUBLISHER);
+        uint256[] memory ids = ledger.publishServices(endpoints, prices);
+        require(ids.length == 2 && ids[0] == 1 && ids[1] == 2, "IDS");
+        (address publisherOne,, uint256 priceOne, bool activeOne) = ledger.services(1);
+        (address publisherTwo,, uint256 priceTwo, bool activeTwo) = ledger.services(2);
+        require(publisherOne == PUBLISHER && publisherTwo == PUBLISHER, "PUBLISHER");
+        require(priceOne == 1e6 && priceTwo == 2e6 && activeOne && activeTwo, "SERVICE_DATA");
+    }
+
+    function testOwnerCanMigrateUsdcWithExpectedCurrentGuard() external {
+        MockUsdc current = new MockUsdc();
+        MockUsdc replacement = new MockUsdc();
+        NexoraPolicyRegistry policy = deployPolicyRegistry();
+        OperatorReputation reputation = deployReputation();
+        X402FacilitatorLedger ledger = deployLedger(address(current), address(policy), address(reputation));
+
+        ledger.migrateUsdc(address(current), address(replacement));
+        require(address(ledger.usdc()) == address(replacement), "USDC_NOT_MIGRATED");
+
+        vm.expectRevert(X402FacilitatorLedger.UnexpectedUsdc.selector);
+        ledger.migrateUsdc(address(current), address(replacement));
     }
 
     function deployPolicyRegistry() internal returns (NexoraPolicyRegistry) {

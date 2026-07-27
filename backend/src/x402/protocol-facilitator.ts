@@ -1,22 +1,50 @@
 import {createPublicClient, createWalletClient, encodeFunctionData, http, isAddress, parseAbi, verifyTypedData, type Address, type Hex} from "viem";
 import {privateKeyToAccount} from "viem/accounts";
 import {config} from "../config.js";
-import {pushNotification, readStore, updateStore} from "../store.js";
+import {insertPayment, pushNotification, readStore, RequestHashConflictError, updatePaymentById, updateStore} from "../store.js";
 
 const transferWithAuthorizationAbi = parseAbi([
   "function transferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce,uint8 v,bytes32 r,bytes32 s)"
 ]);
 
-const supportedNetworks = new Map([
-  ["arc-testnet", {chainId: config.arc.chainId, rpcUrl: config.arc.rpcUrl, usdc: config.contracts.usdc, label: "Arc Testnet"}],
-  ["arc", {chainId: config.arc.chainId, rpcUrl: config.arc.rpcUrl, usdc: config.contracts.usdc, label: "Arc Testnet"}]
+type NetworkEntry = {
+  chainId: number;
+  rpcUrl: string;
+  usdc: string;
+  label: string;
+  // EIP-712 domain used to verify the buyer's EIP-3009 signature. These are
+  // token-specific and MUST match the deployed USDC's name()/version() exactly,
+  // or verifyTypedData rejects every otherwise-valid signature. Values below were
+  // read on-chain: base-sepolia signs as "USDC" but arbitrum-sepolia as "USD Coin".
+  domainName: string;
+  domainVersion: string;
+};
+
+// EIP-3009 self-facilitation networks. Nexora's facilitator EOA submits
+// transferWithAuthorization and pays gas. An entry is only usable once its USDC
+// address is configured (see requiredNetwork / supportedX402 isAddress filter).
+// NOTE: on non-Arc chains gas is the native token (ETH), not USDC — the
+// facilitator EOA must hold native gas on each chain it settles on.
+const supportedNetworks = new Map<string, NetworkEntry>([
+  ["arc-testnet", {chainId: config.arc.chainId, rpcUrl: config.arc.rpcUrl, usdc: config.contracts.usdc, label: "Arc Testnet", domainName: "USDC", domainVersion: "2"}],
+  ["arc", {chainId: config.arc.chainId, rpcUrl: config.arc.rpcUrl, usdc: config.contracts.usdc, label: "Arc Testnet", domainName: "USDC", domainVersion: "2"}],
+  [`eip155:${config.arc.chainId}`, {chainId: config.arc.chainId, rpcUrl: config.arc.rpcUrl, usdc: config.contracts.usdc, label: "Arc Testnet", domainName: "USDC", domainVersion: "2"}],
+  ["base-sepolia", {chainId: config.base.sepoliaChainId, rpcUrl: config.base.sepoliaRpcUrl, usdc: config.base.sepoliaUsdc, label: "Base Sepolia", domainName: "USDC", domainVersion: "2"}],
+  [`eip155:${config.base.sepoliaChainId}`, {chainId: config.base.sepoliaChainId, rpcUrl: config.base.sepoliaRpcUrl, usdc: config.base.sepoliaUsdc, label: "Base Sepolia", domainName: "USDC", domainVersion: "2"}],
+  ["base", {chainId: config.base.mainnetChainId, rpcUrl: config.base.mainnetRpcUrl, usdc: config.base.mainnetUsdc, label: "Base", domainName: "USD Coin", domainVersion: "2"}],
+  [`eip155:${config.base.mainnetChainId}`, {chainId: config.base.mainnetChainId, rpcUrl: config.base.mainnetRpcUrl, usdc: config.base.mainnetUsdc, label: "Base", domainName: "USD Coin", domainVersion: "2"}],
+  ["arbitrum-sepolia", {chainId: config.arbitrum.sepoliaChainId, rpcUrl: config.arbitrum.sepoliaRpcUrl, usdc: config.arbitrum.sepoliaUsdc, label: "Arbitrum Sepolia", domainName: "USD Coin", domainVersion: "2"}],
+  [`eip155:${config.arbitrum.sepoliaChainId}`, {chainId: config.arbitrum.sepoliaChainId, rpcUrl: config.arbitrum.sepoliaRpcUrl, usdc: config.arbitrum.sepoliaUsdc, label: "Arbitrum Sepolia", domainName: "USD Coin", domainVersion: "2"}],
+  ["arbitrum", {chainId: config.arbitrum.oneChainId, rpcUrl: config.arbitrum.oneRpcUrl, usdc: config.arbitrum.oneUsdc, label: "Arbitrum One", domainName: "USD Coin", domainVersion: "2"}],
+  [`eip155:${config.arbitrum.oneChainId}`, {chainId: config.arbitrum.oneChainId, rpcUrl: config.arbitrum.oneRpcUrl, usdc: config.arbitrum.oneUsdc, label: "Arbitrum One", domainName: "USD Coin", domainVersion: "2"}]
 ]);
 
 type PaymentRequirements = {
   scheme: string;
   network: string;
-  maxAmountRequired: string;
-  resource: string;
+  maxAmountRequired?: string;
+  amount?: string;
+  resource: string | {url?: string; description?: string; mimeType?: string};
   description?: string;
   mimeType?: string;
   payTo: string;
@@ -31,8 +59,10 @@ type PaymentRequirements = {
 
 type PaymentPayload = {
   x402Version: number;
-  scheme: string;
-  network: string;
+  scheme?: string;
+  network?: string;
+  resource?: {url?: string; description?: string; mimeType?: string};
+  accepted?: PaymentRequirements;
   payload?: {
     signature?: string;
     authorization?: {
@@ -51,19 +81,34 @@ type FacilitatorInput = {
   paymentRequirements: unknown;
 };
 
+// Advertise one x402 kind per configured self-facilitation network. The
+// "arc"/"arbitrum" aliases point at the same chains as their canonical id, so
+// we only advertise the canonical network id to avoid duplicate discovery rows.
+const advertisedNetworks = [
+  "arc-testnet",
+  "base-sepolia",
+  "arbitrum-sepolia",
+  ...(config.circle.agentMainnetsEnabled ? ["base", "arbitrum"] : [])
+];
+
 export function supportedX402() {
   return {
-    x402Version: 1,
-    kinds: [
-      {
-        scheme: "exact",
-        network: "arc-testnet",
-        asset: config.contracts.usdc,
-        assetSymbol: "USDC",
-        settlement: "erc3009-transferWithAuthorization",
-        facilitator: "Nexora"
-      }
-    ].filter((item) => isAddress(item.asset))
+    x402Version: 2,
+    supportedVersions: [1, 2],
+    kinds: advertisedNetworks
+      .map((network) => {
+        const entry = supportedNetworks.get(network);
+        if (!entry) return null;
+        return {
+          scheme: "exact",
+          network,
+          asset: entry.usdc,
+          assetSymbol: "USDC",
+          settlement: "erc3009-transferWithAuthorization",
+          facilitator: "Nexora"
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item && isAddress(item.asset)))
   };
 }
 
@@ -151,11 +196,24 @@ export async function settleFacilitatorPayment(input: FacilitatorInput) {
     ]
   });
   const receipt = await publicClient.waitForTransactionReceipt({hash});
+  const success = receipt.status === "success";
+  await recordFacilitatorEvent(parsed, "settle", success ? "success" : "failed", {txHash: hash});
+  if (!success) {
+    return {
+      success: false,
+      errorReason: "x402 settlement transaction reverted",
+      transaction: hash,
+      network: parsed.requirements.network,
+      payer: parsed.authorization.from,
+      payerAddress: parsed.authorization.from,
+      amount: parsed.authorization.value,
+      asset: parsed.requirements.asset
+    };
+  }
   await recordExternalSettlement(parsed, hash);
-  await recordFacilitatorEvent(parsed, "settle", receipt.status === "success" ? "success" : "failed", {txHash: hash});
 
   return {
-    success: receipt.status === "success",
+    success: true,
     transaction: hash,
     network: parsed.requirements.network,
     payer: parsed.authorization.from,
@@ -195,12 +253,14 @@ async function recordFacilitatorEvent(
 
 function parseFacilitatorInput(input: FacilitatorInput) {
   const paymentPayload = input.paymentPayload as PaymentPayload;
-  const requirements = input.paymentRequirements as PaymentRequirements;
+  const rawRequirements = input.paymentRequirements as PaymentRequirements;
   if (!paymentPayload || typeof paymentPayload !== "object") throw new Error("paymentPayload is required");
-  if (!requirements || typeof requirements !== "object") throw new Error("paymentRequirements is required");
-  if (paymentPayload.x402Version !== 1) throw new Error("unsupported x402Version");
-  if (paymentPayload.scheme !== "exact" || requirements.scheme !== "exact") throw new Error("unsupported x402 scheme");
-  if (paymentPayload.network !== requirements.network) throw new Error("payment network mismatch");
+  if (!rawRequirements || typeof rawRequirements !== "object") throw new Error("paymentRequirements is required");
+  if (paymentPayload.x402Version !== 1 && paymentPayload.x402Version !== 2) throw new Error("unsupported x402Version");
+  const requirements = normalizeRequirements(rawRequirements, paymentPayload);
+  const selected = paymentPayload.x402Version === 2 ? paymentPayload.accepted : paymentPayload;
+  if (selected?.scheme !== "exact" || requirements.scheme !== "exact") throw new Error("unsupported x402 scheme");
+  if (selected?.network !== requirements.network) throw new Error("payment network mismatch");
 
   const network = requiredNetwork(requirements.network);
   if (!isAddress(requirements.asset) || requirements.asset.toLowerCase() !== network.usdc.toLowerCase()) {
@@ -220,6 +280,7 @@ function parseFacilitatorInput(input: FacilitatorInput) {
   const value = BigInt(requiredIntegerString(authorization.value, "authorization.value"));
   const maxAmountRequired = BigInt(requiredIntegerString(requirements.maxAmountRequired, "paymentRequirements.maxAmountRequired"));
   if (value === 0n) throw new Error("payment value is zero");
+  if (value < maxAmountRequired) throw new Error("payment value is below maxAmountRequired");
   if (value > maxAmountRequired) throw new Error("payment value exceeds maxAmountRequired");
 
   const validAfter = BigInt(requiredIntegerString(authorization.validAfter, "authorization.validAfter"));
@@ -240,7 +301,26 @@ function parseFacilitatorInput(input: FacilitatorInput) {
       validBefore: validBefore.toString(),
       nonce: authorization.nonce as string
     },
-    requestHash: requestHash(requirements.network, requirements.asset, authorization.nonce as string)
+    requestHash: requestHash(network.chainId, requirements.asset, authorization.nonce as string)
+  };
+}
+
+function normalizeRequirements(requirements: PaymentRequirements, paymentPayload: PaymentPayload): PaymentRequirements & {maxAmountRequired: string; resource: string} {
+  const selected = paymentPayload.x402Version === 2 ? paymentPayload.accepted : undefined;
+  const source = selected ?? requirements;
+  const resource = source.resource ?? requirements.resource ?? paymentPayload.resource;
+  const resourceUrl = typeof resource === "string" ? resource : resource?.url;
+  return {
+    ...requirements,
+    ...source,
+    scheme: String(source.scheme ?? requirements.scheme ?? ""),
+    network: String(source.network ?? requirements.network ?? ""),
+    maxAmountRequired: requiredIntegerString(source.amount ?? source.maxAmountRequired ?? requirements.amount ?? requirements.maxAmountRequired, "paymentRequirements.amount"),
+    resource: resourceUrl || "x402-resource",
+    description: source.description ?? (typeof resource === "object" ? resource?.description : undefined) ?? requirements.description,
+    mimeType: source.mimeType ?? (typeof resource === "object" ? resource?.mimeType : undefined) ?? requirements.mimeType,
+    payTo: String(source.payTo ?? requirements.payTo ?? ""),
+    asset: String(source.asset ?? requirements.asset ?? "")
   };
 }
 
@@ -249,8 +329,10 @@ async function verifyPaymentSignature(input: ReturnType<typeof parseFacilitatorI
   return verifyTypedData({
     address: input.authorization.from as Address,
     domain: {
-      name: input.requirements.extra?.name ?? "USDC",
-      version: input.requirements.extra?.version ?? "2",
+      // Per-network token domain (verified on-chain). requirements.extra may
+      // override for tokens whose name/version we don't have mapped.
+      name: input.requirements.extra?.name ?? network.domainName,
+      version: input.requirements.extra?.version ?? network.domainVersion,
       chainId: network.chainId,
       verifyingContract: input.requirements.asset as Address
     },
@@ -284,47 +366,59 @@ async function isRequestSettled(hash: string) {
 }
 
 async function recordExternalSettlement(input: ReturnType<typeof parseFacilitatorInput>, txHash: string) {
-  await updateStore((store) => {
-    const existing = store.payments.find((payment) => payment.requestHash === input.requestHash);
-    const amountUsdc = Number(input.authorization.value) / 1_000_000;
-    if (existing) {
+  const amountUsdc = Number(input.authorization.value) / 1_000_000;
+
+  // Upsert on request hash: settle the existing payment if one is on file,
+  // otherwise record a fresh external settlement.
+  const updated = await updatePaymentById(
+    (payment) => payment.requestHash === input.requestHash,
+    (existing) => {
       existing.status = "settled";
       existing.txHash = txHash;
       existing.settledAt = new Date().toISOString();
       return existing;
     }
-    const payment = {
-      id: crypto.randomUUID(),
-      authorizationId: input.requestHash,
-      serviceId: `external:${input.requestHash}`,
-      serviceName: input.requirements.description ?? input.requirements.resource,
-      payer: input.authorization.from,
-      agentId: null,
-      agentWallet: null,
-      publisherAddress: input.authorization.to,
-      amountUsdc,
-      grossAmountUsdc: amountUsdc,
-      platformFeeUsdc: 0,
-      publisherNetUsdc: amountUsdc,
-      facilitatorFeeBps: 0,
-      units: 1,
-      requestHash: input.requestHash,
-      status: "settled" as const,
-      policyReason: null,
-      txHash,
-      createdAt: new Date().toISOString(),
-      settledAt: new Date().toISOString()
-    };
-    store.payments.push(payment);
-    pushNotification(store, {
-      operatorAddress: input.authorization.to,
-      title: "x402 payment settled",
-      detail: `${amountUsdc} USDC for ${input.requirements.resource}`,
-      kind: "payment",
-      txHash
+  );
+  if (updated) return;
+
+  const payment = {
+    id: crypto.randomUUID(),
+    authorizationId: input.requestHash,
+    serviceId: `external:${input.requestHash}`,
+    serviceName: input.requirements.description ?? input.requirements.resource,
+    payer: input.authorization.from,
+    agentId: null,
+    agentWallet: null,
+    publisherAddress: input.authorization.to,
+    amountUsdc,
+    grossAmountUsdc: amountUsdc,
+    platformFeeUsdc: 0,
+    publisherNetUsdc: amountUsdc,
+    facilitatorFeeBps: 0,
+    units: 1,
+    requestHash: input.requestHash,
+    status: "settled" as const,
+    policyReason: null,
+    txHash,
+    createdAt: new Date().toISOString(),
+    settledAt: new Date().toISOString()
+  };
+  try {
+    await insertPayment(payment, (store) => {
+      pushNotification(store, {
+        operatorAddress: input.authorization.to,
+        title: "x402 payment settled",
+        detail: `${amountUsdc} USDC for ${input.requirements.resource}`,
+        kind: "payment",
+        txHash
+      });
     });
-    return payment;
-  });
+  } catch (error) {
+    // A concurrent settlement of the same request hash won the race and already
+    // recorded the settled payment. That is the desired end state, so treat the
+    // replay conflict as success rather than surfacing an error.
+    if (!(error instanceof RequestHashConflictError)) throw error;
+  }
 }
 
 function requiredNetwork(network: string) {
@@ -340,8 +434,8 @@ function requiredIntegerString(value: unknown, label: string) {
   return normalized;
 }
 
-function requestHash(network: string, asset: string, nonce: string) {
-  return `${network}:${asset.toLowerCase()}:${nonce.toLowerCase()}`;
+function requestHash(chainId: number, asset: string, nonce: string) {
+  return `eip155:${chainId}:${asset.toLowerCase()}:${nonce.toLowerCase()}`;
 }
 
 function splitSignature(signature: Hex) {
@@ -358,10 +452,13 @@ function normalizePrivateKey(value: string) {
 }
 
 function viemChain(network: string, chainId: number, rpcUrl: string) {
+  const nativeIsUsdc = chainId === config.arc.chainId;
   return {
     id: chainId,
     name: network,
-    nativeCurrency: {name: "USDC", symbol: "USDC", decimals: 18},
+    nativeCurrency: nativeIsUsdc
+      ? {name: "USDC", symbol: "USDC", decimals: 18}
+      : {name: "Ether", symbol: "ETH", decimals: 18},
     rpcUrls: {default: {http: [rpcUrl]}}
   } as const;
 }

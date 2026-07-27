@@ -2,7 +2,8 @@ import {useEffect, useState} from "react";
 import {ArrowLeft, CheckCircle2, Code2, ExternalLink, Layers, ReceiptText, ShieldCheck, Sparkles} from "lucide-react";
 import {PageHeader} from "@/components/PageHeader";
 import {apiGet} from "@/lib/api";
-import {arcTestnet, shortAddress} from "@/lib/arc";
+import {arcTestnet, marketplaceSettlementChains, shortAddress} from "@/lib/arc";
+import {contractAddressesForChain} from "@/lib/contracts";
 import {navigateTo} from "@/lib/router";
 import {formatCategory, formatKind, sampleInputForService, serviceCategory, serviceReadiness} from "@/lib/marketplace";
 import type {AppSnapshot} from "@/lib/api";
@@ -13,6 +14,9 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
   const [service, setService] = useState<Service | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const settlementChainId = service?.settlementChainId ?? arcTestnet.id;
+  const settlementChain = marketplaceSettlementChains.find((chain) => chain.id === settlementChainId) ?? marketplaceSettlementChains[0];
+  const memoBacked = settlementChainId === arcTestnet.id;
 
   useEffect(() => {
     let active = true;
@@ -85,12 +89,12 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
             <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Info label="Price" value={`${service.pricePerUnitUsdc} USDC`} />
               <Info label="Ledger service" value={service.chainServiceId ? `#${service.chainServiceId}` : "Not published"} />
-              <Info label="Receipt" value={service.chainServiceId ? "Memo-backed" : "After publish"} />
+              <Info label="Receipt" value={service.chainServiceId ? (memoBacked ? "Memo + ledger" : "Ledger verified") : "After publish"} />
               <Info label="Platform fee" value={`${(service.manifest.platformFeeBps / 100).toFixed(2)}%`} />
             </div>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <ReadinessMetric label="Settlement" value={service.chainServiceId ? "Arc ledger" : "Publish required"} tone={service.chainServiceId ? "mint" : "amber"} />
+              <ReadinessMetric label="Settlement" value={service.chainServiceId ? `${settlementChain.name} ledger` : "Publish required"} tone={service.chainServiceId ? "mint" : "amber"} />
               <ReadinessMetric label="Trust" value={service.trust ? `${service.trust.score}/100 ${service.trust.tier}` : serviceReadiness(service).label} tone={service.trust && service.trust.score >= 60 ? "mint" : service.trust && service.trust.score >= 40 ? "amber" : serviceReadiness(service).tone} />
               <ReadinessMetric label="Schema" value={`${service.manifest.inputSchema.length} input / ${service.manifest.outputSchema.length} outputs`} tone="slate" />
             </div>
@@ -145,7 +149,7 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
               </div>
               <p className="mt-4 break-all font-mono text-white">{service.publisherAddress}</p>
               <p className="mt-2 text-sm text-slate-400">{shortAddress(service.publisherAddress)}</p>
-              <a href={`${arcTestnet.explorerUrl.replace(/\/$/, "")}/address/${service.publisherAddress}`} target="_blank" rel="noreferrer" className="secondary-button mt-4 min-h-10 w-full justify-center px-4 py-2 text-sm">
+              <a href={`${settlementChain.blockExplorers.default.url.replace(/\/$/, "")}/address/${service.publisherAddress}`} target="_blank" rel="noreferrer" className="secondary-button mt-4 min-h-10 w-full justify-center px-4 py-2 text-sm">
                 View publisher <ExternalLink size={14} />
               </a>
             </div>
@@ -169,12 +173,12 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
               </div>
               <div className="mt-4 grid gap-2 text-sm">
                 <CheckRow label="Published on x402 ledger" active={Boolean(service.chainServiceId)} />
-                <CheckRow label="Arc Testnet USDC settlement" active={Boolean(service.chainServiceId)} />
-                <CheckRow label="Structured memo receipt" active={Boolean(service.chainServiceId)} />
+                <CheckRow label={`${settlementChain.name} USDC settlement`} active={Boolean(service.chainServiceId)} />
+                <CheckRow label={memoBacked ? "Structured memo + ledger receipt" : "Ledger-verified receipt"} active={Boolean(service.chainServiceId)} />
                 <CheckRow label="Publisher address visible" active={Boolean(service.publisherAddress)} />
               </div>
               {service.txHash ? (
-                <a className="secondary-button mt-5 min-h-10 w-full justify-center px-4 py-2 text-sm" href={explorerTx(service.txHash)} target="_blank" rel="noreferrer">
+                <a className="secondary-button mt-5 min-h-10 w-full justify-center px-4 py-2 text-sm" href={explorerTx(service.txHash, settlementChainId)} target="_blank" rel="noreferrer">
                   Publish transaction <ExternalLink size={14} />
                 </a>
               ) : null}
@@ -198,7 +202,7 @@ export default function MarketplaceServicePage({serviceId}: {serviceId: string})
             <div className="panel">
               <p className="section-kicker">Payment config</p>
               <div className="mt-4 grid gap-2">
-                <Info label="Network" value="Arc Testnet" />
+                <Info label="Network" value={settlementChain.name} />
                 <Info label="Asset" value="USDC" />
                 <Info label="Endpoint hash" value={service.endpointHash} />
                 <Info label="Revenue route" value="Publisher net + treasury fee" />
@@ -270,6 +274,8 @@ function Info({label, value}: {label: string; value: string}) {
 
 function serviceSnippet(service: Service) {
   const inputExample = service.manifest.inputSchema[0]?.name ?? "input";
+  const chainId = service.settlementChainId ?? arcTestnet.id;
+  const asset = contractAddressesForChain(chainId).usdc;
   return `import { nexoraX402 } from "@nexorafi/x402";
 
 app.post(
@@ -277,9 +283,9 @@ app.post(
   nexoraX402({
     facilitatorUrl: "https://nexorafibackend.vercel.app",
     payTo: "${service.publisherAddress}",
-    asset: "0x3600000000000000000000000000000000000000",
+    asset: "${asset}",
     price: "${service.pricePerUnitUsdc}",
-    network: "arc-testnet",
+    network: "${marketplaceNetworkKey(chainId)}",
     resource: "${service.endpointHash}",
     description: "${escapeSnippet(service.name)}"
   }),
@@ -294,9 +300,16 @@ function escapeSnippet(value: string) {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
-function explorerTx(txHash: string) {
+function explorerTx(txHash: string, chainId: number) {
   if (txHash.startsWith("http://") || txHash.startsWith("https://")) return txHash;
-  return `${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${txHash}`;
+  const chain = marketplaceSettlementChains.find((item) => item.id === chainId) ?? marketplaceSettlementChains[0];
+  return `${chain.blockExplorers.default.url.replace(/\/$/, "")}/tx/${txHash}`;
+}
+
+function marketplaceNetworkKey(chainId: number) {
+  if (chainId === 84532) return "base-sepolia";
+  if (chainId === 421614) return "arbitrum-sepolia";
+  return "arc-testnet";
 }
 
 function CodeBlock({code}: {code: string}) {

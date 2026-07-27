@@ -19,7 +19,6 @@ interface Vm {
 
 contract DeployNexoraUpgradeable {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    address internal constant ARC_TESTNET_USDC = 0x3600000000000000000000000000000000000000;
 
     struct DeployedContracts {
         address policyImplementation;
@@ -38,7 +37,10 @@ contract DeployNexoraUpgradeable {
 
     function run() external returns (DeployedContracts memory deployed) {
         address owner = vm.envOr("OWNER_ADDRESS", tx.origin);
-        address usdc = vm.envOr("USDC_ADDRESS", ARC_TESTNET_USDC);
+        // Chain-specific token configuration is mandatory. A silent Arc
+        // fallback can deploy a valid proxy wired to a non-contract on Base or
+        // Arbitrum and is therefore intentionally forbidden.
+        address usdc = vm.envAddress("USDC_ADDRESS");
         address treasury = vm.envOr("TREASURY_ADDRESS", owner);
         address aiOperator = vm.envOr("AI_OPERATOR_ADDRESS", owner);
         uint16 feeBps = uint16(vm.envOr("NEXORA_FEE_BPS", uint256(250)));

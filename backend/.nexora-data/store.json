@@ -1,7 +1,1243 @@
 {
   "agents": [],
-  "services": [],
+  "services": [
+    {
+      "id": "nexora-website-growth-analyzer",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Website Growth Analyzer",
+      "endpointHash": "website-analyzer-v1",
+      "pricePerUnitUsdc": 0.025,
+      "manifest": {
+        "kind": "website_analyzer",
+        "version": "1.0.0",
+        "description": "Reviews a website URL and returns page title, metadata, links, headings, and a short readable summary.",
+        "inputSchema": [
+          {
+            "name": "url",
+            "label": "Website URL",
+            "type": "url",
+            "required": true,
+            "placeholder": "https://example.com"
+          }
+        ],
+        "outputSchema": [
+          "title",
+          "description",
+          "summary",
+          "headings",
+          "links",
+          "wordCount"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:00:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-github-repo-analyzer",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "GitHub Repo Analyzer",
+      "endpointHash": "github-repo-analyzer-v1",
+      "pricePerUnitUsdc": 0.05,
+      "manifest": {
+        "kind": "github_repo_analyzer",
+        "version": "1.0.0",
+        "description": "Reviews a public GitHub repository and returns activity, language, license, popularity, and README signal.",
+        "inputSchema": [
+          {
+            "name": "repo",
+            "label": "GitHub repository",
+            "type": "text",
+            "required": true,
+            "placeholder": "owner/repo or GitHub URL"
+          }
+        ],
+        "outputSchema": [
+          "repo",
+          "description",
+          "stars",
+          "forks",
+          "openIssues",
+          "license",
+          "signal"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:01:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-x-account-analyzer",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "X Account Analyzer",
+      "endpointHash": "x-account-analyzer-v1",
+      "pricePerUnitUsdc": 0.035,
+      "manifest": {
+        "kind": "x_account_analyzer",
+        "version": "1.0.0",
+        "description": "Reviews a public X account when API credits are available and returns metrics, account signal, and score.",
+        "inputSchema": [
+          {
+            "name": "handle",
+            "label": "X account",
+            "type": "text",
+            "required": true,
+            "placeholder": "@username"
+          }
+        ],
+        "outputSchema": [
+          "account",
+          "metrics",
+          "score",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:02:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-contract-safety-check",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Contract Safety Check",
+      "endpointHash": "contract-safety-check-v1",
+      "pricePerUnitUsdc": 0.015,
+      "manifest": {
+        "kind": "contract_safety_check",
+        "version": "1.0.0",
+        "description": "Checks a contract address and returns a safety checklist before it is used in agent policy.",
+        "inputSchema": [
+          {
+            "name": "contract",
+            "label": "Contract address",
+            "type": "text",
+            "required": true,
+            "placeholder": "0x..."
+          }
+        ],
+        "outputSchema": [
+          "contract",
+          "riskLevel",
+          "checks",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:03:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-wallet-activity-summary",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Wallet Activity Summary",
+      "endpointHash": "wallet-activity-summary-v1",
+      "pricePerUnitUsdc": 0.015,
+      "manifest": {
+        "kind": "wallet_activity_summary",
+        "version": "1.0.0",
+        "description": "Summarizes wallet risk notes and recommended agent recipient policy.",
+        "inputSchema": [
+          {
+            "name": "wallet",
+            "label": "Wallet address",
+            "type": "text",
+            "required": true,
+            "placeholder": "0x..."
+          }
+        ],
+        "outputSchema": [
+          "wallet",
+          "riskLevel",
+          "summary",
+          "recommendedPolicy"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:04:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-landing-page-copy-reviewer",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Landing Page Copy Reviewer",
+      "endpointHash": "landing-page-copy-reviewer-v1",
+      "pricePerUnitUsdc": 0.02,
+      "manifest": {
+        "kind": "landing_page_copy_reviewer",
+        "version": "1.0.0",
+        "description": "Reviews landing page copy or a URL for clarity, conversion, and CTA quality.",
+        "inputSchema": [
+          {
+            "name": "url",
+            "label": "URL or page copy",
+            "type": "text",
+            "required": true,
+            "placeholder": "https://example.com or paste copy"
+          }
+        ],
+        "outputSchema": [
+          "score",
+          "issues",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:05:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-grant-application-reviewer",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Grant Application Reviewer",
+      "endpointHash": "grant-application-reviewer-v1",
+      "pricePerUnitUsdc": 0.03,
+      "manifest": {
+        "kind": "grant_application_reviewer",
+        "version": "1.0.0",
+        "description": "Reviews a grant application summary for infrastructure clarity, revenue proof, and ecosystem fit.",
+        "inputSchema": [
+          {
+            "name": "application",
+            "label": "Application summary",
+            "type": "text",
+            "required": true,
+            "placeholder": "Paste your grant summary"
+          }
+        ],
+        "outputSchema": [
+          "score",
+          "strengths",
+          "gaps",
+          "recommendations"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:06:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-meeting-brief",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Meeting Brief Agent",
+      "endpointHash": "meeting-brief-v1",
+      "pricePerUnitUsdc": 0.02,
+      "manifest": {
+        "kind": "meeting_brief",
+        "version": "1.0.0",
+        "description": "Turn a meeting goal, wallet, project, or URL into a short prep brief with questions and follow-up actions.",
+        "inputSchema": [
+          {
+            "name": "brief",
+            "label": "Meeting goal",
+            "type": "text",
+            "required": true,
+            "placeholder": "Discuss Arc x402 integration with a wallet team"
+          }
+        ],
+        "outputSchema": [
+          "summary",
+          "agenda",
+          "questions",
+          "followUps"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:07:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-arc-builder-research",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Arc Builder Research",
+      "endpointHash": "arc-builder-research-v1",
+      "pricePerUnitUsdc": 0.025,
+      "manifest": {
+        "kind": "arc_builder_research",
+        "version": "1.0.0",
+        "description": "Researches an Arc builder, project, or integration idea and returns fit, proof points, and collaboration angles.",
+        "inputSchema": [
+          {
+            "name": "target",
+            "label": "Builder or project",
+            "type": "text",
+            "required": true,
+            "placeholder": "Project name, URL, or wallet"
+          }
+        ],
+        "outputSchema": [
+          "summary",
+          "arcFit",
+          "questions",
+          "integrationIdeas"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:08:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-domain-name-research",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Domain Name Research",
+      "endpointHash": "domain-name-research-v1",
+      "pricePerUnitUsdc": 0.015,
+      "manifest": {
+        "kind": "domain_name_research",
+        "version": "1.0.0",
+        "description": "Reviews a domain or product name for positioning, trust, and launch-readiness signals.",
+        "inputSchema": [
+          {
+            "name": "domain",
+            "label": "Domain or name",
+            "type": "text",
+            "required": true,
+            "placeholder": "nexora.finance"
+          }
+        ],
+        "outputSchema": [
+          "domain",
+          "score",
+          "risks",
+          "suggestions",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:09:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-social-content-audit",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Social Content Audit",
+      "endpointHash": "social-content-audit-v1",
+      "pricePerUnitUsdc": 0.02,
+      "manifest": {
+        "kind": "social_content_audit",
+        "version": "1.0.0",
+        "description": "Reviews a post, thread draft, or announcement and returns clarity, audience fit, and CTA improvements.",
+        "inputSchema": [
+          {
+            "name": "content",
+            "label": "Post or thread draft",
+            "type": "text",
+            "required": true,
+            "placeholder": "Paste post copy or announcement"
+          }
+        ],
+        "outputSchema": [
+          "score",
+          "issues",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:10:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-stablecoin-route-report",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Stablecoin Route Report",
+      "endpointHash": "stablecoin-route-report-v1",
+      "pricePerUnitUsdc": 0.02,
+      "manifest": {
+        "kind": "stablecoin_route_report",
+        "version": "1.0.0",
+        "description": "Summarizes a stablecoin route, swap, bridge, or Save/Earn flow for cost, risk, and integration readiness.",
+        "inputSchema": [
+          {
+            "name": "route",
+            "label": "Route or flow",
+            "type": "text",
+            "required": true,
+            "placeholder": "USDC on Arc to EURC using Synthra"
+          }
+        ],
+        "outputSchema": [
+          "route",
+          "riskLevel",
+          "checks",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:11:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-policy-risk-review",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Agent Policy Risk Review",
+      "endpointHash": "policy-risk-review-v1",
+      "pricePerUnitUsdc": 0.025,
+      "manifest": {
+        "kind": "policy_risk_review",
+        "version": "1.0.0",
+        "description": "Reviews agent policy settings and returns risk notes, suggested caps, and approval recommendations.",
+        "inputSchema": [
+          {
+            "name": "policy",
+            "label": "Policy details",
+            "type": "text",
+            "required": true,
+            "placeholder": "Daily 100 USDC, tx cap 20, allow x402 ledger"
+          }
+        ],
+        "outputSchema": [
+          "riskLevel",
+          "checks",
+          "recommendedPolicy",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:12:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-launch-readiness-check",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Launch Readiness Check",
+      "endpointHash": "launch-readiness-check-v1",
+      "pricePerUnitUsdc": 0.03,
+      "manifest": {
+        "kind": "launch_readiness_check",
+        "version": "1.0.0",
+        "description": "Checks a product launch plan for docs, demo, contracts, receipts, security notes, and community-readiness.",
+        "inputSchema": [
+          {
+            "name": "launch",
+            "label": "Launch plan",
+            "type": "text",
+            "required": true,
+            "placeholder": "Paste launch plan, website, or demo checklist"
+          }
+        ],
+        "outputSchema": [
+          "score",
+          "strengths",
+          "gaps",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:13:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-x402-integration-planner",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "x402 Integration Planner",
+      "endpointHash": "x402-integration-planner-v1",
+      "pricePerUnitUsdc": 0.025,
+      "manifest": {
+        "kind": "x402_integration_planner",
+        "version": "1.0.0",
+        "description": "Creates a practical x402 integration checklist for a paid API, including requirements, SDK wiring, and settlement flow.",
+        "inputSchema": [
+          {
+            "name": "api",
+            "label": "API description",
+            "type": "text",
+            "required": true,
+            "placeholder": "Paid repo analyzer endpoint in Next.js"
+          }
+        ],
+        "outputSchema": [
+          "summary",
+          "steps",
+          "requirements",
+          "securityNotes"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:14:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-wallet-risk-approval-scan",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Wallet Risk + Approval Scan",
+      "endpointHash": "wallet-risk-approval-scan-v1",
+      "pricePerUnitUsdc": 0.05,
+      "manifest": {
+        "kind": "wallet_risk_approval_scan",
+        "version": "1.0.0",
+        "description": "Scans full historical USDC Approval logs through configured RPCs, then checks current allowance exposure before an agent pays or interacts.",
+        "inputSchema": [
+          {
+            "name": "wallet",
+            "label": "Wallet address",
+            "type": "text",
+            "required": true,
+            "placeholder": "0x..."
+          }
+        ],
+        "outputSchema": [
+          "wallet",
+          "riskLevel",
+          "live",
+          "providerStatus",
+          "metrics",
+          "exposure",
+          "chains",
+          "approvals",
+          "recommendedPolicy",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:15:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-agent-transaction-preflight",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Agent Transaction Preflight",
+      "endpointHash": "agent-transaction-preflight-v1",
+      "pricePerUnitUsdc": 0.035,
+      "manifest": {
+        "kind": "agent_transaction_preflight",
+        "version": "1.0.0",
+        "description": "Runs a live transaction preflight before an agent signs or submits a contract call, using Tenderly when configured or chain RPC simulation for supported networks.",
+        "inputSchema": [
+          {
+            "name": "transaction",
+            "label": "Transaction JSON",
+            "type": "text",
+            "required": true,
+            "placeholder": "{\"chainId\":5042002,\"from\":\"0x...\",\"to\":\"0x...\",\"data\":\"0x\",\"value\":\"0\",\"gas\":\"180000\"}"
+          }
+        ],
+        "outputSchema": [
+          "status",
+          "decision",
+          "provider",
+          "live",
+          "gasUsed",
+          "checks",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:16:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-contract-interaction-risk-scan",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Contract Interaction Risk Scan",
+      "endpointHash": "contract-interaction-risk-scan-v1",
+      "pricePerUnitUsdc": 0.04,
+      "manifest": {
+        "kind": "contract_interaction_risk_scan",
+        "version": "1.0.0",
+        "description": "Reviews a target contract and intended action before an agent signs, approves, swaps, pays, or adds it to allowlists.",
+        "inputSchema": [
+          {
+            "name": "interaction",
+            "label": "Contract and action",
+            "type": "text",
+            "required": true,
+            "placeholder": "0x... approve 25 USDC for x402 settlement"
+          }
+        ],
+        "outputSchema": [
+          "contract",
+          "action",
+          "riskLevel",
+          "checks",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:17:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-invoice-collection-agent",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Invoice Collection Agent",
+      "endpointHash": "invoice-collection-agent-v1",
+      "pricePerUnitUsdc": 0.05,
+      "manifest": {
+        "kind": "invoice_collection_agent",
+        "version": "1.0.0",
+        "description": "Turns invoice details into a USDC collection workflow with reminders, receipt checks, and follow-up actions.",
+        "inputSchema": [
+          {
+            "name": "invoice",
+            "label": "Invoice details",
+            "type": "text",
+            "required": true,
+            "placeholder": "Client, amount, due date, wallet, and deliverable"
+          }
+        ],
+        "outputSchema": [
+          "invoice",
+          "amountUsdc",
+          "dueDate",
+          "actions",
+          "reminders",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:18:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-escrow-milestone-monitor",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Escrow Milestone Monitor",
+      "endpointHash": "escrow-milestone-monitor-v1",
+      "pricePerUnitUsdc": 0.06,
+      "manifest": {
+        "kind": "escrow_milestone_monitor",
+        "version": "1.0.0",
+        "description": "Monitors escrow milestones, evidence, deadline risk, and release/refund recommendations while keeping final approval with users.",
+        "inputSchema": [
+          {
+            "name": "escrow",
+            "label": "Escrow terms",
+            "type": "text",
+            "required": true,
+            "placeholder": "Milestones, due dates, amount, parties, and evidence links"
+          }
+        ],
+        "outputSchema": [
+          "milestones",
+          "riskLevel",
+          "reminders",
+          "recommendedActions",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": true,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:19:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-counterparty-compliance-screen",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Counterparty Compliance Screen",
+      "endpointHash": "counterparty-compliance-screen-v1",
+      "pricePerUnitUsdc": 0.08,
+      "manifest": {
+        "kind": "counterparty_compliance_screen",
+        "version": "1.0.0",
+        "description": "Screens a wallet or counterparty with live chain telemetry, local Nexora activity, and explicit KYT provider readiness.",
+        "inputSchema": [
+          {
+            "name": "counterparty",
+            "label": "Wallet or counterparty",
+            "type": "text",
+            "required": true,
+            "placeholder": "0x... or company/payment context"
+          }
+        ],
+        "outputSchema": [
+          "counterparty",
+          "wallet",
+          "decision",
+          "live",
+          "riskLevel",
+          "metrics",
+          "localActivity",
+          "providerStatus",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:20:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-liquidation-risk-monitor",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Liquidation Risk Monitor",
+      "endpointHash": "liquidation-risk-monitor-v1",
+      "pricePerUnitUsdc": 0.07,
+      "manifest": {
+        "kind": "liquidation_risk_monitor",
+        "version": "1.0.0",
+        "description": "Reviews DeFi position details and produces liquidation-risk triggers, alert thresholds, and agent-safe recommendations.",
+        "inputSchema": [
+          {
+            "name": "position",
+            "label": "Position details",
+            "type": "text",
+            "required": true,
+            "placeholder": "Protocol, wallet, collateral, debt, health factor, chain"
+          }
+        ],
+        "outputSchema": [
+          "riskLevel",
+          "healthFactor",
+          "thresholds",
+          "alerts",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:21:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-vault-apy-monitor",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Vault APY Monitor",
+      "endpointHash": "vault-apy-monitor-v1",
+      "pricePerUnitUsdc": 0.04,
+      "manifest": {
+        "kind": "vault_apy_monitor",
+        "version": "1.0.0",
+        "description": "Monitors USDC yield opportunities from live DeFiLlama market data and returns risk notes without enabling execution.",
+        "inputSchema": [
+          {
+            "name": "vault",
+            "label": "Vault or strategy details",
+            "type": "text",
+            "required": true,
+            "placeholder": "USDC yield opportunity on Base, Arbitrum, or Arc"
+          }
+        ],
+        "outputSchema": [
+          "vault",
+          "apy",
+          "riskLevel",
+          "providerStatus",
+          "monitoring",
+          "candidates",
+          "risks",
+          "checks",
+          "rebalanceTriggers",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:22:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-subscription-payment-agent",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Subscription Payment Agent",
+      "endpointHash": "subscription-payment-agent-v1",
+      "pricePerUnitUsdc": 0.05,
+      "manifest": {
+        "kind": "subscription_payment_agent",
+        "version": "1.0.0",
+        "description": "Creates a policy-controlled recurring USDC payment plan with spend caps, approval rules, and receipt expectations.",
+        "inputSchema": [
+          {
+            "name": "subscription",
+            "label": "Subscription terms",
+            "type": "text",
+            "required": true,
+            "placeholder": "Vendor, amount, interval, payee wallet, approval threshold"
+          }
+        ],
+        "outputSchema": [
+          "payee",
+          "amountUsdc",
+          "interval",
+          "policy",
+          "approvalRules",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:23:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-publisher-revenue-intelligence",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Publisher Revenue Intelligence",
+      "endpointHash": "publisher-revenue-intelligence-v1",
+      "pricePerUnitUsdc": 0.04,
+      "manifest": {
+        "kind": "publisher_revenue_intelligence",
+        "version": "1.0.0",
+        "description": "Analyzes publisher service revenue, conversion, failed payments, fees, and pricing opportunities for x402 APIs.",
+        "inputSchema": [
+          {
+            "name": "publisher",
+            "label": "Publisher or service details",
+            "type": "text",
+            "required": true,
+            "placeholder": "Publisher wallet, service id, or revenue notes"
+          }
+        ],
+        "outputSchema": [
+          "publisher",
+          "metrics",
+          "pricingSignals",
+          "recommendations",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:24:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-dao-grant-payout-agent",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "DAO / Grant Payout Agent",
+      "endpointHash": "dao-grant-payout-agent-v1",
+      "pricePerUnitUsdc": 0.06,
+      "manifest": {
+        "kind": "dao_grant_payout_agent",
+        "version": "1.0.0",
+        "description": "Builds a DAO or grant payout plan with milestone checks, recipient policy, approval requirements, and receipt tracking.",
+        "inputSchema": [
+          {
+            "name": "payout",
+            "label": "Payout plan",
+            "type": "text",
+            "required": true,
+            "placeholder": "Recipients, amounts, milestones, due dates, approval rules"
+          }
+        ],
+        "outputSchema": [
+          "recipients",
+          "totalUsdc",
+          "milestones",
+          "approvalRules",
+          "risks",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:25:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "nexora-swap-route-quote-agent",
+      "chainServiceId": null,
+      "publisherAddress": "0x1BF4885B90A5e861F9a130a62b3B88bC97F93eF0",
+      "name": "Swap / Route Quote Agent",
+      "endpointHash": "swap-route-quote-agent-v1",
+      "pricePerUnitUsdc": 0.04,
+      "manifest": {
+        "kind": "swap_route_quote_agent",
+        "version": "1.0.0",
+        "description": "Prepares a same-chain swap or route quote review with slippage, quote freshness, asset decimals, and execution checks.",
+        "inputSchema": [
+          {
+            "name": "quote",
+            "label": "Swap or route request",
+            "type": "text",
+            "required": true,
+            "placeholder": "Swap 100 USDC to EURC on Arc with 1% slippage"
+          }
+        ],
+        "outputSchema": [
+          "route",
+          "amount",
+          "slippageBps",
+          "riskLevel",
+          "checks",
+          "summary"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-06-01T00:26:00.000Z",
+      "archivedAt": null,
+      "archiveReason": null,
+      "settlementChainId": null,
+      "trust": null
+    },
+    {
+      "id": "5042002:1",
+      "chainServiceId": 1,
+      "settlementChainId": 5042002,
+      "publisherAddress": "0x3333333333333333333333333333333333333333",
+      "name": "Arc Report",
+      "endpointHash": "endpoint-arc-1",
+      "pricePerUnitUsdc": 0.5,
+      "manifest": {
+        "kind": "generic",
+        "version": "1.0.0",
+        "description": "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
+        "inputSchema": [],
+        "outputSchema": [
+          "summary",
+          "note"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200,
+        "webhookUrl": null
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-07-25T09:52:01.356Z",
+      "archivedAt": null,
+      "archiveReason": null
+    },
+    {
+      "id": "84532:1",
+      "chainServiceId": 1,
+      "settlementChainId": 84532,
+      "publisherAddress": "0x3333333333333333333333333333333333333333",
+      "name": "Base Report",
+      "endpointHash": "endpoint-base-1",
+      "pricePerUnitUsdc": 0.5,
+      "manifest": {
+        "kind": "generic",
+        "version": "1.0.0",
+        "description": "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
+        "inputSchema": [],
+        "outputSchema": [
+          "summary",
+          "note"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200,
+        "webhookUrl": null
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-07-25T09:52:01.360Z",
+      "archivedAt": null,
+      "archiveReason": null
+    },
+    {
+      "id": "legacy-svc",
+      "chainServiceId": 7,
+      "publisherAddress": "0x3333333333333333333333333333333333333333",
+      "name": "Legacy",
+      "endpointHash": "endpoint-legacy",
+      "pricePerUnitUsdc": 1,
+      "manifest": {
+        "kind": "generic",
+        "version": "1.0.0",
+        "description": "legacy",
+        "inputSchema": [],
+        "outputSchema": [],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200
+      },
+      "active": true,
+      "featured": false,
+      "createdAt": "2026-07-20T19:35:29.220Z",
+      "settlementChainId": 5042002,
+      "archivedAt": null,
+      "archiveReason": null,
+      "trust": null
+    },
+    {
+      "id": "5042002:12",
+      "chainServiceId": 12,
+      "settlementChainId": 5042002,
+      "publisherAddress": "0x4444444444444444444444444444444444444444",
+      "name": "Multichain Report",
+      "endpointHash": "multichain-report-v1",
+      "pricePerUnitUsdc": 0.25,
+      "manifest": {
+        "kind": "generic",
+        "version": "1.0.0",
+        "description": "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
+        "inputSchema": [],
+        "outputSchema": [
+          "summary",
+          "note"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200,
+        "webhookUrl": null
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-07-25T09:52:01.370Z",
+      "archivedAt": null,
+      "archiveReason": null
+    },
+    {
+      "id": "84532:8",
+      "chainServiceId": 8,
+      "settlementChainId": 84532,
+      "publisherAddress": "0x4444444444444444444444444444444444444444",
+      "name": "Multichain Report",
+      "endpointHash": "multichain-report-v1",
+      "pricePerUnitUsdc": 0.25,
+      "manifest": {
+        "kind": "generic",
+        "version": "1.0.0",
+        "description": "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
+        "inputSchema": [],
+        "outputSchema": [
+          "summary",
+          "note"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200,
+        "webhookUrl": null
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-07-25T09:52:01.382Z",
+      "archivedAt": null,
+      "archiveReason": null
+    },
+    {
+      "id": "421614:5",
+      "chainServiceId": 5,
+      "settlementChainId": 421614,
+      "publisherAddress": "0x4444444444444444444444444444444444444444",
+      "name": "Multichain Report",
+      "endpointHash": "multichain-report-v1",
+      "pricePerUnitUsdc": 0.25,
+      "manifest": {
+        "kind": "generic",
+        "version": "1.0.0",
+        "description": "Hosted x402 API service. Add a backend executor or webhook to return structured results.",
+        "inputSchema": [],
+        "outputSchema": [
+          "summary",
+          "note"
+        ],
+        "revenueMode": "per_execution",
+        "platformFeeBps": 200,
+        "webhookUrl": null
+      },
+      "active": true,
+      "featured": false,
+      "txHash": null,
+      "createdAt": "2026-07-25T09:52:01.389Z",
+      "archivedAt": null,
+      "archiveReason": null
+    }
+  ],
   "payments": [],
+  "automationRecipes": [],
+  "automationRuns": [],
   "earnActivations": [
     {
       "id": "e685c758-c7d0-4db6-a21f-1dfcd844324b",
@@ -18,5 +1254,328 @@
       "createdAt": "2026-05-16T16:34:00.107Z"
     }
   ],
-  "subscriptions": []
+  "subscriptions": [],
+  "escrows": [],
+  "escrowReminderRuns": [],
+  "notifications": [
+    {
+      "id": "86c465a3-6946-4247-af98-f9a4708710d2",
+      "createdAt": "2026-07-25T09:52:01.389Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "467c4f32-991f-4a1e-a248-7425f5eeb156",
+      "createdAt": "2026-07-25T09:52:01.382Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "6006156a-db1b-4efb-9687-35a78a5014cd",
+      "createdAt": "2026-07-25T09:52:01.370Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "be5885da-19a8-441d-a7e3-fc7fe61841d7",
+      "createdAt": "2026-07-25T09:52:01.360Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "aa4f2c9e-7866-4b91-9e5a-1d6b80d0a37e",
+      "createdAt": "2026-07-25T09:52:01.356Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "14773024-ee90-4b27-9249-8a1a8472257d",
+      "createdAt": "2026-07-25T09:50:35.020Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "9c582152-9cc5-4ffb-be63-2037105e3593",
+      "createdAt": "2026-07-25T09:50:35.014Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "ee77d322-b983-4b0f-bf9d-628ff12d2910",
+      "createdAt": "2026-07-25T09:50:35.010Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "e2269d89-db2f-4c76-9cd4-eab81c862ad3",
+      "createdAt": "2026-07-25T09:50:35.006Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "06c35d59-44ea-4a82-bbd0-41e67faafcc3",
+      "createdAt": "2026-07-25T09:50:34.995Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "1f73e4ef-e93b-404e-94db-bbfa46a7ef41",
+      "createdAt": "2026-07-25T09:48:23.086Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "e5e8319f-c808-4910-bb3c-a95bfc6b0a45",
+      "createdAt": "2026-07-25T09:48:23.085Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "36249de4-69c1-4ccf-b6fe-77ab56954f71",
+      "createdAt": "2026-07-25T09:48:23.082Z",
+      "operatorAddress": "0x4444444444444444444444444444444444444444",
+      "title": "API published",
+      "detail": "Multichain Report · 0.25 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "b774d5de-329d-4b33-815c-49a86287c57a",
+      "createdAt": "2026-07-25T09:48:23.078Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "6da66537-88ce-4e56-a1e2-8b6320e0dc6b",
+      "createdAt": "2026-07-25T09:48:23.069Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "3eb630b9-ec1a-4396-92a8-82a844c064f0",
+      "createdAt": "2026-07-24T22:08:21.396Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "ebd3a7fd-08af-4db8-bd0e-a2fa9e1bf2a9",
+      "createdAt": "2026-07-24T22:08:21.388Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "ba3b7273-385b-4cf5-b3a4-7259c0aafee8",
+      "createdAt": "2026-07-24T15:19:01.383Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "d371cb6b-afee-4d2f-83ad-03e144b01fb8",
+      "createdAt": "2026-07-24T15:19:01.380Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "0b9893ce-8306-4f89-9eef-1079fb4e6cca",
+      "createdAt": "2026-07-24T15:16:10.576Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "2e49a4e2-8e7a-490c-bd21-20504773f5a0",
+      "createdAt": "2026-07-24T15:16:10.574Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "6e62651b-01cb-4425-bf28-ae712fe9c6d3",
+      "createdAt": "2026-07-24T11:16:38.256Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "21bfebcd-1d75-451c-8b96-74da05246724",
+      "createdAt": "2026-07-24T11:16:38.244Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "4466a353-eb17-45c9-b71b-325a8a852515",
+      "createdAt": "2026-07-24T11:12:47.288Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "9cd952ad-3ccf-49a8-81f7-c9d66bef3822",
+      "createdAt": "2026-07-24T11:12:47.283Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "a07bb3f5-57cb-4abd-862d-6aa08d07e8c4",
+      "createdAt": "2026-07-24T11:11:19.568Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "570cdf3b-1317-47ed-96e3-e9f766320780",
+      "createdAt": "2026-07-24T11:11:19.564Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "5406316d-5e9f-4b21-b09c-dd47b6b35b74",
+      "createdAt": "2026-07-24T00:47:08.194Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "1293f85e-1220-4219-a09b-1650c66684c4",
+      "createdAt": "2026-07-24T00:47:08.190Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "6a585fef-09fa-4878-9fe0-54e61335eccc",
+      "createdAt": "2026-07-21T17:17:48.053Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "08a0ca21-6de6-425b-9f05-370bbb0c3a91",
+      "createdAt": "2026-07-21T17:17:48.048Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "7d24f4e6-8a6a-473c-9e42-4aa8956751ff",
+      "createdAt": "2026-07-21T14:21:23.320Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "990613e1-d45b-483e-9730-bb7411887b8d",
+      "createdAt": "2026-07-21T14:21:23.316Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "d2ffc1b4-ce39-402e-8e16-b5c2786b989f",
+      "createdAt": "2026-07-20T19:57:38.145Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "d438e8b2-21cf-48be-ac99-752a51d36a4b",
+      "createdAt": "2026-07-20T19:57:38.142Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "d3ee9295-f3e5-4bab-90b7-bcde26425e1b",
+      "createdAt": "2026-07-20T19:54:33.028Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "f72b68b0-0262-47e8-aeed-f9b7481209a9",
+      "createdAt": "2026-07-20T19:54:33.025Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "c72652af-0457-453e-bca6-d5064ea8ca7e",
+      "createdAt": "2026-07-20T19:35:29.215Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Base Report · 0.5 USDC per call",
+      "kind": "system"
+    },
+    {
+      "id": "b03987b7-3765-4a0c-a7a1-16093b132b99",
+      "createdAt": "2026-07-20T19:35:29.213Z",
+      "operatorAddress": "0x3333333333333333333333333333333333333333",
+      "title": "API published",
+      "detail": "Arc Report · 0.5 USDC per call",
+      "kind": "system"
+    }
+  ],
+  "notificationPreferences": [],
+  "notificationDeliveries": [],
+  "facilitatorEvents": [],
+  "indexedEvents": [],
+  "indexerCursors": [],
+  "paymentIntents": [],
+  "approvalRequests": []
 }

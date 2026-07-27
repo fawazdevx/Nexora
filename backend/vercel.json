@@ -1,4 +1,22 @@
 {
+  "rewrites": [
+    {
+      "source": "/x402/supported",
+      "destination": "/api/x402/supported"
+    },
+    {
+      "source": "/x402/verify",
+      "destination": "/api/x402/verify"
+    },
+    {
+      "source": "/x402/settle",
+      "destination": "/api/x402/facilitator-settle"
+    },
+    {
+      "source": "/.well-known/x402",
+      "destination": "/api/.well-known/x402"
+    }
+  ],
   "functions": {
     "api/[...path].ts": {
       "maxDuration": 30
