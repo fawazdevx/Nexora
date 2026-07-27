@@ -108,12 +108,20 @@ Meridian acts as the payment facilitator. It validates the signed Permit2 author
 
 ## SDK
 
-The `sdk/x402` package contains the `@nexorafi/x402` v0.3 release candidate. It provides:
+The `@nexorafi/x402` v0.3 SDK is live on npm.
+
+```bash
+npm install @nexorafi/x402@0.3
+```
+
+It provides:
 
 - x402 v1 and v2 headers and CAIP-2 network identifiers
 - Arc, Base, and Arbitrum USDC route types
 - payment requirement, authorization, settlement, and replay types
 - Circle intent, approval, external receipt, and BOT Permit2 helpers
+
+Developers building on supported or integrated chains can use the SDK to add paid game actions, API calls, marketplace purchases, and other metered resources. Applications manage their own authentication, player balances, entitlements, refunds, payouts, and internal ledger.
 
 See the [SDK guide](sdk/x402/README.md) for integration examples.
 
