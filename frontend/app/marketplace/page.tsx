@@ -386,7 +386,7 @@ export default function MarketplacePage() {
         memoIndex: memoSettlement?.memoIndex
       });
       if (settlement.status === "pending_settlement") {
-        await snapshot.refetch();
+        void snapshot.refetch().catch(() => undefined);
         toast.success(`Agent settlement is pending on Circle. Execute ${service.name} after the network transaction confirms.`, {id: toastId});
         return;
       }
@@ -396,7 +396,6 @@ export default function MarketplacePage() {
         authorizationId: result.authorizationId,
         args: executionArgs(service, serviceInputs[serviceKey] ?? "")
       });
-      await snapshot.refetch();
       setServiceResults((current) => ({...current, [serviceKey]: execution.result}));
       setResultDialog({service, result: execution.result});
       if (settlement.txHash) {
@@ -404,6 +403,7 @@ export default function MarketplacePage() {
       } else {
         toast.success(`Settlement recorded for ${service.name}.`, {id: toastId});
       }
+      void snapshot.refetch().catch(() => undefined);
     } catch (error) {
       toast.error(marketplaceErrorMessage(error), {id: toastId});
     } finally {
@@ -439,7 +439,6 @@ export default function MarketplacePage() {
         data: executionArgs(service, serviceInputs[serviceKey] ?? ""),
         confirmed: true
       });
-      await snapshot.refetch();
       setServiceResults((current) => ({...current, [serviceKey]: execution.result}));
       setResultDialog({service, result: execution.result});
       if (execution.receipt.txHash) {
@@ -447,6 +446,7 @@ export default function MarketplacePage() {
       } else {
         toast.success(`Circle Gateway settled ${service.name}.`, {id: toastId});
       }
+      void snapshot.refetch().catch(() => undefined);
     } catch (error) {
       toast.error(marketplaceErrorMessage(error), {id: toastId});
     } finally {
