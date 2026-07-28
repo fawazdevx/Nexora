@@ -29,6 +29,30 @@ type CanonicalCatalog = {
     routes: Array<{id: string; chainServiceId: number; settlementChainId: number; txHash?: string | null}>;
   }>;
 };
+type GatewayCatalog = {
+  ready: boolean;
+  status: string;
+  mode: "testnet" | "mainnet";
+  sellerAddress: string | null;
+  networks: string[];
+  networkDetails: Array<{network: string; chainId: number; label: string}>;
+  services: Array<{
+    name: string;
+    endpointHash: string;
+    pricePerUnitUsdc: number;
+    manifestKind: Service["manifest"]["kind"];
+    manifest: Service["manifest"];
+    path: string;
+    resource: string;
+    method: "POST";
+  }>;
+};
+type PublicMarketplaceCatalog = {
+  schemaVersion: string;
+  marketplace: "Nexora";
+  x402: GatewayCatalog;
+  ledgerRoutes: CanonicalCatalog;
+};
 type SortKey = "featured" | "priceAsc" | "priceDesc" | "name";
 type PrivacyScope = "public" | "selective" | "private";
 
@@ -100,16 +124,21 @@ export default function MarketplacePage() {
   const [switchingNetwork, setSwitchingNetwork] = useState(false);
   const [publishingMissingRoutes, setPublishingMissingRoutes] = useState(false);
   const [canonicalCatalog, setCanonicalCatalog] = useState<CanonicalCatalog | null>(null);
+  const [gatewayCatalog, setGatewayCatalog] = useState<GatewayCatalog | null>(null);
   const [routeImportHash, setRouteImportHash] = useState("");
   const [routeImportChainId, setRouteImportChainId] = useState(arcTestnet.id);
   const [importingRoute, setImportingRoute] = useState(false);
   const snapshot = useAppSnapshot();
   const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
   const services = snapshot.data?.services ?? [];
+  const directoryServices = useMemo(
+    () => marketplaceDirectoryServices(services, gatewayCatalog),
+    [services, gatewayCatalog]
+  );
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
   const serviceGroups = useMemo(
-    () => groupMarketplaceServices(services, canonicalCatalog?.publisherAddress),
-    [services, canonicalCatalog?.publisherAddress]
+    () => groupMarketplaceServices(directoryServices, canonicalCatalog?.publisherAddress),
+    [directoryServices, canonicalCatalog?.publisherAddress]
   );
   const isCanonicalPublisher = Boolean(
     address
@@ -154,15 +183,19 @@ export default function MarketplacePage() {
 
   useEffect(() => {
     let active = true;
-    apiGet<CanonicalCatalog>("/api/marketplace/canonical-catalog")
+    apiGet<PublicMarketplaceCatalog>("/api/marketplace/catalog")
       .then((catalog) => {
         if (!active) return;
-        setCanonicalCatalog(catalog);
-        const firstConfigured = catalog.chains.find((item) => item.configured);
+        setCanonicalCatalog(catalog.ledgerRoutes);
+        setGatewayCatalog(catalog.x402);
+        const firstConfigured = catalog.ledgerRoutes.chains.find((item) => item.configured);
         if (firstConfigured) setRouteImportChainId(firstConfigured.chainId);
       })
       .catch(() => {
-        if (active) setCanonicalCatalog(null);
+        if (active) {
+          setCanonicalCatalog(null);
+          setGatewayCatalog(null);
+        }
       });
     return () => {
       active = false;
@@ -171,7 +204,12 @@ export default function MarketplacePage() {
 
   const kinds = useMemo(() => Array.from(new Set(serviceGroups.map((group) => group.service.manifest.kind))), [serviceGroups]);
   const settledVolume = snapshot.data?.stats.usdcSettled ?? 0;
-  const multichainServices = serviceGroups.filter((group) => marketplaceSettlementChains.every((chain) => routeForChain(group, chain.id, canonicalCatalog?.publisherAddress))).length;
+  const multichainServices = serviceGroups.filter((group) => marketplaceSettlementChains.every((chain) => (
+    routeForChain(group, chain.id, canonicalCatalog?.publisherAddress)
+    || (gatewayCatalog?.ready
+      && gatewayCatalog.networkDetails.some((network) => network.chainId === chain.id)
+      && gatewayCatalog.services.some((service) => service.endpointHash === group.service.endpointHash))
+  ))).length;
   const featuredServices = serviceGroups.filter((group) => group.service.featured).length;
   const categoryCounts = useMemo(() => {
     const counts = Object.fromEntries(CATEGORIES.map((category) => [category.key, 0])) as Record<MarketplaceCategoryKey, number>;
@@ -373,6 +411,49 @@ export default function MarketplacePage() {
     }
   }
 
+  async function purchaseGatewayService(service: Service, serviceKey: string) {
+    if (!isConnected || !address) {
+      toast.error("Connect your wallet before purchasing an x402 service.");
+      return;
+    }
+    if (!selectedAgent) {
+      toast.error("Create an agent wallet before purchasing an API.");
+      return;
+    }
+    const chainWallet = selectedAgent.chainWallets?.find((wallet) => wallet.chainId === settlementChainId)
+      ?? (settlementChainId === arcTestnet.id
+        ? {address: selectedAgent.address, circleWalletId: selectedAgent.circleWalletId}
+        : null);
+    if (!chainWallet?.address || !chainWallet.circleWalletId) {
+      toast.error(`This agent does not have a ready Circle wallet on ${marketplaceChainLabel(settlementChainId)}.`);
+      return;
+    }
+    setBusyId(serviceKey);
+    const toastId = toast.loading(`Agent paying ${service.name} through Circle Gateway…`);
+    try {
+      const execution = await apiPost<{result: unknown; receipt: {txHash?: string | null}}>(`/api/circle/nanopayments/buy/${encodeURIComponent(service.endpointHash)}`, {
+        operatorAddress: address,
+        agentId: selectedAgent.id,
+        walletAddress: chainWallet.address,
+        chain: circlePaymentChain(settlementChainId),
+        data: executionArgs(service, serviceInputs[serviceKey] ?? ""),
+        confirmed: true
+      });
+      await snapshot.refetch();
+      setServiceResults((current) => ({...current, [serviceKey]: execution.result}));
+      setResultDialog({service, result: execution.result});
+      if (execution.receipt.txHash) {
+        toast.success(txToast(`Purchased ${service.name}`, execution.receipt.txHash, settlementChainId), {id: toastId});
+      } else {
+        toast.success(`Circle Gateway settled ${service.name}.`, {id: toastId});
+      }
+    } catch (error) {
+      toast.error(marketplaceErrorMessage(error), {id: toastId});
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function selectAgent(agentId: string) {
     setSelectedAgentId(agentId);
     const agent = agents.find((item) => item.id === agentId);
@@ -428,7 +509,7 @@ export default function MarketplacePage() {
               <h2 className="mt-2 text-xl font-semibold text-white">Keep Nexora’s six services synchronized across configured networks</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
                 {ownedMissingRouteCount > 0
-                  ? `${ownedMissingRouteCount} verified route${ownedMissingRouteCount === 1 ? " is" : "s are"} still missing. Each network is published in one wallet transaction, then verified independently by the backend.`
+                  ? `${ownedMissingRouteCount} verified route${ownedMissingRouteCount === 1 ? " is" : "s are"} still missing. Each network is published in one wallet transaction, then Nexora verifies the route.`
                   : "Every configured network has a verified route for the canonical catalog."}
               </p>
             </div>
@@ -456,7 +537,7 @@ export default function MarketplacePage() {
               Verify and import
             </button>
           </div>
-          <p className="text-xs leading-5 text-slate-500">Use the import control after publishing locally to reconcile the same transaction into Vercel storage. Replaying a verified hash is safe.</p>
+          <p className="text-xs leading-5 text-slate-500">Use the import control after publishing to add the transaction to Nexora’s hosted records. You can submit the same verified hash again.</p>
         </section>
       ) : null}
 
@@ -473,7 +554,7 @@ export default function MarketplacePage() {
         <div className="surface p-4">
           <p className="text-sm font-semibold text-white">Marketplace quality gates</p>
           <div className="mt-3 grid gap-2">
-            {["Published on x402 ledger", "Structured input and output schema", "Receipt link after settlement", "Publisher address visible"].map((item) => (
+            {["Standard x402 seller endpoint", "Structured input and output schema", "Receipt link after settlement", "Publisher address visible"].map((item) => (
               <div key={item} className="flex items-center gap-2 text-sm text-slate-300">
                 <CheckCircle2 size={15} className="text-mint" />
                 {item}
@@ -483,7 +564,7 @@ export default function MarketplacePage() {
         </div>
       </section>
 
-      {snapshot.error ? <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta shadow-[0_0_20px_rgba(236,72,153,0.15)]">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace API unavailable"}</p> : null}
+      {snapshot.error ? <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta shadow-[0_0_20px_rgba(236,72,153,0.15)]">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace data is unavailable."}</p> : null}
 
       <div className="panel grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div>
@@ -525,14 +606,14 @@ export default function MarketplacePage() {
         ) : null}
         {selectedAgentChainWallet?.address && !selectedAgentPolicyReady ? (
           <p className="text-xs leading-5 text-amber lg:col-span-2">
-            This agent has no policy receipt recorded on {marketplaceChainLabel(settlementChainId)}. The Marketplace ledger rejects unregistered agent wallets.{" "}
+            This agent has no onchain policy receipt recorded on {marketplaceChainLabel(settlementChainId)}. Ledger settlement requires that receipt; Circle Gateway purchases still use the agent's saved Nexora policy.{" "}
             <a href="/settings/policies" onClick={(event) => navigate(event, "/settings/policies")} className="font-semibold underline underline-offset-2">Open Agent Policies</a>
-            {" "}and save this network before purchasing.
+            {" "}to enable the ledger route too.
           </p>
         ) : null}
         {selectedAgentChainWallet?.address && selectedAgentNeedsNativeGas ? (
           <p className="text-xs leading-5 text-cyan lg:col-span-2">
-            This EOA agent wallet needs both ERC-20 USDC for the service and native testnet ETH on {marketplaceChainLabel(settlementChainId)} for Circle's approval and settlement transactions. Fees are checked before each submission.
+            Ledger settlement from this EOA needs native testnet ETH on {marketplaceChainLabel(settlementChainId)}. Circle Gateway Nanopayments do not require the agent to hold native gas.
           </p>
         ) : null}
       </div>
@@ -641,19 +722,38 @@ export default function MarketplacePage() {
           {visibleServices.map((group) => {
             const route = routeForChain(group, settlementChainId, canonicalCatalog?.publisherAddress);
             const displayService = route ?? group.service;
+            const gatewayAvailable = Boolean(
+              gatewayCatalog?.ready
+              && gatewayCatalog.networkDetails.some((network) => network.chainId === settlementChainId)
+              && gatewayCatalog.services.some((service) => service.endpointHash === displayService.endpointHash)
+            );
+            const preferGateway = gatewayAvailable && settlementChainId !== arcTestnet.id;
+            const settlementRoute = preferGateway ? null : route;
             return (
               <ServiceCard
                 key={group.key}
                 service={displayService}
-                route={route}
-                availableChainIds={group.routes.map((item) => item.settlementChainId).filter((value): value is number => typeof value === "number")}
+                route={settlementRoute}
+                gatewayAvailable={gatewayAvailable}
+                availableChainIds={[
+                  ...group.routes.map((item) => item.settlementChainId).filter((value): value is number => typeof value === "number"),
+                  ...(gatewayCatalog?.ready && gatewayCatalog.services.some((service) => service.endpointHash === displayService.endpointHash)
+                    ? gatewayCatalog.networkDetails.map((network) => network.chainId)
+                    : [])
+                ]}
                 selectedChainId={settlementChainId}
                 busy={busyId === group.key}
-                disabled={!isConnected || !selectedAgent || !route || Boolean(busyId)}
+                disabled={!isConnected || !selectedAgent || (!settlementRoute && !gatewayAvailable) || Boolean(busyId)}
                 input={serviceInputs[group.key] ?? ""}
                 onInput={(value) => setServiceInputs((current) => ({...current, [group.key]: value}))}
                 onSample={() => setServiceInputs((current) => ({...current, [group.key]: sampleInputForService(displayService)}))}
-                onPurchase={() => route ? void purchase(route, group.key) : undefined}
+                onPurchase={() => preferGateway
+                  ? void purchaseGatewayService(displayService, group.key)
+                  : settlementRoute
+                    ? void purchase(settlementRoute, group.key)
+                    : gatewayAvailable
+                    ? void purchaseGatewayService(displayService, group.key)
+                    : undefined}
                 result={serviceResults[group.key]}
                 onViewResult={() => {
                   const result = serviceResults[group.key];
@@ -706,6 +806,7 @@ function FilterChip({label, active, onClick}: {label: string; active: boolean; o
 function ServiceCard({
   service,
   route,
+  gatewayAvailable,
   availableChainIds,
   selectedChainId,
   busy,
@@ -719,6 +820,7 @@ function ServiceCard({
 }: {
   service: Service;
   route: Service | null;
+  gatewayAvailable: boolean;
   availableChainIds: number[];
   selectedChainId: number;
   busy: boolean;
@@ -759,10 +861,10 @@ function ServiceCard({
                   Featured
                 </span>
               ) : null}
-              {route?.chainServiceId ? (
+              {route?.chainServiceId || gatewayAvailable ? (
                 <span className="flex items-center gap-1 rounded-full border border-mint/25 bg-mint/10 px-2 py-0.5 text-[11px] font-bold text-mint">
                   <CheckCircle2 size={11} />
-                  {shortMarketplaceChainLabel(selectedChainId)} route
+                  {route?.chainServiceId ? `${shortMarketplaceChainLabel(selectedChainId)} ledger` : "Gateway x402"}
                 </span>
               ) : (
                 <span className="flex items-center gap-1 rounded-full border border-amber/25 bg-amber/10 px-2 py-0.5 text-[11px] font-bold text-amber">
@@ -809,9 +911,9 @@ function ServiceCard({
       </div>
 
       <div className="relative mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
-        <StatusMetric icon={Layers} label="Settlement" value={route?.chainServiceId ? `${selectedChainName} · Ledger #${route.chainServiceId}` : `No ${selectedChainName} route`} tone={route ? "mint" : "amber"} />
-        <StatusMetric icon={Activity} label="Status" value={route ? readiness.label : "Route required"} tone={route ? readiness.tone : "amber"} />
-        <StatusMetric icon={ReceiptText} label="Receipt" value={route ? (selectedChainId === arcTestnet.id ? "Memo + ledger" : "Ledger verified") : "After route publish"} tone={route ? "mint" : "slate"} />
+        <StatusMetric icon={Layers} label="Settlement" value={route?.chainServiceId ? `${selectedChainName} · Ledger #${route.chainServiceId}` : gatewayAvailable ? `${selectedChainName} · Circle Gateway` : `No ${selectedChainName} route`} tone={route || gatewayAvailable ? "mint" : "amber"} />
+        <StatusMetric icon={Activity} label="Status" value={route ? readiness.label : gatewayAvailable ? "x402 ready" : "Route required"} tone={route ? readiness.tone : gatewayAvailable ? "mint" : "amber"} />
+        <StatusMetric icon={ReceiptText} label="Receipt" value={route ? (selectedChainId === arcTestnet.id ? "Memo + ledger" : "Ledger verified") : gatewayAvailable ? "Gateway + Nexora" : "After route publish"} tone={route || gatewayAvailable ? "mint" : "slate"} />
         <StatusMetric icon={ShieldCheck} label="Trust" value={trust ? `${trust.score}/100` : "New"} tone={trust && trust.score >= 60 ? "mint" : trust && trust.score >= 40 ? "amber" : "slate"} />
       </div>
 
@@ -864,11 +966,13 @@ function ServiceCard({
       <div className="relative mt-4 flex items-center gap-3">
         <button onClick={onPurchase} className="action-button flex-1" disabled={disabled}>
           {busy ? <Loader2 size={16} className="animate-spin" /> : null}
-          {busy ? "Processing…" : route ? `Purchase on ${shortMarketplaceChainLabel(selectedChainId)}` : `${shortMarketplaceChainLabel(selectedChainId)} route unavailable`}
+          {busy ? "Processing…" : route || gatewayAvailable ? `Purchase on ${shortMarketplaceChainLabel(selectedChainId)}` : `${shortMarketplaceChainLabel(selectedChainId)} route unavailable`}
         </button>
-        <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent((route ?? service).id)}`)} className="secondary-button px-3" aria-label="Public service page">
-          <ArrowUpRight size={16} />
-        </button>
+        {route ? (
+          <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(route.id)}`)} className="secondary-button px-3" aria-label="Public service page">
+            <ArrowUpRight size={16} />
+          </button>
+        ) : null}
       </div>
 
       {busy ? (
@@ -1341,6 +1445,41 @@ function groupMarketplaceServices(services: Service[], preferredPublisher?: stri
   return [...groups.values()];
 }
 
+function gatewayDirectoryServices(catalog: GatewayCatalog | null): Service[] {
+  if (!catalog?.sellerAddress) return [];
+  return catalog.services.map((service, index) => ({
+    id: `gateway:${service.endpointHash}`,
+    chainServiceId: null,
+    settlementChainId: null,
+    publisherAddress: catalog.sellerAddress as string,
+    name: service.name,
+    endpointHash: service.endpointHash,
+    pricePerUnitUsdc: service.pricePerUnitUsdc,
+    manifest: service.manifest,
+    active: true,
+    featured: index < 4,
+    txHash: null,
+    trust: null,
+    createdAt: "1970-01-01T00:00:00.000Z"
+  }));
+}
+
+function marketplaceDirectoryServices(services: Service[], catalog: GatewayCatalog | null) {
+  if (!catalog?.sellerAddress) return services;
+  const canonicalPublisher = catalog.sellerAddress.trim().toLowerCase();
+
+  const reservedEndpoints = new Set(
+    catalog.services.map((service) => service.endpointHash.trim().toLowerCase())
+  );
+  const verifiedLedgerRoutes = services.filter((service) => {
+    const endpoint = service.endpointHash.trim().toLowerCase();
+    if (!reservedEndpoints.has(endpoint)) return true;
+    return service.publisherAddress.trim().toLowerCase() === canonicalPublisher;
+  });
+
+  return [...verifiedLedgerRoutes, ...gatewayDirectoryServices(catalog)];
+}
+
 function routeForChain(group: ServiceGroup, chainId: number, preferredPublisher?: string | null) {
   const routes = group.routes.filter((service) => service.settlementChainId === chainId);
   return routes[0] ?? null;
@@ -1355,6 +1494,15 @@ function shortMarketplaceChainLabel(chainId: number) {
   if (chainId === 84532) return "Base";
   if (chainId === 421614) return "Arbitrum";
   return marketplaceChainLabel(chainId);
+}
+
+function circlePaymentChain(chainId: number) {
+  if (chainId === arcTestnet.id) return "ARC";
+  if (chainId === 84532) return "BASE_SEPOLIA";
+  if (chainId === 421614) return "ARB_SEPOLIA";
+  if (chainId === 8453) return "BASE";
+  if (chainId === 42161) return "ARB";
+  return `eip155:${chainId}`;
 }
 
 function hasRecordedAgentPolicy(agent: Agent, chainId: number) {

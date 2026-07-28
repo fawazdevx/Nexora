@@ -18,9 +18,9 @@ interface ICanonicalMarketplaceLedger {
 }
 
 /// @notice Publishes Nexora's six canonical Marketplace services on one ledger.
-/// @dev Run once on Base Sepolia and once on Arbitrum Sepolia. The expected
-///      chain and next service id checks prevent accidental publication on the
-///      wrong ledger or duplicate publication after a prior successful run.
+/// @dev Run only on a configured Arc, Base, or Arbitrum Marketplace ledger.
+///      The expected chain and next service id checks prevent accidental
+///      publication on the wrong ledger or duplication after a prior run.
 contract PublishCanonicalMarketplaceRoutes {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 

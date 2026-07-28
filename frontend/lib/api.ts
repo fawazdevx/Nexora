@@ -1,4 +1,6 @@
 const API_URL = import.meta.env.VITE_NEXORA_API_URL ?? "";
+const CONNECTION_ERROR = "Nexora cannot connect right now. Check your connection and try again.";
+const REQUEST_ERROR = "Nexora could not complete this request. Try again in a moment.";
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const raw = await response.text().catch(() => "");
@@ -9,10 +11,8 @@ async function parseResponse<T>(response: Response): Promise<T> {
         ? data.error
         : typeof data?.message === "string"
           ? data.message
-          : raw.trim().length > 0
-            ? raw.trim()
-            : `API request failed: ${response.status}`;
-    throw new Error(message);
+          : "";
+    throw new Error(publicApiError(message, response.status));
   }
 
   return data as T;
@@ -23,7 +23,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   try {
     response = await fetch(buildApiUrl(path));
   } catch {
-    throw new Error(apiConnectionHint(path));
+    throw new Error(apiConnectionHint());
   }
 
   return parseResponse<T>(response);
@@ -34,7 +34,7 @@ export async function apiGetWithHeaders<T>(path: string, headers: Record<string,
   try {
     response = await fetch(buildApiUrl(path), {headers});
   } catch {
-    throw new Error(apiConnectionHint(path));
+    throw new Error(apiConnectionHint());
   }
 
   return parseResponse<T>(response);
@@ -49,7 +49,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
       body: JSON.stringify(body)
     });
   } catch {
-    throw new Error(apiConnectionHint(path));
+    throw new Error(apiConnectionHint());
   }
 
   return parseResponse<T>(response);
@@ -64,7 +64,7 @@ export async function apiPostWithHeaders<T>(path: string, body: unknown, headers
       body: JSON.stringify(body)
     });
   } catch {
-    throw new Error(apiConnectionHint(path));
+    throw new Error(apiConnectionHint());
   }
 
   return parseResponse<T>(response);
@@ -79,7 +79,7 @@ export async function apiDelete<T>(path: string, body?: unknown): Promise<T> {
       body: body === undefined ? undefined : JSON.stringify(body)
     });
   } catch {
-    throw new Error(apiConnectionHint(path));
+    throw new Error(apiConnectionHint());
   }
 
   return parseResponse<T>(response);
@@ -490,9 +490,17 @@ export function appSnapshotPath(operator?: string) {
   return `/api/app${operator ? `?operator=${encodeURIComponent(operator)}` : ""}`;
 }
 
-function apiConnectionHint(path: string) {
-  const target = API_URL.trim().replace(/\/+$/, "") || "the current origin";
-  return `Could not reach ${target}${path.startsWith("/") ? path : `/${path}`}. Check VITE_NEXORA_API_URL or the backend server.`;
+function apiConnectionHint() {
+  return CONNECTION_ERROR;
+}
+
+function publicApiError(message: string, status: number) {
+  if (status >= 500 || !message.trim() || containsInternalDetails(message)) return REQUEST_ERROR;
+  return message.trim();
+}
+
+function containsInternalDetails(message: string) {
+  return /https?:\/\/|localhost|VITE_[A-Z0-9_]+|\/(?:api|node_modules)\/|file:\/\/|ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|\n\s*at\s+/i.test(message);
 }
 
 function buildApiUrl(path: string) {

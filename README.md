@@ -42,13 +42,13 @@ Arc is Nexora's primary network. USDC-denominated gas keeps costs predictable, w
 - Circle-backed agent wallets on Arc Testnet, Base Sepolia, and Arbitrum Sepolia
 - transaction, period, recipient, service, contract, cooldown, and expiry policies
 - human approval queues, policy simulation, and risk alerts
-- six paid API services in an open publisher Marketplace
+- six code-defined paid API services with standard Circle Gateway x402 seller endpoints
 - x402 v1 and v2 authorization, verification, settlement, and replay protection
 - Circle Gateway balance views and cross-chain transfer preparation
 - Save/Earn automation for approved Arc vault routes
 - public receipts, notifications, reputation, revenue reporting, and escrow
 
-The Arc testnet path provides the primary end-to-end demo. Base Sepolia and Arbitrum Sepolia use the same wallet and route model; the six canonical Marketplace routes still need their publisher transactions on those networks.
+The Arc testnet path provides the primary ledger-settlement demo. Circle Gateway Nanopayments expose the same six services on Arc Testnet, Base Sepolia, and Arbitrum Sepolia without requiring a separate Marketplace contract publication on each network.
 
 ## System overview
 
@@ -74,6 +74,8 @@ Nexora binds each authorization to the network, token, amount, recipient, reques
 
 The open Marketplace supports independent publishers. Nexora verifies the publisher, ledger route, service identifier, endpoint, price, active state, and publication receipt before it displays a service.
 
+Nexora's own service catalog is defined in source code and exposed through standard x402 seller endpoints. An unpaid request returns HTTP `402` with Circle Gateway payment requirements. A compatible client signs the authorization and retries with `payment-signature`; the paid request returns the service result and `payment-response` receipt. The public catalog is available at `/api/marketplace/catalog`, `/api/circle/nanopayments/catalog`, and `/.well-known/x402`. Add `?version=1` to the well-known route for legacy verified-ledger discovery.
+
 Nexora provides six reference services:
 
 1. Website Growth Analyzer
@@ -83,11 +85,11 @@ Nexora provides six reference services:
 5. Landing Page Copy Reviewer
 6. Grant Application Reviewer
 
-The Circle Marketplace view adds Nexora policy checks and approval controls to compatible third-party x402 services. An agent can use a managed Circle wallet or submit a verifiable payment from an external Agent Stack client.
+The Marketplace uses Circle Gateway for Nexora-owned x402 endpoints and keeps verified Marketplace ledgers as optional routes for policy, reputation, receipts, and independent publishers. The Circle Marketplace view adds Nexora policy checks and approval controls to compatible third-party x402 services. An agent can use a managed Circle wallet or submit a verifiable payment from an external Agent Stack client.
 
 ## Gateway and Save/Earn
 
-Circle Gateway gives the operator an aggregate USDC view across supported domains. Nexora displays the total balance, source-domain balances, pending deposits, fees, and destination details.
+Circle Gateway gives the operator an aggregate USDC view across supported domains and settles Nexora's x402 Nanopayment endpoints. Nexora displays the total balance, source-domain balances, pending deposits, fees, and destination details.
 
 Save/Earn ranks approved Arc vault routes for idle USDC. The automation reviews a position after 24 hours and reallocates funds only when policy permits a better route. Vault ranking does not guarantee yield or safety.
 
@@ -102,8 +104,8 @@ Meridian acts as the payment facilitator. It validates the signed Permit2 author
 | Network | Wallet model | Asset | Status |
 | --- | --- | --- | --- |
 | Arc Testnet | Circle developer-controlled wallet | USDC | Primary end-to-end demo |
-| Base Sepolia | Circle developer-controlled wallet | USDC | Wallet and route support; canonical publication pending |
-| Arbitrum Sepolia | Circle developer-controlled wallet | USDC | Wallet and route support; canonical publication pending |
+| Base Sepolia | Circle developer-controlled wallet | USDC | Gateway x402 seller and agent-wallet payment route |
+| Arbitrum Sepolia | Circle developer-controlled wallet | USDC | Gateway x402 seller and agent-wallet payment route |
 | BOT Chain Testnet | Connected EOA with Meridian Permit2 | USDT | Optional interoperability experiment |
 
 ## SDK
@@ -161,6 +163,10 @@ VITE_NEXORA_API_URL=http://localhost:4000 npm run dev -- --port 5173
 ```
 
 Open `http://localhost:5173`. Circle-backed wallet operations require server credentials from a Circle developer account. Store credentials in untracked server environment files and keep them out of the browser bundle.
+
+The Gateway seller defaults to testnet. It requires a public seller wallet address through `NEXORA_MARKETPLACE_PUBLISHER_ADDRESS`. Set `NEXORA_PUBLIC_API_URL` to the trusted public backend origin when managed agent wallets buy Nexora services. `NEXORA_CIRCLE_GATEWAY_SELLER_MODE=mainnet` does not activate mainnet by itself; `NEXORA_ENABLE_AGENT_MAINNETS=true` is also required. Keep Circle API credentials, entity secrets, database URLs, and wallet keys out of Git.
+
+`.nexora-data/store.json` is an ignored local fallback for mutable development state. It is not the Marketplace catalog and must not be committed. Hosted deployments should use persistent storage through `DATABASE_URL`.
 
 ## Verification
 

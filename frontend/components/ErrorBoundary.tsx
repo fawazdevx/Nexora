@@ -30,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
               <h1 className="text-lg font-semibold">Something stopped the app</h1>
             </div>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              The interface hit a runtime error. Refresh the page and try again. If it keeps happening, check the backend response for the agent wallet request.
+              Nexora could not display this page. Reload the app and try again. If the problem continues, try again later.
             </p>
             <button onClick={() => window.location.reload()} className="action-button mt-5">
               <RefreshCw size={16} />

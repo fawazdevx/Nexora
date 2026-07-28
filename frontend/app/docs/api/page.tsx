@@ -481,6 +481,14 @@ export default function ApiDocsPage() {
             <Endpoint method="POST" path="/api/x402/facilitator-settle" detail="Settles a verified authorization, records the receipt, and rejects replay." />
           </div>
 
+          <h3 className="mt-7 text-lg font-semibold text-white">Nexora Gateway sellers</h3>
+          <div className="mt-4 grid gap-3">
+            <Endpoint method="GET" path="/api/marketplace/catalog" detail="Returns the code-defined Nexora service catalog plus optional verified ledger routes." tryable={false} />
+            <Endpoint method="GET" path="/.well-known/x402" detail="Returns x402 v2 Circle Gateway discovery. Add ?version=1 for legacy ledger discovery." tryable={false} />
+            <Endpoint method="POST" path="/api/circle/nanopayments/services/github-repo-analyzer-v1" detail="Returns HTTP 402 when unpaid, then executes after a valid payment-signature retry." tryable={false} />
+            <Endpoint method="POST" path="/api/circle/nanopayments/buy/github-repo-analyzer-v1" detail="Runs Nexora policy checks and pays the service from the selected managed Circle agent wallet." tryable={false} />
+          </div>
+
           <h3 className="mt-7 text-lg font-semibold text-white">Circle Agent Stack intents</h3>
           <div className="mt-4 grid gap-3">
             <Endpoint method="POST" path="/api/circle/agent-marketplace/intents" detail="Creates a policy-aware external payment intent." tryable={false} />
@@ -609,14 +617,14 @@ export default function ApiDocsPage() {
           </div>
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
-          <FeatureCard title="Nexora Marketplace" copy="Nexora publishers register services and settle through Nexora's network-specific routes, policies, and receipts." />
+          <FeatureCard title="Nexora Marketplace" copy="Nexora's code-defined services use standard Gateway x402 endpoints. Independent publishers can add verified ledger routes." />
           <FeatureCard title="Circle Agent Stack" copy="External agents request Nexora approval, execute with their own Circle wallet, then submit a verifiable onchain receipt." />
-          <FeatureCard title="Circle Gateway" copy="Gateway unifies USDC liquidity across supported domains. Your application still owns its spendable balance and reconciliation ledger." />
+          <FeatureCard title="Circle Gateway" copy="Gateway settles Nexora Nanopayments and unifies USDC liquidity across supported domains. Applications still own entitlement and reconciliation records." />
         </div>
         <div className="mt-5 rounded-xl border border-white/[0.09] bg-white/[0.03] p-5">
           <p className="text-sm font-semibold text-white">Marketplace rule</p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Nexora does not duplicate its canonical services as Circle Gateway seller routes. The Circle Marketplace view discovers compatible third-party x402 services and adds Nexora policy, approval, managed execution, and receipt verification.
+            Nexora's six canonical services are public Circle Gateway seller routes on the enabled testnets. Verified Marketplace ledgers remain optional routes for independent publishers, reputation, and ledger-native receipts. The Circle Marketplace view continues to intake compatible third-party x402 services under Nexora policy and approval controls.
           </p>
         </div>
       </section>

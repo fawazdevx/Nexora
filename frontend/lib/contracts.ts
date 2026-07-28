@@ -1380,6 +1380,12 @@ export async function readX402MarketplaceService(input: {chainId: number; chainS
 }
 
 export async function settleX402Request(input: {chainServiceId: number; requestHash: `0x${string}`; payer: string; units: number; amountUsdc: string; memo?: NexoraStructuredMemo | null}) {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(input.requestHash)) {
+    throw new Error("requestHash must be a valid bytes32 value.");
+  }
+  if (input.memo?.memoId && !/^0x[0-9a-fA-F]{64}$/.test(input.memo.memoId)) {
+    throw new Error("memoId must be a valid bytes32 value.");
+  }
   const {client, chainId, contracts} = await walletClient();
   const usdc = requireAddress(contracts.usdc, "USDC address");
   const ledger = requireAddress(contracts.x402Ledger, "x402 ledger address");

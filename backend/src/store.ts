@@ -2,6 +2,7 @@ import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
 import {Pool, type PoolClient} from "pg";
 import {config} from "./config.js";
+import {CANONICAL_MARKETPLACE_SERVICES} from "./marketplace/canonical-catalog.js";
 import {normalizeMemo, type NexoraStructuredMemo} from "./memos.js";
 import {normalizePolicyV2, type PolicyRemediation} from "./policies/engine.js";
 
@@ -506,65 +507,9 @@ export type StoreShape = {
   approvalRequests: AgentApprovalRequestRecord[];
 };
 
-const SEEDED_SERVICE_IDS = new Set([
-  "nexora-website-growth-analyzer",
-  "nexora-github-repo-analyzer",
-  "nexora-x-account-analyzer",
-  "nexora-contract-safety-check",
-  "nexora-wallet-activity-summary",
-  "nexora-landing-page-copy-reviewer",
-  "nexora-grant-application-reviewer",
-  "nexora-meeting-brief",
-  "nexora-arc-builder-research",
-  "nexora-domain-name-research",
-  "nexora-social-content-audit",
-  "nexora-stablecoin-route-report",
-  "nexora-policy-risk-review",
-  "nexora-launch-readiness-check",
-  "nexora-x402-integration-planner",
-  "nexora-wallet-risk-approval-scan",
-  "nexora-agent-transaction-preflight",
-  "nexora-contract-interaction-risk-scan",
-  "nexora-invoice-collection-agent",
-  "nexora-escrow-milestone-monitor",
-  "nexora-counterparty-compliance-screen",
-  "nexora-liquidation-risk-monitor",
-  "nexora-vault-apy-monitor",
-  "nexora-subscription-payment-agent",
-  "nexora-publisher-revenue-intelligence",
-  "nexora-dao-grant-payout-agent",
-  "nexora-swap-route-quote-agent"
-]);
-
-const SEEDED_ENDPOINT_HASHES = new Set([
-  "website-analyzer-v1",
-  "github-repo-analyzer-v1",
-  "x-account-analyzer-v1",
-  "contract-safety-check-v1",
-  "wallet-activity-summary-v1",
-  "landing-page-copy-reviewer-v1",
-  "grant-application-reviewer-v1",
-  "meeting-brief-v1",
-  "arc-builder-research-v1",
-  "domain-name-research-v1",
-  "social-content-audit-v1",
-  "stablecoin-route-report-v1",
-  "policy-risk-review-v1",
-  "launch-readiness-check-v1",
-  "x402-integration-planner-v1",
-  "wallet-risk-approval-scan-v1",
-  "agent-transaction-preflight-v1",
-  "contract-interaction-risk-scan-v1",
-  "invoice-collection-agent-v1",
-  "escrow-milestone-monitor-v1",
-  "counterparty-compliance-screen-v1",
-  "liquidation-risk-monitor-v1",
-  "vault-apy-monitor-v1",
-  "subscription-payment-agent-v1",
-  "publisher-revenue-intelligence-v1",
-  "dao-grant-payout-agent-v1",
-  "swap-route-quote-agent-v1"
-]);
+const CANONICAL_MARKETPLACE_ENDPOINTS = new Set<string>(
+  CANONICAL_MARKETPLACE_SERVICES.map((service) => service.endpointHash)
+);
 
 const STORE_KEY = process.env.NEXORA_STORE_KEY ?? "nexora:app";
 const writableStorePath = process.env.VERCEL || process.env.NETLIFY ? "/tmp/nexora-store.json" : ".nexora-data/store.json";
@@ -874,7 +819,7 @@ async function persistBlob(client: PoolClient, store: StoreShape) {
 
 export function storageFriendlyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  if (/Expected bytes32, got bytes20|AbiEncoding|invalid.*bytes(20|32)|Version:\s*viem/i.test(message)) {
+  if (/Expected bytes32, got bytes20|AbiEncoding|invalid.*bytes(20|32)/i.test(message)) {
     return "Nexora could not prepare this payment because an authorization value was malformed. Refresh and try again.";
   }
   if (/FeeExceedsMax|0x5ff85e3f/i.test(message)) {
@@ -1367,8 +1312,14 @@ export function isArchivedService(service: Pick<ServiceRecord, "archivedAt">) {
   return Boolean(service.archivedAt);
 }
 
-export function isSeededService(service: Pick<ServiceRecord, "id" | "endpointHash">) {
-  return SEEDED_SERVICE_IDS.has(service.id) || SEEDED_ENDPOINT_HASHES.has(service.endpointHash);
+export function isCanonicalMarketplaceRoute(service: Pick<ServiceRecord, "publisherAddress" | "endpointHash" | "chainServiceId">) {
+  const publisherAddress = config.contracts.marketplacePublisher.trim().toLowerCase();
+  return Boolean(
+    publisherAddress
+    && service.chainServiceId !== null
+    && service.publisherAddress.trim().toLowerCase() === publisherAddress
+    && CANONICAL_MARKETPLACE_ENDPOINTS.has(service.endpointHash.trim().toLowerCase())
+  );
 }
 
 export function isVisibleService(service: ServiceRecord) {
@@ -1442,7 +1393,7 @@ export async function archiveWorkspaceTestData(input: {reason?: string; archiveA
 
     if (archiveServices) {
       for (const service of store.services) {
-        if (isArchivedService(service) || isSeededService(service)) continue;
+        if (isArchivedService(service) || isCanonicalMarketplaceRoute(service)) continue;
         service.archivedAt = archivedAt;
         service.archiveReason = reason;
         service.active = false;
@@ -1644,7 +1595,6 @@ function normalizeStore(value: unknown): StoreShape {
     archiveReason: service.archiveReason ?? null,
     trust: service.trust ?? null
   }));
-  store.services = mergeSeededServices(store.services);
   store.agents = store.agents.map((agent) => ({
     ...agent,
     walletKind: agent.walletKind === "external_eoa" ? "external_eoa" : "circle_developer",
@@ -1983,79 +1933,6 @@ function normalizeNotificationDelivery(value: NotificationDeliveryRecord): Notif
     reason: value.reason ?? null,
     createdAt: value.createdAt ?? new Date().toISOString()
   };
-}
-
-function mergeSeededServices(existing: ServiceRecord[]) {
-  const services = [...existing];
-  const seen = new Set(services.map((service) => service.endpointHash));
-  for (const service of seededServices()) {
-    if (!seen.has(service.endpointHash)) {
-      services.push(service);
-      seen.add(service.endpointHash);
-    }
-  }
-  return services;
-}
-
-function seededServices(): ServiceRecord[] {
-  const publisherAddress = process.env.NEXORA_MARKETPLACE_PUBLISHER_ADDRESS || config.contracts.treasury || "0x0000000000000000000000000000000000000000";
-  const createdAt = "2026-06-01T00:00:00.000Z";
-  const seeds: Array<{
-    id: string;
-    name: string;
-    endpointHash: string;
-    pricePerUnitUsdc: number;
-    kind: ServiceManifest["kind"];
-    featured?: boolean;
-    description?: string;
-  }> = [
-    {id: "nexora-website-growth-analyzer", name: "Website Growth Analyzer", endpointHash: "website-analyzer-v1", pricePerUnitUsdc: 0.025, kind: "website_analyzer", featured: true},
-    {id: "nexora-github-repo-analyzer", name: "GitHub Repo Analyzer", endpointHash: "github-repo-analyzer-v1", pricePerUnitUsdc: 0.05, kind: "github_repo_analyzer", featured: true},
-    {id: "nexora-x-account-analyzer", name: "X Account Analyzer", endpointHash: "x-account-analyzer-v1", pricePerUnitUsdc: 0.035, kind: "x_account_analyzer"},
-    {id: "nexora-contract-safety-check", name: "Contract Safety Check", endpointHash: "contract-safety-check-v1", pricePerUnitUsdc: 0.015, kind: "contract_safety_check", featured: true},
-    {id: "nexora-wallet-activity-summary", name: "Wallet Activity Summary", endpointHash: "wallet-activity-summary-v1", pricePerUnitUsdc: 0.015, kind: "wallet_activity_summary"},
-    {id: "nexora-landing-page-copy-reviewer", name: "Landing Page Copy Reviewer", endpointHash: "landing-page-copy-reviewer-v1", pricePerUnitUsdc: 0.02, kind: "landing_page_copy_reviewer"},
-    {id: "nexora-grant-application-reviewer", name: "Grant Application Reviewer", endpointHash: "grant-application-reviewer-v1", pricePerUnitUsdc: 0.03, kind: "grant_application_reviewer"},
-    {id: "nexora-meeting-brief", name: "Meeting Brief Agent", endpointHash: "meeting-brief-v1", pricePerUnitUsdc: 0.02, kind: "meeting_brief", description: "Turn a meeting goal, wallet, project, or URL into a short prep brief with questions and follow-up actions."},
-    {id: "nexora-arc-builder-research", name: "Arc Builder Research", endpointHash: "arc-builder-research-v1", pricePerUnitUsdc: 0.025, kind: "arc_builder_research", featured: true},
-    {id: "nexora-domain-name-research", name: "Domain Name Research", endpointHash: "domain-name-research-v1", pricePerUnitUsdc: 0.015, kind: "domain_name_research"},
-    {id: "nexora-social-content-audit", name: "Social Content Audit", endpointHash: "social-content-audit-v1", pricePerUnitUsdc: 0.02, kind: "social_content_audit"},
-    {id: "nexora-stablecoin-route-report", name: "Stablecoin Route Report", endpointHash: "stablecoin-route-report-v1", pricePerUnitUsdc: 0.02, kind: "stablecoin_route_report", featured: true},
-    {id: "nexora-policy-risk-review", name: "Agent Policy Risk Review", endpointHash: "policy-risk-review-v1", pricePerUnitUsdc: 0.025, kind: "policy_risk_review"},
-    {id: "nexora-launch-readiness-check", name: "Launch Readiness Check", endpointHash: "launch-readiness-check-v1", pricePerUnitUsdc: 0.03, kind: "launch_readiness_check"},
-    {id: "nexora-x402-integration-planner", name: "x402 Integration Planner", endpointHash: "x402-integration-planner-v1", pricePerUnitUsdc: 0.025, kind: "x402_integration_planner", featured: true},
-    {id: "nexora-wallet-risk-approval-scan", name: "Wallet Risk + Approval Scan", endpointHash: "wallet-risk-approval-scan-v1", pricePerUnitUsdc: 0.05, kind: "wallet_risk_approval_scan", featured: true},
-    {id: "nexora-agent-transaction-preflight", name: "Agent Transaction Preflight", endpointHash: "agent-transaction-preflight-v1", pricePerUnitUsdc: 0.035, kind: "agent_transaction_preflight", featured: true},
-    {id: "nexora-contract-interaction-risk-scan", name: "Contract Interaction Risk Scan", endpointHash: "contract-interaction-risk-scan-v1", pricePerUnitUsdc: 0.04, kind: "contract_interaction_risk_scan", featured: true},
-    {id: "nexora-invoice-collection-agent", name: "Invoice Collection Agent", endpointHash: "invoice-collection-agent-v1", pricePerUnitUsdc: 0.05, kind: "invoice_collection_agent", featured: true},
-    {id: "nexora-escrow-milestone-monitor", name: "Escrow Milestone Monitor", endpointHash: "escrow-milestone-monitor-v1", pricePerUnitUsdc: 0.06, kind: "escrow_milestone_monitor", featured: true},
-    {id: "nexora-counterparty-compliance-screen", name: "Counterparty Compliance Screen", endpointHash: "counterparty-compliance-screen-v1", pricePerUnitUsdc: 0.08, kind: "counterparty_compliance_screen"},
-    {id: "nexora-liquidation-risk-monitor", name: "Liquidation Risk Monitor", endpointHash: "liquidation-risk-monitor-v1", pricePerUnitUsdc: 0.07, kind: "liquidation_risk_monitor"},
-    {id: "nexora-vault-apy-monitor", name: "Vault APY Monitor", endpointHash: "vault-apy-monitor-v1", pricePerUnitUsdc: 0.04, kind: "vault_apy_monitor"},
-    {id: "nexora-subscription-payment-agent", name: "Subscription Payment Agent", endpointHash: "subscription-payment-agent-v1", pricePerUnitUsdc: 0.05, kind: "subscription_payment_agent"},
-    {id: "nexora-publisher-revenue-intelligence", name: "Publisher Revenue Intelligence", endpointHash: "publisher-revenue-intelligence-v1", pricePerUnitUsdc: 0.04, kind: "publisher_revenue_intelligence"},
-    {id: "nexora-dao-grant-payout-agent", name: "DAO / Grant Payout Agent", endpointHash: "dao-grant-payout-agent-v1", pricePerUnitUsdc: 0.06, kind: "dao_grant_payout_agent"},
-    {id: "nexora-swap-route-quote-agent", name: "Swap / Route Quote Agent", endpointHash: "swap-route-quote-agent-v1", pricePerUnitUsdc: 0.04, kind: "swap_route_quote_agent"}
-  ];
-
-  return seeds.map((seed, index) => ({
-    id: seed.id,
-    chainServiceId: null,
-    publisherAddress,
-    name: seed.name,
-    endpointHash: seed.endpointHash,
-    pricePerUnitUsdc: seed.pricePerUnitUsdc,
-    manifest: {
-      ...manifestTemplateForKind(seed.kind),
-      description: seed.description ?? manifestTemplateForKind(seed.kind).description
-    },
-    active: true,
-    featured: Boolean(seed.featured),
-    txHash: null,
-    createdAt: new Date(Date.parse(createdAt) + index * 60_000).toISOString(),
-    archivedAt: null,
-    archiveReason: null
-  }));
 }
 
 function titleFromPlanId(planId: string) {

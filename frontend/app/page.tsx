@@ -162,7 +162,7 @@ export default function HomePage() {
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-white">Live data is temporarily unavailable</p>
             <p className="mt-1 text-sm text-slate-400">
-              {snapshot.error instanceof Error ? snapshot.error.message : "Could not reach the Nexora API."} Figures below may be out of date until the connection is restored.
+              {snapshot.error instanceof Error ? snapshot.error.message : "Nexora cannot load live data right now."} Figures below may be out of date until the connection is restored.
             </p>
             <button type="button" onClick={() => snapshot.refetch()} className="secondary-button mt-3 min-h-9 px-3 py-1.5 text-sm">
               Retry

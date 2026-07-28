@@ -134,7 +134,7 @@ export default function GatewayPage() {
   async function selectChain(chainId: number) {
     const target = supportedChains.find((item) => item.id === chainId);
     if (!target) {
-      toast.error("Enable this chain in the frontend env first.");
+      toast.error("This network is not available in the current build.");
       return;
     }
     try {

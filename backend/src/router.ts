@@ -3,6 +3,7 @@ import {createPublicClient, formatUnits, http, isAddress, pad, parseAbi, zeroAdd
 import {authorizeX402, paymentRequired, PolicyBlockedError, settleX402} from "./x402/facilitator.js";
 import {addMissingAgentChainWallets, createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy, upsertExternalPolicyWallet} from "./circle/agent-wallets.js";
 import {approveCircleAgentPaymentIntent, circleAgentMarketplaceReadiness, circleAgentPaymentIntentAuthorization, completeCircleAgentPaymentIntentFromReceipt, createCircleAgentPaymentIntent, executeCircleAgentPaymentIntent, inspectCircleAgentService, payCircleAgentService, preflightCircleAgentPayment, rejectCircleAgentPaymentIntent, searchCircleAgentServices} from "./circle/agent-marketplace.js";
+import {circleGatewayDiscoveryDocument, circleGatewaySellerCatalog, executeCircleGatewaySellerRequest} from "./circle/gateway-seller.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
 import {activatePlan, canonicalMarketplaceCatalog, discoveryDocument, executeBuiltInService, executeMarketplaceService, featureService, getService, listServices, platformPlans, publishService, publishVerifiedService, publishVerifiedServiceRoutes, reconcileCanonicalMarketplaceRoutes, requirePlatformPlan, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
@@ -93,8 +94,9 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       && (path === "/api/.well-known/x402" || path === "/.well-known/x402" || path === "/api/discovery/resources")
     ) {
       const query = url.searchParams.get("query") ?? undefined;
-      const version = url.searchParams.get("x402Version") === "2" || url.searchParams.get("version") === "2" ? 2 : 1;
-      return ok(await discoveryDocument(publicBaseUrl(req), query, version));
+      const requestedVersion = url.searchParams.get("x402Version") ?? url.searchParams.get("version");
+      if (requestedVersion === "1") return ok(await discoveryDocument(publicBaseUrl(req), query, 1));
+      return ok(await circleGatewayDiscoveryDocument(publicBaseUrl(req), query));
     }
 
     if (req.method === "POST" && (path === "/x402/verify" || path === "/api/x402/verify")) {
@@ -384,8 +386,52 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({services: await listServices()});
     }
 
+    if (req.method === "GET" && path === "/api/marketplace/catalog") {
+      return ok({
+        schemaVersion: "1.0",
+        marketplace: "Nexora",
+        x402: circleGatewaySellerCatalog(publicBaseUrl(req)),
+        ledgerRoutes: await canonicalMarketplaceCatalog()
+      });
+    }
+
     if (req.method === "GET" && path === "/api/marketplace/canonical-catalog") {
       return ok(await canonicalMarketplaceCatalog());
+    }
+
+    if (req.method === "GET" && path === "/api/circle/nanopayments/catalog") {
+      return ok(circleGatewaySellerCatalog(publicBaseUrl(req)));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/circle/nanopayments/services/")) {
+      const endpointHash = decodeURIComponent(path.split("/")[5] ?? "");
+      const sellerResponse = await executeCircleGatewaySellerRequest({
+        endpointHash,
+        args: assertJsonObject(body),
+        paymentSignature: header(req, "payment-signature"),
+        resourceUrl: publicResourceUrl(req, path)
+      });
+      return sellerResponse;
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/circle/nanopayments/buy/")) {
+      const endpointHash = decodeURIComponent(path.split("/")[5] ?? "");
+      const sellerBaseUrl = configuredGatewaySellerBaseUrl();
+      if (!sellerBaseUrl) return response(503, {error: "NEXORA_PUBLIC_API_URL is required for managed Gateway purchases."});
+      const catalog = circleGatewaySellerCatalog(sellerBaseUrl);
+      const service = catalog.services.find((item) => item.endpointHash === endpointHash);
+      if (!service || !catalog.ready) return response(503, {error: "Nexora Gateway service is not ready."});
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await payCircleAgentService({
+        operatorAddress,
+        agentId: optionalLimitedString(body.agentId, "agentId", 120) ?? null,
+        walletAddress: requiredAddress(body.walletAddress, "walletAddress"),
+        serviceUrl: service.resource,
+        chain: optionalLimitedString(body.chain, "chain", 40) ?? null,
+        data: assertJsonObject(body.data),
+        confirmed: Boolean(body.confirmed)
+      }, {enabled: true, trustedNexoraGatewayOrigin: new URL(service.resource).origin}));
     }
 
     if (req.method === "GET" && path === "/api/circle/agent-marketplace/readiness") {
@@ -984,6 +1030,23 @@ function publicBaseUrl(req: AppRequest): string | undefined {
   if (!host) return undefined;
   const proto = header(req, "x-forwarded-proto") ?? (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
   return `${proto}://${host}`;
+}
+
+function publicResourceUrl(req: AppRequest, path: string) {
+  const baseUrl = publicBaseUrl(req) ?? config.notifications.publicAppUrl;
+  return new URL(path, `${baseUrl.replace(/\/+$/, "")}/`).toString();
+}
+
+function configuredGatewaySellerBaseUrl() {
+  const value = config.circle.gatewaySeller.publicApiUrl.trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
 }
 
 function optionalNumber(value: unknown) {

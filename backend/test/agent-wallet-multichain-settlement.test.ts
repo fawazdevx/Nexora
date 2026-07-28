@@ -3,6 +3,7 @@ import {mkdtemp, rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
+import {decodeFunctionData, parseAbi} from "viem";
 
 const operator = "0x1111111111111111111111111111111111111111";
 const baseWallet = "0x2222222222222222222222222222222222222222";
@@ -13,7 +14,13 @@ const baseLedger = "0x12B6fF427abA4f0438EA6B5af7E1e49e55DeaB2D";
 const arbLedger = "0x195f70790d977983586d90f2000725B6e26684eE";
 const baseUsdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const arbUsdc = "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d";
+const arcWallet = "0x4444444444444444444444444444444444444444";
+const arcPolicyRegistry = "0x5555555555555555555555555555555555555555";
+const arcLedger = "0x6666666666666666666666666666666666666666";
+const arcUsdc = "0x7777777777777777777777777777777777777777";
+const arcMemoContract = "0x5294E9927c3306DcBaDb03fe70b92e01cCede505";
 const requestHash = `0x${"ab".repeat(32)}`;
+const memoId = `0x${"cd".repeat(32)}`;
 
 const tempDirectory = await mkdtemp(join(tmpdir(), "nexora-agent-wallet-multichain-"));
 process.env.DATABASE_URL = "";
@@ -27,6 +34,9 @@ process.env.BASE_SEPOLIA_USDC_ADDRESS = baseUsdc;
 process.env.ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS = arbPolicyRegistry;
 process.env.ARB_SEPOLIA_X402_LEDGER_ADDRESS = arbLedger;
 process.env.ARB_SEPOLIA_USDC_ADDRESS = arbUsdc;
+process.env.USDC_ADDRESS = arcUsdc;
+process.env.POLICY_REGISTRY_ADDRESS = arcPolicyRegistry;
+process.env.X402_LEDGER_ADDRESS = arcLedger;
 
 const {submitAgentX402Settlement} = await import("../src/circle/agent-wallets.js");
 const {updateStore} = await import("../src/store.js");
@@ -238,6 +248,126 @@ test("an unfunded Base EOA is blocked before its Circle approval transaction", a
   );
   assert.equal(submitted, false);
 });
+
+test("Arc EOA settlement sends the ledger call through Memo with bytes32 identifiers in the correct order", async () => {
+  const route = {
+    name: "Arc Testnet",
+    chainId: 5042002,
+    wallet: arcWallet,
+    walletId: "circle-arc-wallet-id",
+    circleBlockchain: "ARC-TESTNET",
+    policyRegistry: arcPolicyRegistry,
+    ledger: arcLedger,
+    usdc: arcUsdc
+  };
+  await seedAgent(route);
+  const executions: Array<Record<string, unknown>> = [];
+  const memo = structuredMemo(memoId, requestHash);
+
+  await submitAgentX402Settlement({
+    agentId: `agent-${route.chainId}`,
+    operatorAddress: operator,
+    serviceId: 9,
+    requestHash,
+    amountUsdc: 0.025,
+    units: 1,
+    settlementChainId: route.chainId,
+    memo
+  }, {
+    circleClient: () => ({
+      async estimateContractExecutionFee() {
+        return {data: {medium: {networkFee: "0.0001", networkFeeRaw: "0.0001"}}} as never;
+      },
+      async createContractExecutionTransaction(input) {
+        executions.push(input as unknown as Record<string, unknown>);
+        return {data: {id: executions.length === 1 ? "arc-approval" : "arc-settlement"}} as never;
+      },
+      async getTransaction() {
+        throw new Error("pollTransaction injection must be used");
+      }
+    }),
+    publicClient: () => ({
+      async readContract(input: Record<string, unknown>) {
+        if (input.functionName === "agentProfiles") return [operator, `0x${"00".repeat(32)}`, true] as const;
+        if (input.functionName === "balanceOf") return 1_000_000n;
+        throw new Error(`unexpected contract read: ${String(input.functionName)}`);
+      }
+    } as never),
+    pollTransaction: async () => ({state: "COMPLETE", txHash: null}),
+    idempotencyKey: () => crypto.randomUUID()
+  });
+
+  assert.equal(executions.length, 2);
+  assert.equal(executions[1]?.contractAddress, arcMemoContract);
+  assert.equal(executions[1]?.abiFunctionSignature, "memo(address,bytes,bytes32,bytes)");
+  const parameters = executions[1]?.abiParameters as string[];
+  assert.equal(parameters[0], arcLedger);
+  assert.equal(parameters[2], memoId);
+  assert.match(parameters[3] ?? "", /^0x[0-9a-f]+$/i);
+  const decoded = decodeFunctionData({
+    abi: parseAbi(["function settleAgentRequest(uint256 serviceId,bytes32 requestHash,uint256 units)"]),
+    data: parameters[1] as `0x${string}`
+  });
+  assert.deepEqual(decoded.args, [9n, requestHash, 1n]);
+});
+
+test("malformed request and memo identifiers are rejected before any Circle call", async () => {
+  let circleCalls = 0;
+  const circleClient = () => {
+    circleCalls += 1;
+    throw new Error("Circle must not be initialized");
+  };
+
+  await assert.rejects(submitAgentX402Settlement({
+    agentId: "agent-5042002",
+    operatorAddress: operator,
+    serviceId: 9,
+    requestHash: "0x1234",
+    amountUsdc: 0.025,
+    units: 1,
+    settlementChainId: 5042002
+  }, {circleClient: circleClient as never}), /requestHash must be a 32-byte hexadecimal value/);
+
+  await assert.rejects(submitAgentX402Settlement({
+    agentId: "agent-5042002",
+    operatorAddress: operator,
+    serviceId: 9,
+    requestHash,
+    amountUsdc: 0.025,
+    units: 1,
+    settlementChainId: 5042002,
+    memo: structuredMemo("0x1234", requestHash)
+  }, {circleClient: circleClient as never}), /memoId must be a 32-byte hexadecimal value/);
+  assert.equal(circleCalls, 0);
+});
+
+function structuredMemo(id: string, hash: string) {
+  return {
+    protocol: "nexora.memo" as const,
+    version: "1.0" as const,
+    type: "nexora.x402.purchase" as const,
+    memoId: id,
+    memoData: {
+      agentId: "agent-5042002",
+      agentWallet: arcWallet,
+      operatorAddress: operator,
+      serviceId: "5042002:9",
+      serviceName: "Test service",
+      publisherAddress: operator,
+      requestHash: hash,
+      authorizationId: "authorization-1",
+      units: 1,
+      amountUsdc: 0.025,
+      budgetBucket: "developer_tools",
+      policy: {mode: "auto" as const, dailyLimitUsdc: 100, transactionCapUsdc: 10, requireOnchainPolicy: false},
+      privacy: {scope: "selective" as const, publicFields: ["requestHash"], privateFields: []},
+      intent: "Test memo-backed settlement",
+      createdAt: new Date().toISOString()
+    },
+    encoding: "json" as const,
+    arc: {memoContract: arcMemoContract, targetContract: null, callDataHash: null, memoIndex: null}
+  };
+}
 
 async function seedAgent(route: {
   chainId: number;

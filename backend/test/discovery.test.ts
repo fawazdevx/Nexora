@@ -74,7 +74,7 @@ test("the discovery endpoint returns the document unauthenticated", async () => 
 
   const response = await backend.handleAppRequest({
     method: "GET",
-    url: "http://localhost/.well-known/x402"
+    url: "http://localhost/.well-known/x402?version=1"
   });
   assert.equal(response.status, 200);
   const body = response.body as {resources?: Array<{metadata?: {serviceId?: string}}>};

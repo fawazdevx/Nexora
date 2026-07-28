@@ -12,7 +12,7 @@ export function userFacingPaymentError(error: unknown, fallback = "The payment c
   if (/FeeExceedsMax|0x5ff85e3f/i.test(message)) {
     return "The settlement fee changed before submission. Refresh the payment requirements and try again.";
   }
-  if (/Expected bytes32, got bytes20|AbiEncoding|invalid.*bytes(20|32)|Version:\s*viem/i.test(message)) {
+  if (/Expected bytes32, got bytes20|AbiEncoding|invalid.*bytes(20|32)/i.test(message)) {
     return "Nexora could not prepare this payment because an authorization value was malformed. Refresh and try again.";
   }
   if (/insufficient funds|exceeds balance|not enough.*(gas|funds|balance)/i.test(message)) {

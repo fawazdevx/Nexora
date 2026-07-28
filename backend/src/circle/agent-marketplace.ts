@@ -11,6 +11,7 @@ import {safeHttpUrl} from "../security.js";
 import {insertPayment, insertPaymentIntent, isVisibleAgent, pushNotification, readStore, updatePaymentIntentById, withAgentSpendLock} from "../store.js";
 import type {AgentWalletRecord, PaymentIntentRecord, PaymentRecord, ServiceRecord} from "../store.js";
 import {executeCircleDeveloperWalletX402, type CircleDeveloperWalletX402Result} from "./developer-wallet-x402.js";
+import {circleGatewaySellerCatalog} from "./gateway-seller.js";
 
 export type CircleCliRunner = (args: string[], options?: {timeoutMs?: number}) => Promise<{stdout: string; stderr: string}>;
 export type CircleDiscoveryFetcher = (url: string) => Promise<unknown>;
@@ -71,6 +72,7 @@ type CircleMarketplaceOptions = Partial<{
   requireConfirmation: boolean;
   maxPaymentUsdc: number;
   executor: CirclePaymentExecutor;
+  trustedNexoraGatewayOrigin: string;
 }>;
 
 export type CirclePaymentExecutor = (input: {
@@ -232,6 +234,8 @@ export async function inspectCircleAgentService(serviceUrl: string, options: Cir
   const settings = marketplaceSettings(options);
   assertMarketplaceEnabled(settings);
   const url = safeHttpUrl(serviceUrl, "serviceUrl");
+  const nexoraService = nexoraGatewayService(url, options.trustedNexoraGatewayOrigin);
+  if (nexoraService) return {service: nexoraService};
   let service: CircleAgentService | null = null;
   if (options.runner) {
     try {
@@ -251,6 +255,30 @@ export async function inspectCircleAgentService(serviceUrl: string, options: Cir
   if (!service) throw httpError(publicCircleUnavailableMessage("inspect"), 502);
   return {
     service
+  };
+}
+
+function nexoraGatewayService(serviceUrl: string, trustedOrigin?: string): CircleAgentService | null {
+  const url = new URL(serviceUrl);
+  if (!trustedOrigin || url.origin !== new URL(trustedOrigin).origin) return null;
+  const prefix = "/api/circle/nanopayments/services/";
+  if (!url.pathname.startsWith(prefix)) return null;
+  const endpointHash = decodeURIComponent(url.pathname.slice(prefix.length)).trim().toLowerCase();
+  if (!endpointHash || endpointHash.includes("/")) return null;
+  const catalog = circleGatewaySellerCatalog(url.origin);
+  const service = catalog.services.find((item) => item.endpointHash === endpointHash);
+  if (!service || !catalog.sellerAddress) return null;
+  return {
+    name: service.name,
+    description: service.manifest.description,
+    url: service.resource,
+    priceUsdc: service.pricePerUnitUsdc,
+    publisherAddress: catalog.sellerAddress,
+    assetAddress: null,
+    acceptedChains: catalog.networkDetails.map((network) => normalizeChain(network.network)),
+    paymentScheme: "exact",
+    method: service.method,
+    inputSchema: service.manifest.inputSchema
   };
 }
 

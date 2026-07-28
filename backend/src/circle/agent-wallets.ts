@@ -443,6 +443,9 @@ export async function submitAgentX402Settlement(input: {
   memo?: NexoraStructuredMemo | null;
 }, dependencies: AgentX402SettlementDependencies = {}) {
   if (!config.circle.apiKey) throw new Error("Circle API key is required for agent-wallet settlement");
+  assertBytes32(input.requestHash, "requestHash");
+  const memo = normalizeMemo(input.memo);
+  if (memo) assertBytes32(memo.memoId, "memoId");
   const context = chainContext(input.settlementChainId);
   if (!context.usdc || !context.x402Ledger || !context.policyRegistry) {
     throw new Error(`USDC, x402 ledger, and policy registry addresses are required for agent-wallet settlement on ${context.label}`);
@@ -509,7 +512,6 @@ export async function submitAgentX402Settlement(input: {
     throw new Error(`Circle USDC approval is still pending on ${context.label}. Wait for transaction ${approveTransactionId} to confirm, then retry settlement.`);
   }
 
-  const memo = normalizeMemo(input.memo);
   const settleData = encodeFunctionData({
     abi: x402LedgerAbi,
     functionName: "settleAgentRequest",
@@ -586,6 +588,12 @@ export async function submitAgentX402Settlement(input: {
     callDataHash: memoContext?.callDataHash ?? (useMemoSettlement ? callDataHash : null),
     memoIndex: memoContext?.memoIndex ?? null
   };
+}
+
+function assertBytes32(value: string, label: string): asserts value is `0x${string}` {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(`${label} must be a 32-byte hexadecimal value`);
+  }
 }
 
 export async function refreshPendingCircleWallets(operatorAddress?: string) {

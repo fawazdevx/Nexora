@@ -65,7 +65,7 @@ export default function ReputationPage() {
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-magenta" />
           <div className="min-w-0 flex-1 text-magenta">
             <p className="font-semibold">Reputation data could not be loaded</p>
-            <p className="mt-1 text-magenta/80">{snapshot.error instanceof Error ? snapshot.error.message : "Could not reach the Nexora API."} The scorecard below is not showing your real reputation.</p>
+            <p className="mt-1 text-magenta/80">{snapshot.error instanceof Error ? snapshot.error.message : "Nexora cannot load reputation data right now."} The scorecard below is not showing your real reputation.</p>
             <button type="button" className="secondary-button mt-2 min-h-8 px-3 py-1 text-xs" onClick={() => snapshot.refetch()}>Retry</button>
           </div>
         </div>

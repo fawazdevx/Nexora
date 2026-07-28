@@ -98,7 +98,11 @@ export const config = {
     },
     gatewaySeller: {
       enabled: (process.env.NEXORA_CIRCLE_GATEWAY_SELLER_ENABLED ?? "true").toLowerCase() !== "false",
-      facilitatorUrl: process.env.CIRCLE_GATEWAY_FACILITATOR_URL ?? "https://gateway-api-testnet.circle.com"
+      mode: normalizeCircleGatewaySellerMode(process.env.NEXORA_CIRCLE_GATEWAY_SELLER_MODE),
+      networks: process.env.NEXORA_CIRCLE_GATEWAY_SELLER_NETWORKS ?? "",
+      publicApiUrl: process.env.NEXORA_PUBLIC_API_URL ?? "",
+      facilitatorUrl: process.env.CIRCLE_GATEWAY_FACILITATOR_URL
+        ?? defaultCircleGatewayFacilitatorUrl(process.env.NEXORA_CIRCLE_GATEWAY_SELLER_MODE)
     }
   },
   // Meridian is an external x402 facilitator. On non-EIP-3009 chains (BOT Chain)
@@ -211,4 +215,14 @@ function normalizeOptionalPositiveNumber(value: string | undefined, fallback: nu
   if (value === undefined || value === null || value.trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeCircleGatewaySellerMode(value: string | undefined): "testnet" | "mainnet" {
+  return value?.trim().toLowerCase() === "mainnet" ? "mainnet" : "testnet";
+}
+
+function defaultCircleGatewayFacilitatorUrl(mode: string | undefined) {
+  return normalizeCircleGatewaySellerMode(mode) === "mainnet"
+    ? "https://gateway-api.circle.com"
+    : "https://gateway-api-testnet.circle.com";
 }
