@@ -311,6 +311,62 @@ test("Arc EOA settlement sends the ledger call through Memo with bytes32 identif
   assert.deepEqual(decoded.args, [9n, requestHash, 1n]);
 });
 
+test("agent-wallet settlement retries reuse stable Circle idempotency keys", async () => {
+  const route = {
+    name: "Arc Testnet",
+    chainId: 5042002,
+    wallet: arcWallet,
+    walletId: "circle-arc-wallet-id",
+    circleBlockchain: "ARC-TESTNET",
+    policyRegistry: arcPolicyRegistry,
+    ledger: arcLedger,
+    usdc: arcUsdc
+  };
+  await seedAgent(route);
+  const idempotencyKeys: string[] = [];
+  let transactionNumber = 0;
+  const dependencies = {
+    circleClient: () => ({
+      async estimateContractExecutionFee() {
+        return {data: {medium: {networkFee: "0.0001"}}} as never;
+      },
+      async createContractExecutionTransaction(input: {idempotencyKey?: string}) {
+        idempotencyKeys.push(input.idempotencyKey ?? "");
+        transactionNumber += 1;
+        return {data: {id: `retry-transaction-${transactionNumber}`}} as never;
+      },
+      async getTransaction() {
+        throw new Error("pollTransaction injection must be used");
+      }
+    }),
+    publicClient: () => ({
+      async readContract(input: Record<string, unknown>) {
+        if (input.functionName === "agentProfiles") return [operator, `0x${"00".repeat(32)}`, true] as const;
+        return 1_000_000n;
+      }
+    } as never),
+    pollTransaction: async () => ({state: "COMPLETE", txHash: `0x${"ef".repeat(32)}`})
+  };
+
+  const input = {
+    agentId: "agent-5042002",
+    operatorAddress: operator,
+    authorizationId: "authorization-retry-safe",
+    serviceId: 9,
+    requestHash,
+    amountUsdc: 0.025,
+    units: 1,
+    settlementChainId: 5042002
+  };
+  await submitAgentX402Settlement(input, dependencies);
+  await submitAgentX402Settlement(input, dependencies);
+
+  assert.equal(idempotencyKeys.length, 4);
+  assert.deepEqual(idempotencyKeys.slice(0, 2), idempotencyKeys.slice(2));
+  assert.notEqual(idempotencyKeys[0], idempotencyKeys[1]);
+  assert.match(idempotencyKeys[0] ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});
+
 test("malformed request and memo identifiers are rejected before any Circle call", async () => {
   let circleCalls = 0;
   const circleClient = () => {

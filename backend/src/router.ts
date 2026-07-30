@@ -761,6 +761,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
         const circleSettlement = await submitAgentX402Settlement({
           agentId,
           operatorAddress: payment.payer,
+          authorizationId,
           serviceId: service.chainServiceId,
           requestHash: payment.requestHash,
           amountUsdc: payment.amountUsdc,

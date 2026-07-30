@@ -376,7 +376,7 @@ export default function MarketplacePage() {
         const target = supportedChains.find((item) => item.id === routeChainId);
         toast.loading(`Agent wallet settling ${service.name} on ${target?.name ?? "the service network"}…`, {id: toastId});
       }
-      const settlement = await apiPost<{status: string; txHash?: string | null}>("/api/x402/settle", {
+      const settlement = await settleAgentPayment({
         authorizationId: result.authorizationId,
         agentId: canUseCircleAgentSettlement ? selectedAgent.id : undefined,
         txHash,
@@ -384,7 +384,7 @@ export default function MarketplacePage() {
         targetContract: memoSettlement?.targetContract,
         callDataHash: memoSettlement?.callDataHash,
         memoIndex: memoSettlement?.memoIndex
-      });
+      }, service.name, toastId);
       if (settlement.status === "pending_settlement") {
         void snapshot.refetch().catch(() => undefined);
         toast.success(`Agent settlement is pending on Circle. Execute ${service.name} after the network transaction confirms.`, {id: toastId});
@@ -1510,8 +1510,34 @@ function hasRecordedAgentPolicy(agent: Agent, chainId: number) {
   return chainId === arcTestnet.id && Boolean(agent.policy.txHash);
 }
 
+type AgentSettlementResponse = {status: string; txHash?: string | null};
+
+async function settleAgentPayment(body: Record<string, unknown>, serviceName: string, toastId: string): Promise<AgentSettlementResponse> {
+  const maxAttempts = 4;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const settlement = await apiPost<AgentSettlementResponse>("/api/x402/settle", body);
+      if (settlement.status !== "pending_settlement" || attempt === maxAttempts - 1) return settlement;
+      toast.loading(`Circle is still confirming ${serviceName}. Retrying…`, {id: toastId});
+    } catch (error) {
+      if (!isRetryableSettlementError(error) || attempt === maxAttempts - 1) throw error;
+      toast.loading(`The network is slow. Waiting for Circle to confirm ${serviceName}…`, {id: toastId});
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+  throw new Error("Circle settlement did not return a final status.");
+}
+
+function isRetryableSettlementError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Nexora could not complete this request|Nexora cannot connect right now|temporarily unavailable|timed out|timeout/i.test(message);
+}
+
 function marketplaceErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "Service purchase failed.";
+  if (/Nexora could not complete this request|Nexora cannot connect right now/i.test(message)) {
+    return "Circle is taking longer than usual to confirm this payment. Wait a few seconds and try again.";
+  }
   if (/Expected bytes|AbiEncoding|Version:\s*viem|invalid.*(bytes|address)|execution reverted/i.test(message)) {
     return "The Marketplace payment could not be prepared on the selected route. Verify the wallet network and service route, then try again.";
   }

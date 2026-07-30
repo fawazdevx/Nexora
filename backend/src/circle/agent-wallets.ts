@@ -1,4 +1,5 @@
 import {Blockchain, initiateDeveloperControlledWalletsClient, type AccountType, type EvmBlockchain} from "@circle-fin/developer-controlled-wallets";
+import {createHash} from "node:crypto";
 import {createPublicClient, encodeFunctionData, formatUnits, http, isAddress, keccak256, parseAbi, parseEventLogs, parseUnits, stringToHex} from "viem";
 import {agentChainContexts, chainContext, type NexoraChainContext} from "../chains.js";
 import {config} from "../config.js";
@@ -59,7 +60,7 @@ export type AgentX402SettlementDependencies = {
   circleClient?: () => CircleSettlementClient;
   publicClient?: (context: NexoraChainContext) => ReturnType<typeof chainPublicClient>;
   pollTransaction?: (transactionId: string) => Promise<CircleTransactionResult>;
-  idempotencyKey?: () => string;
+  idempotencyKey?: (stage?: "approval" | "settlement") => string;
 };
 
 export async function createAgentWallet(input: CreateAgentWalletInput) {
@@ -435,6 +436,7 @@ async function notifyAgentAction(notification?: NotificationRecord | null) {
 export async function submitAgentX402Settlement(input: {
   agentId: string;
   operatorAddress: string;
+  authorizationId?: string;
   serviceId: number;
   requestHash: string;
   amountUsdc: number;
@@ -464,7 +466,9 @@ export async function submitAgentX402Settlement(input: {
   const client = dependencies.circleClient?.() ?? circleClient();
   const publicClient = dependencies.publicClient?.(context) ?? chainPublicClient(context);
   const pollTransaction = dependencies.pollTransaction ?? ((transactionId: string) => pollCircleTransaction(transactionId, client));
-  const idempotencyKey = dependencies.idempotencyKey ?? (() => crypto.randomUUID());
+  const idempotencyKey = dependencies.idempotencyKey ?? ((stage: "approval" | "settlement" = "approval") => (
+    stableIdempotencyKey(`nexora:x402:${input.authorizationId ?? input.requestHash}:${stage}`)
+  ));
   const amountBaseUnits = BigInt(Math.round(input.amountUsdc * 1_000_000));
   await assertAgentPolicyRegistration({
     agentAddress: chainWallet.address,
@@ -501,7 +505,7 @@ export async function submitAgentX402Settlement(input: {
   const approve = await client.createContractExecutionTransaction({
     walletId: chainWallet.circleWalletId,
     ...approvalExecution,
-    idempotencyKey: idempotencyKey(),
+    idempotencyKey: idempotencyKey("approval"),
     refId: `nexora-x402-approve-${input.serviceId}`,
     fee: {type: "level", config: {feeLevel: "MEDIUM"}}
   });
@@ -554,7 +558,7 @@ export async function submitAgentX402Settlement(input: {
   const settle = await client.createContractExecutionTransaction({
     walletId: chainWallet.circleWalletId,
     ...settlementExecution,
-    idempotencyKey: idempotencyKey(),
+    idempotencyKey: idempotencyKey("settlement"),
     refId: useMemoSettlement ? `nexora-x402-memo-settle-${input.serviceId}` : `nexora-x402-settle-${input.serviceId}`,
     fee: {type: "level", config: {feeLevel: "MEDIUM"}}
   });
@@ -685,6 +689,18 @@ function circleErrorMessage(prefix: string, input: unknown) {
         ? data.code
         : "unknown Circle error";
   return `${prefix}: ${record.status ?? "unknown_status"} ${message}`;
+}
+
+// Circle treats an idempotency key as the identity of a transaction request.
+// Derive stable UUIDs from the authorization so a client retry after a slow
+// response replays the same approval or settlement instead of submitting a
+// second transaction.
+function stableIdempotencyKey(seed: string) {
+  const hex = createHash("sha256").update(seed).digest("hex").slice(0, 32).split("");
+  hex[12] = "4";
+  hex[16] = ((Number.parseInt(hex[16] ?? "8", 16) & 0x3) | 0x8).toString(16);
+  const value = hex.join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 }
 
 function circleFriendlyError(error: unknown) {
