@@ -1,7 +1,7 @@
 import {config} from "./config.js";
 import {createPublicClient, formatUnits, http, isAddress, pad, parseAbi, zeroAddress, type Hex} from "viem";
 import {authorizeX402, paymentRequired, PolicyBlockedError, settleX402} from "./x402/facilitator.js";
-import {addMissingAgentChainWallets, createAgentWallet, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy, upsertExternalPolicyWallet} from "./circle/agent-wallets.js";
+import {addMissingAgentChainWallets, createAgentWallet, ensureCircleAgentPolicyRegistration, refreshPendingCircleWallets, submitAgentX402Settlement, updateAgentPolicy, upsertExternalPolicyWallet} from "./circle/agent-wallets.js";
 import {approveCircleAgentPaymentIntent, circleAgentMarketplaceReadiness, circleAgentPaymentIntentAuthorization, completeCircleAgentPaymentIntentFromReceipt, createCircleAgentPaymentIntent, executeCircleAgentPaymentIntent, inspectCircleAgentService, payCircleAgentService, preflightCircleAgentPayment, rejectCircleAgentPaymentIntent, searchCircleAgentServices} from "./circle/agent-marketplace.js";
 import {circleGatewayDiscoveryDocument, circleGatewaySellerCatalog, executeCircleGatewaySellerRequest} from "./circle/gateway-seller.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
@@ -41,9 +41,11 @@ import {
 } from "./security.js";
 import {agentWalletAddresses, appSnapshot, archiveWorkspaceTestData, beginTelegramNotificationLink, isVisibleAgent, pushNotification, readStore, storageFriendlyError, updateNotificationPreferences, updateStore, visibleServicesForStore} from "./store.js";
 import {settleFacilitatorPayment, supportedX402, verifyFacilitatorPayment} from "./x402/protocol-facilitator.js";
-import {isMeridianNetwork, settleGuardedMeridianPayment, supportedMeridianKinds, verifyMeridianPayment} from "./x402/meridian-facilitator.js";
+import {isMeridianNetwork, normalizeMeridianNetwork, reconcilePendingMeridianAccounting, settleGuardedMeridianPayment, supportedMeridianKinds, verifyMeridianPayment} from "./x402/meridian-facilitator.js";
 import {buildSettlementRequirements, settlementConfigured, verifySettlementTx} from "./x402/settlement.js";
 import {evaluateAgentPolicy} from "./policies/engine.js";
+import {readBotChainReadiness} from "./botchain/readiness.js";
+import {createVComputePaymentQuote} from "./botchain/vcompute.js";
 import type {AgentApprovalRequestRecord, EscrowRecord, IndexedChainEventRecord, PaymentRecord, SubscriptionRecord} from "./store.js";
 
 const erc20BalanceAbi = parseAbi(["function balanceOf(address account) view returns (uint256)"]);
@@ -75,6 +77,22 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "GET" && path === "/api/health") {
       return ok({ok: true, network: "Arc Testnet", chainId: config.arc.chainId});
+    }
+
+    if (req.method === "GET" && path === "/api/botchain/readiness") {
+      return ok(await readBotChainReadiness({
+        address: requiredAddress(url.searchParams.get("address"), "address"),
+        network: url.searchParams.get("network")
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/botchain/vcompute/quote") {
+      return ok(createVComputePaymentQuote({
+        network: optionalLimitedString(body.network, "network", 40),
+        jobType: requiredLimitedString(body.jobType, "jobType", 64),
+        units: requiredPositiveInteger(body.units, "units"),
+        provider: optionalLimitedString(body.provider, "provider", 2_048)
+      }));
     }
 
     if (req.method === "GET" && (path === "/x402/supported" || path === "/api/x402/supported")) {
@@ -188,6 +206,17 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       }));
     }
 
+    if (req.method === "POST" && path === "/api/admin/botchain/reconcile-accounting") {
+      assertSharedSecret(header(req, "x-admin-secret"), config.security.adminSecret, "admin");
+      const rawNetwork = optionalLimitedString(body.network, "network", 40);
+      const normalizedNetwork = rawNetwork ? normalizeMeridianNetwork(rawNetwork) : null;
+      if (rawNetwork && !normalizedNetwork) throw new Error("Unsupported BOT Chain network");
+      const owner = body.owner === undefined || body.owner === null || body.owner === ""
+        ? undefined
+        : requiredAddress(body.owner, "owner");
+      return ok(await reconcilePendingMeridianAccounting({network: normalizedNetwork ?? undefined, owner}));
+    }
+
     if (req.method === "GET" && path === "/api/app") {
       const operator = optionalLimitedString(url.searchParams.get("operator"), "operator", 80);
       await refreshPendingCircleWallets(operator).catch(() => undefined);
@@ -277,6 +306,22 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
       assertTokenAddress(auth, operatorAddress, "operatorAddress");
       return ok(await addMissingAgentChainWallets({agentId, operatorAddress}));
+    }
+
+    if (req.method === "POST" && path.startsWith("/api/agents/") && path.endsWith("/policies/register")) {
+      const agentId = path.split("/")[3] ?? "";
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await ensureCircleAgentPolicyRegistration(agentId, {
+        operatorAddress,
+        chainId: requiredPositiveInteger(body.chainId, "chainId"),
+        policyRegistry: optionalLimitedString(body.policyRegistry, "policyRegistry", 80),
+        dailyLimitUsdc: requiredUsdcAmount(body.dailyLimitUsdc, "dailyLimitUsdc"),
+        transactionCapUsdc: requiredUsdcAmount(body.transactionCapUsdc, "transactionCapUsdc"),
+        contractAllowlist: addressArray(body.contractAllowlist, "contractAllowlist"),
+        recipientAllowlist: addressArray(body.recipientAllowlist, "recipientAllowlist"),
+        policyV2: optionalPolicyV2(body.policyV2)
+      }));
     }
 
     if ((req.method === "PATCH" || req.method === "POST") && path.startsWith("/api/agents/") && path.endsWith("/policies")) {

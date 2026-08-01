@@ -1,233 +1,162 @@
 import {useMemo, useState} from "react";
-import {Bot, CheckCircle2, ExternalLink, Loader2, ReceiptText, Route, ShieldCheck, Wallet} from "lucide-react";
+import {Cpu, Loader2, ReceiptText, Route, ShieldCheck, Wallet} from "lucide-react";
 import toast from "react-hot-toast";
-import {formatUnits, parseUnits} from "viem";
-import {useAccount} from "wagmi";
+import {formatUnits} from "viem";
 import {BotchainPaymentPanel} from "@/components/BotchainPaymentPanel";
+import {JsonViewer, type JsonStatus} from "@/components/JsonViewer";
 import {PageHeader} from "@/components/PageHeader";
 import {StatMetric} from "@/components/StatMetric";
-import {botChainTestnetWagmiChain, shortAddress, switchToChain} from "@/lib/arc";
-import {contractAddressesForChain, isNexoraContractChain, readX402MarketplaceService, settleX402Request, writeAgentPolicy} from "@/lib/contracts";
+import {apiPost} from "@/lib/api";
+import {configuredBotChain} from "@/lib/arc";
+import {botchainMeridian} from "@/lib/permit2";
 import {userFacingPaymentError} from "@/lib/user-errors";
 
-type BotService = Awaited<ReturnType<typeof readX402MarketplaceService>>;
+type VComputeQuote = {
+  network: "bot-chain-testnet" | "bot-chain";
+  chainId: number;
+  serviceId: string;
+  job: {type: string; units: number; provider: string; providerConfigured: boolean};
+  pricing: {asset: string; unitPrice: number; amountBaseUnits: string; marketplaceFeeBps: number};
+  policy: {maxUnitsPerRequest: number; requireServiceAllowlist: boolean; serviceId: string};
+  paymentRequirements: Record<string, unknown>;
+};
 
 export default function BotchainPage() {
-  const {address, chain, isConnected} = useAccount();
-  const contracts = useMemo(() => contractAddressesForChain(botChainTestnetWagmiChain.id), []);
-  const commerceConfigured = isNexoraContractChain(botChainTestnetWagmiChain.id);
-  const [dailyLimit, setDailyLimit] = useState("20");
-  const [transactionCap, setTransactionCap] = useState("5");
-  const [weeklyLimit, setWeeklyLimit] = useState("100");
-  const [monthlyLimit, setMonthlyLimit] = useState("300");
-  const [cooldownSeconds, setCooldownSeconds] = useState("0");
-  const [serviceId, setServiceId] = useState("1");
-  const [units, setUnits] = useState("1");
-  const [service, setService] = useState<BotService | null>(null);
-  const [loadingService, setLoadingService] = useState(false);
-  const [savingPolicy, setSavingPolicy] = useState(false);
-  const [paying, setPaying] = useState(false);
-  const [lastReceipt, setLastReceipt] = useState<string | null>(null);
-
-  const grossAmount = useMemo(() => {
-    if (!service) return "0";
-    try {
-      return formatUnits(parseUnits(service.pricePerUnitUsdc, 6) * BigInt(Math.max(1, Number(units) || 1)), 6);
-    } catch {
-      return "0";
-    }
-  }, [service, units]);
-
-  async function ensureBotChain() {
-    if (chain?.id !== botChainTestnetWagmiChain.id) await switchToChain(botChainTestnetWagmiChain);
-  }
-
-  async function loadService() {
-    const parsedId = Number(serviceId);
-    if (!Number.isSafeInteger(parsedId) || parsedId <= 0) {
-      toast.error("Enter a valid BOT Marketplace service id.");
-      return;
-    }
-    setLoadingService(true);
-    try {
-      const result = await readX402MarketplaceService({chainId: botChainTestnetWagmiChain.id, chainServiceId: parsedId});
-      if (!result.active || /^0x0{40}$/i.test(result.publisher)) throw new Error("This BOT Marketplace service is not active.");
-      setService(result);
-      toast.success("BOT Marketplace service loaded.");
-    } catch (error) {
-      setService(null);
-      toast.error(userFacingPaymentError(error, "The BOT Marketplace service could not be loaded."));
-    } finally {
-      setLoadingService(false);
-    }
-  }
-
-  async function savePolicy() {
-    if (!isConnected || !address) {
-      toast.error("Connect the BOT EOA wallet that will make purchases.");
-      return;
-    }
-    if (!commerceConfigured) {
-      toast.error("The Nexora BOT commerce contracts are not configured yet.");
-      return;
-    }
-    if (!contracts.x402Ledger) {
-      toast.error("The Nexora BOT ledger address is missing.");
-      return;
-    }
-    if (!service) {
-      toast.error("Load the BOT Marketplace service before creating its allowlist policy.");
-      return;
-    }
-    setSavingPolicy(true);
-    const toastId = toast.loading("Saving the connected-wallet BOT policy…");
-    try {
-      await ensureBotChain();
-      await writeAgentPolicy({
-        agentWallet: address,
-        operatorAddress: address,
-        arcName: `bot-eoa:${address.toLowerCase()}`,
-        dailyLimitUsdc: dailyLimit,
-        transactionCapUsdc: transactionCap,
-        contractAllowlist: [contracts.x402Ledger],
-        recipientAllowlist: [service.publisher],
-        active: true,
-        policyV2: {
-          weeklyLimitUsdc: weeklyLimit,
-          monthlyLimitUsdc: monthlyLimit,
-          maxUnitsPerRequest: units,
-          cooldownSeconds,
-          serviceAllowlist: [serviceId],
-          requireOnchainPolicy: true
-        }
-      });
-      toast.success("BOT spending policy saved on-chain.", {id: toastId});
-    } catch (error) {
-      toast.error(userFacingPaymentError(error, "The BOT policy could not be saved."), {id: toastId});
-    } finally {
-      setSavingPolicy(false);
-    }
-  }
-
-  async function payService() {
-    if (!isConnected || !address || !service) {
-      toast.error("Connect a wallet and load a BOT Marketplace service first.");
-      return;
-    }
-    const parsedId = Number(serviceId);
-    const parsedUnits = Number(units);
-    if (!Number.isSafeInteger(parsedUnits) || parsedUnits <= 0) {
-      toast.error("Units must be a positive whole number.");
-      return;
-    }
-    setPaying(true);
-    const toastId = toast.loading(`Approving and settling ${grossAmount} testnet USDT…`);
-    try {
-      await ensureBotChain();
-      const result = await settleX402Request({
-        chainServiceId: parsedId,
-        requestHash: `0x${crypto.randomUUID().replaceAll("-", "").padEnd(64, "0")}`,
-        payer: address,
-        units: parsedUnits,
-        amountUsdc: grossAmount
-      });
-      setLastReceipt(result.settleHash);
-      toast.success("BOT Marketplace payment settled under Nexora policy.", {id: toastId});
-    } catch (error) {
-      toast.error(userFacingPaymentError(error, "The BOT Marketplace payment was blocked or reverted."), {id: toastId});
-    } finally {
-      setPaying(false);
-    }
-  }
+  const chain = configuredBotChain();
+  const mainnet = botchainMeridian.network === "bot-chain";
+  const feePercent = botchainMeridian.marketplaceFeeBps / 100;
 
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         kicker="BOT Chain commerce"
-        title="Policy-controlled USDT payments for BOT developers and agents"
-        description="Use a connected or self-hosted BOT EOA with Nexora policy limits, service allowlists, fee splitting, receipts, and reputation. Circle agent wallets are intentionally not used on BOT Chain."
+        title="Policy-controlled USDT payments from BOT EOAs"
+        description="Use a connected or self-hosted EOA to authorize Permit2 payments through Meridian. Nexora reserves policy spend before settlement, records receipts and reputation after settlement, and attributes the seller through Meridian Marketplace."
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <StatMetric variant="panel" icon={Route} label="Payment paths" value={2} />
-        <StatMetric variant="panel" icon={ShieldCheck} label="Configured policy contracts" value={commerceConfigured ? 3 : 0} suffix="/3" accent={commerceConfigured} />
-        <StatMetric variant="panel" icon={Wallet} label="Connected EOA payment path" value={1} />
+        <StatMetric variant="panel" icon={Route} label="Configured chain ID" value={chain.id} />
+        <StatMetric variant="panel" icon={Wallet} label="Payment routes" value={1} suffix=" Meridian" />
+        <StatMetric variant="panel" icon={ReceiptText} label="Meridian Marketplace fee" value={feePercent} suffix="%" decimals={2} accent />
       </div>
 
-      {!commerceConfigured ? (
-        <section className="panel border-amber/25 bg-amber/5">
-          <p className="font-semibold text-amber">BOT policy commerce is awaiting contract configuration.</p>
-          <p className="mt-2 text-sm leading-6 text-slate-400">Deploy the minimal BOT suite, then set the policy registry, ledger, and reputation addresses. Meridian remains available below for external x402 resources.</p>
-        </section>
-      ) : null}
-
-      <section className="panel space-y-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+      <section className={`panel ${mainnet ? "border-amber/25 bg-amber/5" : "border-cyan/20 bg-cyan/5"}`}>
+        <div className="flex items-start gap-3">
+          <ShieldCheck size={19} className={mainnet ? "mt-0.5 text-amber" : "mt-0.5 text-cyan"} />
           <div>
-            <p className="section-kicker">Nexora Marketplace · direct ledger</p>
-            <h2 className="mt-2 text-2xl font-semibold text-white">Buy BOT services under an on-chain spending policy</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">The connected EOA registers itself as the controlled wallet. The ledger checks caps and allowlists before pulling USDT, splits Nexora’s platform fee, and emits the payment receipt.</p>
-          </div>
-          <span className="rounded-full border border-mint/25 bg-mint/10 px-3 py-1 text-xs font-semibold text-mint">BOT testnet</span>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[160px_auto_minmax(0,1fr)] lg:items-end">
-          <label className="grid gap-2 text-xs font-semibold text-slate-300">Service id<input value={serviceId} onChange={(event) => { setServiceId(event.target.value); setService(null); }} inputMode="numeric" className="field" /></label>
-          <button type="button" onClick={() => void loadService()} disabled={!commerceConfigured || loadingService} className="secondary-button">
-            {loadingService ? <Loader2 size={15} className="animate-spin" /> : <Bot size={15} />} Load service
-          </button>
-          <div className="surface min-h-12 px-4 py-3 text-sm text-slate-300">
-            {service ? <><span className="font-semibold text-white">{service.endpointHash}</span> · {service.pricePerUnitUsdc} USDT/unit · {shortAddress(service.publisher)}</> : "Load a published service to bind its publisher and id into the policy."}
+            <p className={`font-semibold ${mainnet ? "text-amber" : "text-cyan"}`}>
+              {mainnet ? "BOT Chain mainnet is enabled" : "BOT Chain testnet is enabled"}
+            </p>
+            <p className="mt-1 text-sm leading-6 text-slate-400">
+              Chain ID {chain.id}. This route uses an external EOA signer, not a Circle Agent Wallet.
+              {mainnet ? " Payments use real USDT and require explicit confirmation." : " Payments use testnet USDT."}
+            </p>
           </div>
         </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <PolicyField label="Daily limit" value={dailyLimit} onChange={setDailyLimit} suffix="USDT" />
-          <PolicyField label="Transaction cap" value={transactionCap} onChange={setTransactionCap} suffix="USDT" />
-          <PolicyField label="Weekly limit" value={weeklyLimit} onChange={setWeeklyLimit} suffix="USDT" />
-          <PolicyField label="Monthly limit" value={monthlyLimit} onChange={setMonthlyLimit} suffix="USDT" />
-          <PolicyField label="Cooldown" value={cooldownSeconds} onChange={setCooldownSeconds} suffix="seconds" />
-        </div>
-
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="flex items-end gap-3">
-            <PolicyField label="Purchase units" value={units} onChange={setUnits} suffix="units" />
-            <div className="pb-2 text-sm text-slate-400">Gross: <span className="font-semibold text-white">{grossAmount} USDT</span></div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => void savePolicy()} disabled={!service || savingPolicy || !commerceConfigured} className="secondary-button">
-              {savingPolicy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />} Save BOT policy
-            </button>
-            <button type="button" onClick={() => void payService()} disabled={!service || paying || !commerceConfigured} className="action-button">
-              {paying ? <Loader2 size={15} className="animate-spin" /> : <ReceiptText size={15} />} Pay service
-            </button>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-white/[0.1] bg-white/[0.03] p-4 text-sm leading-6 text-slate-400">
-          To demonstrate a blocked payment, save a transaction cap below the loaded service total and try the purchase. Nexora’s ledger rejects it before funds move.
-        </div>
-
-        {lastReceipt ? (
-          <a href={`${botChainTestnetWagmiChain.blockExplorers.default.url.replace(/\/$/, "")}/tx/${lastReceipt}`} target="_blank" rel="noreferrer" className="secondary-button w-fit">
-            <CheckCircle2 size={15} /> Open on-chain receipt <ExternalLink size={14} />
-          </a>
-        ) : null}
       </section>
 
       <BotchainPaymentPanel />
+      <VComputeQuotePanel />
     </div>
   );
 }
 
-function PolicyField({label, value, onChange, suffix}: {label: string; value: string; onChange: (value: string) => void; suffix: string}) {
+function VComputeQuotePanel() {
+  const [jobType, setJobType] = useState("inference");
+  const [units, setUnits] = useState("100");
+  const [provider, setProvider] = useState("");
+  const [quote, setQuote] = useState<VComputeQuote | null>(null);
+  const [loading, setLoading] = useState(false);
+  const status = useMemo<JsonStatus | undefined>(
+    () => quote ? {label: "Quote ready", tone: "ok"} : undefined,
+    [quote]
+  );
+
+  async function createQuote() {
+    const parsedUnits = Number(units);
+    if (!Number.isSafeInteger(parsedUnits) || parsedUnits <= 0) {
+      toast.error("Compute units must be a positive whole number.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await apiPost<VComputeQuote>("/api/botchain/vcompute/quote", {
+        network: botchainMeridian.network,
+        jobType: jobType.trim().toLowerCase(),
+        units: parsedUnits,
+        provider: provider.trim() || undefined
+      });
+      setQuote(result);
+      toast.success("vCompute payment requirements created.");
+    } catch (error) {
+      setQuote(null);
+      toast.error(userFacingPaymentError(error, "Nexora could not create the vCompute quote."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <label className="grid min-w-[130px] gap-2 text-xs font-semibold text-slate-300">
-      {label}
-      <span className="relative block">
-        <input value={value} onChange={(event) => onChange(event.target.value)} inputMode="decimal" className="field w-full pr-16" />
-        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px] uppercase tracking-wide text-slate-500">{suffix}</span>
-      </span>
-    </label>
+    <section className="panel">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="section-kicker">vCompute adapter</p>
+          <h2 className="mt-2 text-2xl font-semibold text-white">Create policy-bound compute payment requirements</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+            Price inference, GPU, data-processing, or verification jobs by compute unit. The returned service ID can be allowlisted and the unit count maps directly to the policy’s maximum units per request.
+          </p>
+        </div>
+        <Cpu size={22} className="text-orchid" />
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-[1fr_140px_1.4fr_auto] md:items-end">
+        <label className="grid gap-2 text-xs font-semibold text-slate-300">
+          Job type
+          <select value={jobType} onChange={(event) => setJobType(event.target.value)} className="field">
+            <option value="inference">Inference</option>
+            <option value="gpu-render">GPU render</option>
+            <option value="data-processing">Data processing</option>
+            <option value="verification">Verification</option>
+          </select>
+        </label>
+        <label className="grid gap-2 text-xs font-semibold text-slate-300">
+          Compute units
+          <input value={units} onChange={(event) => setUnits(event.target.value)} inputMode="numeric" className="field" />
+        </label>
+        <label className="grid gap-2 text-xs font-semibold text-slate-300">
+          Provider endpoint
+          <input
+            value={provider}
+            onChange={(event) => setProvider(event.target.value)}
+            placeholder="Optional provider URL or identifier"
+            className="field"
+          />
+        </label>
+        <button type="button" onClick={() => void createQuote()} disabled={loading} className="action-button min-h-12">
+          {loading ? <Loader2 size={16} className="animate-spin" /> : <Cpu size={16} />}
+          Build quote
+        </button>
+      </div>
+
+      {quote ? (
+        <div className="mt-5 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <QuoteMetric label="Amount" value={`${formatUnits(BigInt(quote.pricing.amountBaseUnits), botchainMeridian.usdtDecimals)} ${quote.pricing.asset}`} />
+            <QuoteMetric label="Max policy units" value={String(quote.policy.maxUnitsPerRequest)} />
+            <QuoteMetric label="Marketplace fee" value={`${(quote.pricing.marketplaceFeeBps / 100).toFixed(2)}%`} />
+          </div>
+          <JsonViewer title="vCompute x402 requirements" code={JSON.stringify(quote, null, 2)} status={status} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function QuoteMetric({label, value}: {label: string; value: string}) {
+  return (
+    <div className="surface p-3">
+      <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="mt-2 text-sm font-semibold text-white">{value}</p>
+    </div>
   );
 }

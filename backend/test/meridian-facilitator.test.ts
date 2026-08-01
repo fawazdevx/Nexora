@@ -8,6 +8,7 @@ process.env.MERIDIAN_SELLER_ADDRESS = process.env.MERIDIAN_SELLER_ADDRESS ?? "0x
 process.env.BOTCHAIN_TESTNET_POLICY_REGISTRY_ADDRESS = process.env.BOTCHAIN_TESTNET_POLICY_REGISTRY_ADDRESS ?? "0x3333333333333333333333333333333333333333";
 process.env.BOTCHAIN_TESTNET_REPUTATION_ADDRESS = process.env.BOTCHAIN_TESTNET_REPUTATION_ADDRESS ?? "0x4444444444444444444444444444444444444444";
 process.env.BOTCHAIN_POLICY_RELAYER_PRIVATE_KEY = process.env.BOTCHAIN_POLICY_RELAYER_PRIVATE_KEY ?? `0x${"55".repeat(32)}`;
+process.env.NEXORA_ENABLE_BOTCHAIN_MAINNET = "false";
 
 const {
   buildMeridianPaymentRequirements,
@@ -64,6 +65,7 @@ test("buildMeridianPaymentRequirements targets the facilitator, not a seller wal
   assert.equal(requirements.network, NETWORK);
   assert.equal(requirements.maxAmountRequired, "1000000");
   assert.equal(requirements.extra.name, "USDT");
+  assert.equal(requirements.extra.creditedRecipient, process.env.MERIDIAN_SELLER_ADDRESS);
 });
 
 test("buildMeridianPaymentRequirements rejects non-integer or zero amounts", () => {
@@ -82,6 +84,7 @@ test("supportedMeridianKinds advertises the Permit2 settlement path when configu
   const kinds = supportedMeridianKinds();
   assert.ok(Array.isArray(kinds));
   assert.ok(kinds.some((k) => k.network === NETWORK));
+  assert.ok(!kinds.some((k) => k.network === "bot-chain"));
 });
 
 test("settle relays a valid payload and maps a successful Meridian response", async () => {
@@ -107,7 +110,16 @@ test("settle relays a valid payload and maps a successful Meridian response", as
   assert.equal(result.network, NETWORK);
   assert.match(sentUrl, /\/settle$/);
   // The relay must forward server-rebuilt requirements, not blindly echo input.
-  assert.equal((sentBody.paymentRequirements as {payTo: string}).payTo, cfg.facilitator);
+  const sentRequirements = sentBody.paymentRequirements as {
+    payTo: string;
+    extra: {creditedRecipient: string};
+    platform?: string;
+    platformFeeBps?: number;
+  };
+  assert.equal(sentRequirements.payTo, cfg.facilitator);
+  assert.equal(sentRequirements.extra.creditedRecipient, process.env.MERIDIAN_SELLER_ADDRESS);
+  assert.equal("platform" in sentRequirements, false);
+  assert.equal("platformFeeBps" in sentRequirements, false);
 });
 
 test("settle rejects a payload whose witness.to is not the facilitator (fund redirection)", async () => {

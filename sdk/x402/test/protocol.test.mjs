@@ -84,6 +84,33 @@ test("BOT Chain requirements use documented testnet identity and Permit2-compati
   assert.throws(() => createPaymentRequirements({...config, network: "bot-chain-testnet", x402Version: 2}), /require x402Version 1/);
 });
 
+test("BOT Chain mainnet requirements use chain 677 defaults and marketplace attribution", () => {
+  const bot = createMeridianPaymentRequirements({
+    facilitatorUrl: "https://facilitator.example",
+    network: "bot-chain",
+    amountAtomic: "250000",
+    resource: "https://seller.example/mainnet-paid",
+    creditedRecipient: "0x3333333333333333333333333333333333333333"
+  });
+  assert.equal(bot.network, "bot-chain");
+  assert.equal(bot.payTo, "0x8E7769D440b3460b92159Dd9C6D17302b036e2d6");
+  assert.equal(bot.asset, "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C");
+  assert.equal(bot.extra.creditedRecipient, "0x3333333333333333333333333333333333333333");
+  assert.equal(networkForX402Version("bot-chain", 2), "eip155:677");
+});
+
+test("Meridian marketplace attribution rejects an invalid credited recipient", () => {
+  const base = {
+    facilitatorUrl: "https://facilitator.example",
+    amountAtomic: "10000",
+    resource: "https://seller.example/paid"
+  };
+  assert.throws(
+    () => createMeridianPaymentRequirements({...base, creditedRecipient: "not-an-address"}),
+    /creditedRecipient must be an EVM address/
+  );
+});
+
 test("Circle Agent Stack helpers preserve approval and external receipt routes", async () => {
   const calls = [];
   const client = new NexoraX402Client("https://facilitator.example", {

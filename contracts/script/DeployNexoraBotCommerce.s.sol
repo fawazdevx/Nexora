@@ -50,17 +50,14 @@ contract DeployNexoraBotCommerce {
         NexoraPolicyRegistry policyImplementation = new NexoraPolicyRegistry();
         NexoraProxy policyProxy = new NexoraProxy(
             address(policyImplementation),
-            abi.encodeCall(NexoraPolicyRegistry.initialize, (owner))
+            abi.encodeWithSignature("initialize(address,address)", owner, policyRelayer)
         );
 
         OperatorReputation reputationImplementation = new OperatorReputation();
         NexoraProxy reputationProxy = new NexoraProxy(
             address(reputationImplementation),
-            abi.encodeCall(OperatorReputation.initialize, (owner))
+            abi.encodeWithSignature("initialize(address,address)", owner, policyRelayer)
         );
-
-        NexoraPolicyRegistry(address(policyProxy)).setFacilitator(policyRelayer, true);
-        OperatorReputation(address(reputationProxy)).setUpdater(policyRelayer, true);
 
         deployed = DeployedContracts({
             policyImplementation: address(policyImplementation),

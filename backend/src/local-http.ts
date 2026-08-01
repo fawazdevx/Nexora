@@ -3,6 +3,7 @@ import {pathToFileURL} from "node:url";
 import {config} from "./config.js";
 import {corsHeaders, handleAppRequest} from "./router.js";
 import {assertBodySize} from "./security.js";
+import {reconcilePendingMeridianAccounting} from "./x402/meridian-facilitator.js";
 
 async function handler(req: IncomingMessage, res: ServerResponse) {
   const body = await readJson(req);
@@ -26,7 +27,28 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const server = createServer(handler);
   server.listen(config.port, () => {
     console.log(`Nexora API listening on :${config.port}`);
+    startBotchainAccountingReconciliation();
   });
+}
+
+function startBotchainAccountingReconciliation() {
+  const intervalMs = config.botchain.accountingReconciliationIntervalMs;
+  if (intervalMs <= 0) return;
+  let running = false;
+  const reconcile = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await reconcilePendingMeridianAccounting();
+    } catch {
+      // The authenticated admin endpoint remains available for manual retries.
+    } finally {
+      running = false;
+    }
+  };
+  void reconcile();
+  const timer = setInterval(() => void reconcile(), intervalMs);
+  timer.unref();
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {

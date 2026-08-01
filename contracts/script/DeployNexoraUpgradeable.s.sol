@@ -62,13 +62,13 @@ contract DeployNexoraUpgradeable {
         NexoraPolicyRegistry policyImplementation = new NexoraPolicyRegistry();
         NexoraProxy policyProxy = new NexoraProxy(
             address(policyImplementation),
-            abi.encodeCall(NexoraPolicyRegistry.initialize, (owner))
+            abi.encodeWithSignature("initialize(address)", owner)
         );
 
         OperatorReputation reputationImplementation = new OperatorReputation();
         NexoraProxy reputationProxy = new NexoraProxy(
             address(reputationImplementation),
-            abi.encodeCall(OperatorReputation.initialize, (owner))
+            abi.encodeWithSignature("initialize(address)", owner)
         );
 
         X402FacilitatorLedger ledgerImplementation = new X402FacilitatorLedger();

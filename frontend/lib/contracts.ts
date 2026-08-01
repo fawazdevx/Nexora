@@ -2,7 +2,7 @@ import {createPublicClient, createWalletClient, custom, encodeFunctionData, form
 import {CurrencyAmount, Percent, Token, TradeType} from "@synthra-swap/sdk/core";
 import {Pool, Route} from "@synthra-swap/sdk/v3";
 import {SwapRouter as SynthraUniversalSwapRouter, Trade as SynthraUniversalTrade, UniswapTrade} from "@synthra-swap/sdk/universal-router";
-import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, baseSepoliaWagmiChain, botChainTestnetWagmiChain, supportedChains} from "@/lib/arc";
+import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, baseSepoliaWagmiChain, botChainMainnetWagmiChain, botChainTestnetWagmiChain, isBotChainId, supportedChains} from "@/lib/arc";
 import {apiPost} from "@/lib/api";
 
 export const policyRegistryAbi = [
@@ -702,6 +702,17 @@ export function contractAddressesForChain(chainId?: number) {
       saveEarnDeployBlock: undefined
     };
   }
+  if (id === botChainMainnetWagmiChain.id) {
+    return {
+      usdc: envAddress(import.meta.env.VITE_BOTCHAIN_MAINNET_USDT_ADDRESS, "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C"),
+      policyRegistry: envAddress(import.meta.env.VITE_BOTCHAIN_MAINNET_POLICY_REGISTRY_ADDRESS, ""),
+      x402Ledger: "",
+      reputation: envAddress(import.meta.env.VITE_BOTCHAIN_MAINNET_REPUTATION_ADDRESS, ""),
+      saveEarnVault: "",
+      nexoraEscrow: "",
+      saveEarnDeployBlock: undefined
+    };
+  }
   return {
     usdc: import.meta.env.VITE_USDC_ADDRESS,
     policyRegistry: import.meta.env.VITE_POLICY_REGISTRY_ADDRESS,
@@ -722,6 +733,7 @@ function chainById(chainId?: number) {
   if (chainId === baseSepoliaWagmiChain.id) return baseSepoliaWagmiChain;
   if (chainId === arbitrumOneWagmiChain.id) return arbitrumOneWagmiChain;
   if (chainId === botChainTestnetWagmiChain.id) return botChainTestnetWagmiChain;
+  if (chainId === botChainMainnetWagmiChain.id) return botChainMainnetWagmiChain;
   return supportedChains.find((chain) => chain.id === chainId) ?? supportedChains[0];
 }
 
@@ -734,6 +746,12 @@ export function isGatewayTestnetChain(chainId?: number) {
 // are supplied; otherwise policy writes remain disabled there.
 export function isNexoraContractChain(chainId?: number) {
   const contracts = contractAddressesForChain(chainId);
+  if (isBotChainId(chainId)) {
+    return Boolean(
+      contracts.policyRegistry?.startsWith("0x")
+      && contracts.reputation?.startsWith("0x")
+    );
+  }
   return Boolean(
     contracts.policyRegistry?.startsWith("0x")
     && contracts.x402Ledger?.startsWith("0x")
@@ -1205,6 +1223,7 @@ export async function writeAgentPolicy(input: {
     requireOnchainPolicy?: boolean;
     writeServiceAllowlist?: boolean;
   };
+  skipBasicPolicy?: boolean;
 }): Promise<Hash> {
   const {client, chainId, contracts} = await walletClient();
   const address = requireAddress(contracts.policyRegistry, "Policy registry address");
@@ -1212,24 +1231,27 @@ export async function writeAgentPolicy(input: {
   const reader = await publicClient(chainId);
   const contractAllowlist = (input.contractAllowlist ?? []) as Address[];
   const recipientAllowlist = (input.recipientAllowlist ?? []) as Address[];
-  const policyHash = await client.writeContract({
-    address,
-    abi: policyRegistryAbi,
-    functionName: "configureAgentPolicy",
-    args: [
-      input.agentWallet as Address,
-      input.operatorAddress as Address,
-      arcNameHash,
-      parseUnits(input.dailyLimitUsdc || "0", 6),
-      parseUnits(input.transactionCapUsdc || "0", 6),
-      contractAllowlist.length > 0,
-      recipientAllowlist.length > 0,
-      input.active,
-      contractAllowlist,
-      recipientAllowlist
-    ]
-  });
-  await reader.waitForTransactionReceipt({hash: policyHash});
+  let policyHash: Hash | null = null;
+  if (!input.skipBasicPolicy) {
+    policyHash = await client.writeContract({
+      address,
+      abi: policyRegistryAbi,
+      functionName: "configureAgentPolicy",
+      args: [
+        input.agentWallet as Address,
+        input.operatorAddress as Address,
+        arcNameHash,
+        parseUnits(input.dailyLimitUsdc || "0", 6),
+        parseUnits(input.transactionCapUsdc || "0", 6),
+        contractAllowlist.length > 0,
+        recipientAllowlist.length > 0,
+        input.active,
+        contractAllowlist,
+        recipientAllowlist
+      ]
+    });
+    await reader.waitForTransactionReceipt({hash: policyHash});
+  }
 
   if (input.policyV2) {
     const serviceAllowlist = (input.policyV2.serviceAllowlist ?? []).map(serviceIdHash);
@@ -1250,6 +1272,7 @@ export async function writeAgentPolicy(input: {
       ]
     });
     await reader.waitForTransactionReceipt({hash: v2Hash});
+    policyHash = v2Hash;
 
     if (input.policyV2.writeServiceAllowlist !== false) {
       const current = new Set(serviceAllowlist);
@@ -1276,6 +1299,7 @@ export async function writeAgentPolicy(input: {
     }
   }
 
+  if (!policyHash) throw new Error("No on-chain policy transaction was prepared");
   return policyHash;
 }
 

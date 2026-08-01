@@ -7,13 +7,13 @@
 // EIP-3009 flow in the playground because BotChain's USDT has no transferWithAuthorization.
 
 import {useEffect, useState} from "react";
-import {CheckCircle2, PenLine, RefreshCw, ShieldCheck, XCircle} from "lucide-react";
+import {CheckCircle2, Coins, Fuel, PenLine, RefreshCw, ShieldCheck, Wallet, XCircle} from "lucide-react";
 import toast from "react-hot-toast";
-import {createPublicClient, createWalletClient, custom, http, isAddress, parseUnits, type Address, type Hex} from "viem";
+import {createPublicClient, createWalletClient, custom, formatUnits, http, isAddress, parseUnits, type Address, type Hex} from "viem";
 import {useAccount} from "wagmi";
 import {JsonViewer, type JsonStatus} from "@/components/JsonViewer";
-import {apiPost} from "@/lib/api";
-import {botChainTestnetWagmiChain, switchToChain} from "@/lib/arc";
+import {apiGet, apiPost} from "@/lib/api";
+import {configuredBotChain, switchToChain} from "@/lib/arc";
 import {navigateTo} from "@/lib/router";
 import {
   botchainMeridian,
@@ -28,21 +28,57 @@ import {
 import {userFacingPaymentError} from "@/lib/user-errors";
 
 type FlowStep = "idle" | "switching" | "checking" | "approving" | "signing" | "settling";
+type BotReadiness = {
+  network: "bot-chain-testnet" | "bot-chain";
+  label: string;
+  chainId: number;
+  asset: {symbol: string; decimals: number; balanceBaseUnits: string; permit2AllowanceBaseUnits: string};
+  gas: {symbol: string; balanceWei: string; balance: number};
+  policy: {enabled: boolean; reservationsEnabled: boolean; registryHasCode: boolean; reputationHasCode: boolean};
+  paymaster: {
+    enabled: boolean;
+    configured: boolean;
+    scope?: "policy_accounting";
+    buyerGasSponsored?: boolean;
+  };
+  revenue: {
+    creditedRecipient: string | null;
+    marketplaceFeeBps: number;
+    configurationSource: "meridian_command_centre";
+    feeIncludedInPaymentRequirements: false;
+  };
+  funding: {bridgeUrl: string; dexUrl: string; needsGas: boolean; needsUsdt: boolean; needsPermit2Approval: boolean};
+};
 
 export function BotchainPaymentPanel() {
   const {address, chain, isConnected} = useAccount();
+  const activeChain = configuredBotChain();
   const [amount, setAmount] = useState("0.01");
   const [resource, setResource] = useState("https://api.example.com/paid-report");
   const [step, setStep] = useState<FlowStep>("idle");
   const [result, setResult] = useState<unknown>(null);
   const [status, setStatus] = useState<JsonStatus | undefined>(undefined);
   const [enabled, setEnabled] = useState(false);
+  const [readiness, setReadiness] = useState<BotReadiness | null>(null);
+  const [checkingReadiness, setCheckingReadiness] = useState(false);
 
   // Only mount the flow when the BotChain testnet is turned on for this build —
   // otherwise the chain is not in supportedChains and switching would fail.
   useEffect(() => {
-    setEnabled(import.meta.env.VITE_ENABLE_BOTCHAIN_TESTNET === "true");
+    setEnabled(
+      botchainMeridian.network === "bot-chain"
+        ? import.meta.env.VITE_ENABLE_BOTCHAIN_MAINNET === "true"
+        : import.meta.env.VITE_ENABLE_BOTCHAIN_TESTNET === "true"
+    );
   }, []);
+
+  useEffect(() => {
+    if (!enabled || !address) {
+      setReadiness(null);
+      return;
+    }
+    void refreshReadiness(address);
+  }, [address, enabled]);
 
   const busy = step !== "idle";
 
@@ -62,6 +98,10 @@ export function BotchainPaymentPanel() {
       toast.error("Amount must be greater than 0.");
       return;
     }
+    if (
+      botchainMeridian.network === "bot-chain"
+      && !window.confirm(`This will authorize a real ${amount.trim()} USDT payment on BOT Chain mainnet. Continue?`)
+    ) return;
     if (!isAddress(resource.trim()) && !resource.trim().startsWith("http")) {
       toast.error("Enter a valid resource URL.");
       return;
@@ -71,22 +111,22 @@ export function BotchainPaymentPanel() {
     setStatus(undefined);
     const toastId = toast.loading("Preparing BotChain payment…");
     try {
-      // 1. Ensure the wallet is on BotChain testnet.
-      if (chain?.id !== botChainTestnetWagmiChain.id) {
+      // 1. Ensure the wallet is on the configured BOT Chain network.
+      if (chain?.id !== activeChain.id) {
         setStep("switching");
-        toast.loading("Switch to BOT Chain Testnet…", {id: toastId});
-        await switchToChain(botChainTestnetWagmiChain);
+        toast.loading(`Switch to ${activeChain.name}…`, {id: toastId});
+        await switchToChain(activeChain);
       }
 
       if (!window.ethereum) throw new Error("No injected wallet found");
       const wallet = createWalletClient({
         account: address as Address,
-        chain: botChainTestnetWagmiChain,
+        chain: activeChain,
         transport: custom(window.ethereum)
       });
       const publicClient = createPublicClient({
-        chain: botChainTestnetWagmiChain,
-        transport: http(botChainTestnetWagmiChain.rpcUrls.default.http[0])
+        chain: activeChain,
+        transport: http(activeChain.rpcUrls.default.http[0])
       });
 
       // 2. One-time Permit2 allowance on the USDT token. Permit2 pulls funds via
@@ -159,6 +199,7 @@ export function BotchainPaymentPanel() {
       setStatus({label: success ? "Settled" : "Settle failed", tone: success ? "ok" : "error"});
       if (success) {
         toast.success("BOT Chain payment settled with Nexora policy controls.", {id: toastId});
+        void refreshReadiness(address);
       } else {
         const reason = typeof settle.errorReason === "string" ? settle.errorReason : "The BOT Chain payment was not settled.";
         toast.error(reason, {id: toastId});
@@ -175,6 +216,19 @@ export function BotchainPaymentPanel() {
 
   if (!enabled) return null;
 
+  async function refreshReadiness(walletAddress: Address) {
+    setCheckingReadiness(true);
+    try {
+      setReadiness(await apiGet<BotReadiness>(
+        `/api/botchain/readiness?address=${encodeURIComponent(walletAddress)}&network=${encodeURIComponent(botchainMeridian.network)}`
+      ));
+    } catch {
+      setReadiness(null);
+    } finally {
+      setCheckingReadiness(false);
+    }
+  }
+
   return (
     <section className="panel">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -187,8 +241,55 @@ export function BotchainPaymentPanel() {
             and a notification after successful settlement.
           </p>
         </div>
-        <span className="rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">Testnet USDT</span>
+        <span className="rounded-full border border-cyan/25 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">
+          {botchainMeridian.network === "bot-chain" ? "Mainnet USDT" : "Testnet USDT"}
+        </span>
       </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ReadinessMetric
+          icon={<Wallet size={16} />}
+          label="BOT gas"
+          value={readiness ? `${readiness.gas.balance.toFixed(4)} BOT` : "Unavailable"}
+          ok={Boolean(readiness && !readiness.funding.needsGas)}
+        />
+        <ReadinessMetric
+          icon={<Coins size={16} />}
+          label="USDT balance"
+          value={readiness ? `${formatUnits(BigInt(readiness.asset.balanceBaseUnits), readiness.asset.decimals)} USDT` : "Unavailable"}
+          ok={Boolean(readiness && !readiness.funding.needsUsdt)}
+        />
+        <ReadinessMetric
+          icon={<ShieldCheck size={16} />}
+          label="Policy controls"
+          value={readiness?.policy.registryHasCode && readiness.policy.reputationHasCode ? "Ready" : "Not configured"}
+          ok={Boolean(readiness?.policy.registryHasCode && readiness.policy.reputationHasCode)}
+        />
+        <ReadinessMetric
+          icon={<Fuel size={16} />}
+          label="Relayer paymaster"
+          value={readiness?.paymaster.enabled ? "Configured" : readiness?.paymaster.configured ? "Disabled" : "Not configured"}
+          ok={Boolean(readiness?.paymaster.enabled)}
+          loading={checkingReadiness}
+        />
+      </div>
+
+      {readiness && (readiness.funding.needsGas || readiness.funding.needsUsdt) ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber/20 bg-amber/5 p-3 text-xs text-slate-400">
+          <span>
+            {readiness.funding.needsGas ? "Add BOT for buyer approvals and transactions. " : ""}
+            {readiness.funding.needsUsdt ? "Add USDT before authorizing a payment." : ""}
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <a href={readiness.funding.bridgeUrl} target="_blank" rel="noreferrer" className="secondary-button min-h-9 px-3 py-1.5 text-xs">
+              Bridge assets
+            </a>
+            <a href={readiness.funding.dexUrl} target="_blank" rel="noreferrer" className="secondary-button min-h-9 px-3 py-1.5 text-xs">
+              Open BOT DEX
+            </a>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-3 lg:grid-cols-[1.4fr_1fr_auto]">
         <label className="block">
@@ -227,6 +328,7 @@ export function BotchainPaymentPanel() {
         <span>
           Approval targets Permit2 ({PERMIT2_ADDRESS.slice(0, 6)}…{PERMIT2_ADDRESS.slice(-4)}); the witness binds
           the transfer to Meridian's facilitator, so a leaked signature cannot be redirected.
+          {" "}Nexora’s disclosed Meridian Marketplace fee is {(botchainMeridian.marketplaceFeeBps / 100).toFixed(2)}%.
         </span>
       </div>
 
@@ -253,6 +355,30 @@ export function BotchainPaymentPanel() {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ReadinessMetric({
+  icon,
+  label,
+  value,
+  ok,
+  loading = false
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  ok: boolean;
+  loading?: boolean;
+}) {
+  return (
+    <div className="surface min-w-0 p-3">
+      <p className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+        <span className={ok ? "text-mint" : "text-amber"}>{loading ? <RefreshCw size={16} className="animate-spin" /> : icon}</span>
+        {label}
+      </p>
+      <p className="mt-2 truncate text-sm font-semibold text-white">{value}</p>
+    </div>
   );
 }
 

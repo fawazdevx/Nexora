@@ -127,13 +127,19 @@ contract X402FacilitatorLedgerV2Test {
 
     function deployPolicyRegistry() internal returns (NexoraPolicyRegistry) {
         NexoraPolicyRegistry implementation = new NexoraPolicyRegistry();
-        NexoraProxy proxy = new NexoraProxy(address(implementation), abi.encodeCall(NexoraPolicyRegistry.initialize, (address(this))));
+        NexoraProxy proxy = new NexoraProxy(
+            address(implementation),
+            abi.encodeWithSignature("initialize(address)", address(this))
+        );
         return NexoraPolicyRegistry(address(proxy));
     }
 
     function deployReputation() internal returns (OperatorReputation) {
         OperatorReputation implementation = new OperatorReputation();
-        NexoraProxy proxy = new NexoraProxy(address(implementation), abi.encodeCall(OperatorReputation.initialize, (address(this))));
+        NexoraProxy proxy = new NexoraProxy(
+            address(implementation),
+            abi.encodeWithSignature("initialize(address)", address(this))
+        );
         return OperatorReputation(address(proxy));
     }
 

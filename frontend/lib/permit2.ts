@@ -41,15 +41,26 @@ export const permit2Erc20Abi = [
 
 // BotChain testnet Meridian constants (verified from docs.mrdn.finance).
 // Overridable via env so a redeploy or mainnet flip does not require a code change.
+const botchainNetwork = (import.meta.env.VITE_BOTCHAIN_MERIDIAN_NETWORK ?? "bot-chain-testnet") as
+  | "bot-chain-testnet"
+  | "bot-chain";
+
 export const botchainMeridian = {
-  network: (import.meta.env.VITE_BOTCHAIN_MERIDIAN_NETWORK ?? "bot-chain-testnet") as
-    | "bot-chain-testnet"
-    | "bot-chain",
-  chainId: Number(import.meta.env.VITE_BOTCHAIN_TESTNET_CHAIN_ID ?? 968),
-  usdt: (import.meta.env.VITE_BOTCHAIN_TESTNET_USDT_ADDRESS ??
-    "0x75edC9335175Fc0552D51D48439F229c10420fe3") as Address,
-  facilitator: (import.meta.env.VITE_MERIDIAN_TESTNET_FACILITATOR_ADDRESS ??
-    "0x8e633dBf31adCc7D41BE3e95B7c8DD3526B5235A") as Address,
+  network: botchainNetwork,
+  chainId: botchainNetwork === "bot-chain"
+    ? Number(import.meta.env.VITE_BOTCHAIN_MAINNET_CHAIN_ID ?? 677)
+    : Number(import.meta.env.VITE_BOTCHAIN_TESTNET_CHAIN_ID ?? 968),
+  usdt: (botchainNetwork === "bot-chain"
+    ? import.meta.env.VITE_BOTCHAIN_MAINNET_USDT_ADDRESS ?? "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C"
+    : import.meta.env.VITE_BOTCHAIN_TESTNET_USDT_ADDRESS ?? "0x75edC9335175Fc0552D51D48439F229c10420fe3") as Address,
+  facilitator: (botchainNetwork === "bot-chain"
+    ? import.meta.env.VITE_MERIDIAN_MAINNET_FACILITATOR_ADDRESS ?? "0x8E7769D440b3460b92159Dd9C6D17302b036e2d6"
+    : import.meta.env.VITE_MERIDIAN_TESTNET_FACILITATOR_ADDRESS ?? "0x8e633dBf31adCc7D41BE3e95B7c8DD3526B5235A") as Address,
+  marketplaceFeeBps: Number(
+    import.meta.env.VITE_NEXORA_BOTCHAIN_MARKETPLACE_FEE_BPS
+      ?? import.meta.env.VITE_NEXORA_BOTCHAIN_PLATFORM_FEE_BPS
+      ?? 200
+  ),
   // Meridian's docs warn against assuming 6 decimals — overridable, confirm on-chain.
   usdtDecimals: Number(import.meta.env.VITE_BOTCHAIN_USDT_DECIMALS ?? 6)
 } as const;

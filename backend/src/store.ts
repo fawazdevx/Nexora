@@ -167,6 +167,10 @@ export type PaymentRecord = {
     resultSummary?: string | null;
     accountingStatus?: "recorded" | "pending" | null;
     accountingTxHashes?: string[] | null;
+    accountingAttempts?: number | null;
+    lastAccountingError?: string | null;
+    settlementId?: string | null;
+    reservationStatus?: "reserved" | "finalized" | "cancelled" | "legacy" | null;
     assetSymbol?: string | null;
   } | null;
   createdAt: string;

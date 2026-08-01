@@ -75,6 +75,14 @@ const networks = [
     asset: "USDT",
     settlement: "Meridian + Permit2",
     status: "Testnet route"
+  },
+  {
+    name: "BOT Chain Mainnet",
+    id: "bot-chain",
+    caip2: "eip155:677",
+    asset: "USDT",
+    settlement: "Meridian + Permit2",
+    status: "Opt-in after deployment"
   }
 ];
 
@@ -136,7 +144,7 @@ export const POST = withNexoraX402(
   },
   {
     key: "bot",
-    label: "BOT Chain",
+    label: "BOT Testnet",
     language: "ts" as const,
     code: `import {
   NexoraX402Client,
@@ -178,6 +186,31 @@ const payment = buildMeridianPermit2Payload({
 
 const client = new NexoraX402Client(process.env.NEXORA_FACILITATOR_URL!);
 const settlement = await client.settle(payment, requirements);`
+  },
+  {
+    key: "bot-mainnet",
+    label: "BOT Mainnet",
+    language: "ts" as const,
+    code: `import {
+  BOTCHAIN_MAINNET_USDT,
+  MERIDIAN_BOTCHAIN_MAINNET_FACILITATOR,
+  createMeridianPaymentRequirements
+} from "@nexorafi/x402";
+
+const requirements = createMeridianPaymentRequirements({
+  facilitatorUrl: process.env.NEXORA_FACILITATOR_URL!,
+  network: "bot-chain",
+  facilitator: MERIDIAN_BOTCHAIN_MAINNET_FACILITATOR,
+  asset: BOTCHAIN_MAINNET_USDT,
+  price: "0.10",
+  resource: "https://api.example.com/compute",
+  description: "BOT Chain compute job",
+  creditedRecipient: process.env.MERIDIAN_SELLER_ADDRESS!
+});
+
+// Build Permit2 typed data with chainId 677.
+// Configure Nexora's fee in Meridian Command Centre, then enable this route
+// after Nexora advertises BOT mainnet support.`
   },
   {
     key: "agent-stack",
@@ -258,6 +291,7 @@ const useCases = [
   {title: "Subscriptions", copy: "Create one intent per billing period. A successful receipt extends access once, including after retries."},
   {title: "Escrow and work", copy: "Lock funds against a milestone, deadline, counterparty, and dispute policy before work begins."},
   {title: "Games and prizes", copy: "Sell items or entries through paid actions and keep gameplay state separate from custody accounting."},
+  {title: "Compute and data", copy: "Price inference, rendering, indexing, simulation, or dataset access by measured unit."},
   {title: "Agents and treasury", copy: "Apply transaction caps, allowlists, cooldowns, and approval thresholds before an automated wallet spends."}
 ];
 
@@ -293,6 +327,7 @@ const sourceReferences = [
   {title: "Application payments", path: "docs/application-payments.md", description: "Architecture, use cases, responsibilities, and money invariants."},
   {title: "Game payments", path: "docs/game-payments.md", description: "Player wallets, purchases, prize pools, payouts, and reconciliation."},
   {title: "Circle integration boundary", path: "docs/circle-gateway-sellers.md", description: "Nexora Marketplace, Circle services, and Gateway responsibilities."},
+  {title: "BOT Chain mainnet", path: "docs/botchain-mainnet.md", description: "Deployment, wallet roles, Meridian Marketplace fees, reconciliation, upgrades, and Safe ownership."},
   {title: "SDK package guide", path: "sdk/x402/README.md", description: "Package exports, migration notes, and code examples."}
 ];
 
@@ -305,13 +340,13 @@ export default function ApiDocsPage() {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        kicker="Developer documentation · SDK v0.3"
+        kicker="Developer documentation · SDK v0.3 stable · v0.4 preview"
         title="Build policy-aware x402 payments"
         description="Use Nexora in APIs, SaaS products, games, marketplaces, and agent workflows across supported and integrated chains. This guide covers the SDK, facilitator API, application boundaries, and production controls."
         action={
           <div className="flex flex-wrap gap-3">
             <a className="secondary-button" href="https://www.npmjs.com/package/@nexorafi/x402" target="_blank" rel="noreferrer">
-              npm v0.3 <ExternalLink size={15} />
+              npm v0.3 stable <ExternalLink size={15} />
             </a>
             <button className="action-button" onClick={() => navigateTo("/x402/playground")}>
               Open playground <ArrowRight size={16} />
@@ -337,9 +372,9 @@ export default function ApiDocsPage() {
       </nav>
 
       <section className="grid gap-4 md:grid-cols-3">
-        <DocMetric icon={<Boxes size={18} />} label="Current release" value="SDK v0.3" href="https://www.npmjs.com/package/@nexorafi/x402" external />
+        <DocMetric icon={<Boxes size={18} />} label="Current npm release" value="SDK v0.3" href="https://www.npmjs.com/package/@nexorafi/x402" external />
         <DocMetric icon={<Code2 size={18} />} label="Protocol support" value="x402 v1 + v2" onClick={() => scrollToSection("sdk")} />
-        <DocMetric icon={<Layers3 size={18} />} label="Active testnets" value="4 network routes" onClick={() => scrollToSection("networks")} />
+        <DocMetric icon={<Layers3 size={18} />} label="Network types" value="5 documented routes" onClick={() => scrollToSection("networks")} />
       </section>
 
       <section id="quickstart" className="panel scroll-mt-28">
@@ -347,7 +382,7 @@ export default function ApiDocsPage() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <p className="section-kicker">Quickstart</p>
-              <span className="rounded-full border border-mint/25 bg-mint/10 px-2 py-0.5 text-[11px] font-semibold text-mint">Live on npm</span>
+              <span className="rounded-full border border-mint/25 bg-mint/10 px-2 py-0.5 text-[11px] font-semibold text-mint">v0.3 live on npm</span>
             </div>
             <h2 className="mt-2 text-2xl font-semibold text-white">Protect your first paid route</h2>
             <p className="muted-copy mt-3 max-w-3xl">
@@ -383,7 +418,7 @@ export default function ApiDocsPage() {
 
       <section id="networks" className="panel scroll-mt-28">
         <p className="section-kicker">Network reference</p>
-        <h2 className="mt-2 text-2xl font-semibold text-white">Supported testnet routes</h2>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Supported and integrated routes</h2>
         <p className="muted-copy mt-3 max-w-3xl">
           Network types describe SDK compatibility. A payment route is live only when Nexora has configured and verified its contracts, token, RPC, facilitator, and policy controls.
         </p>
@@ -415,12 +450,12 @@ export default function ApiDocsPage() {
         </div>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-3">
-          <FeatureCard title="Seller wallet" copy="The seller address receives USDT. It needs no starting USDT and needs tBOT only when it sends a transaction." icon={<CircleDollarSign size={17} />} />
-          <FeatureCard title="Policy relayer" copy="A separate backend wallet records policy spend and reputation. Fund it with tBOT for gas, not USDT." icon={<Server size={17} />} />
-          <FeatureCard title="Buyer wallet" copy="The buyer holds USDT and uses tBOT when an onchain token approval is required. Permit2 payment signatures are offchain." icon={<WalletCards size={17} />} />
+          <FeatureCard title="Seller wallet" copy="The seller address receives publisher USDT. It needs no starting USDT or BOT to receive." icon={<CircleDollarSign size={17} />} />
+          <FeatureCard title="Policy relayer" copy="A separate backend wallet reserves spend and records reputation. Fund it with BOT for gas, not USDT." icon={<Server size={17} />} />
+          <FeatureCard title="Buyer wallet" copy="The buyer holds USDT and BOT for required approvals. Permit2 payment signatures remain offchain." icon={<WalletCards size={17} />} />
         </div>
         <div className="mt-4 rounded-xl border border-amber/20 bg-amber/[0.07] px-4 py-3 text-sm leading-6 text-slate-300">
-          BOT Chain mainnet remains disabled. Testnet policy, reputation, relayer, and settlement settings must not be reused as mainnet configuration.
+          BOT Chain mainnet requires separate policy, reputation, relayer, seller, treasury, and RPC configuration. Nexora advertises it only after the mainnet feature flag and required values are set.
         </div>
       </section>
 
@@ -445,7 +480,7 @@ export default function ApiDocsPage() {
           </div>
         </div>
         <div className="mt-5">
-          <JsonViewer title={`${tab.label} · @nexorafi/x402@0.3`} language={tab.language} code={tab.code} maxHeight="620px" />
+          <JsonViewer title={`${tab.label} · SDK v0.4 source preview`} language={tab.language} code={tab.code} maxHeight="620px" />
         </div>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
@@ -479,6 +514,8 @@ export default function ApiDocsPage() {
             <Endpoint method="GET" path="/api/x402/supported" detail="Returns active x402 versions, schemes, networks, assets, and settlement methods." />
             <Endpoint method="POST" path="/api/x402/verify" detail="Validates the payload against its payment requirements without granting the resource." />
             <Endpoint method="POST" path="/api/x402/facilitator-settle" detail="Settles a verified authorization, records the receipt, and rejects replay." />
+            <Endpoint method="GET" path="/api/botchain/readiness?address=0x...&network=bot-chain" detail="Checks BOT, USDT, Permit2 allowance, policy bytecode, reputation bytecode, and configured funding links." tryable={false} />
+            <Endpoint method="POST" path="/api/botchain/vcompute/quote" detail="Prices a compute job by units and returns a policy service ID with Meridian payment requirements." tryable={false} />
           </div>
 
           <h3 className="mt-7 text-lg font-semibold text-white">Nexora Gateway sellers</h3>
@@ -511,6 +548,9 @@ export default function ApiDocsPage() {
           </ol>
           <div className="mt-6 rounded-xl border border-mint/20 bg-mint/[0.06] p-4 text-sm leading-6 text-slate-300">
             External Agent Stack completion requires a transaction hash. Nexora verifies the approved chain, asset, payer, recipient, amount, and successful receipt before it marks the intent settled.
+          </div>
+          <div className="mt-4 rounded-xl border border-white/[0.09] bg-white/[0.03] p-4 text-sm leading-6 text-slate-300">
+            BOT settlement reserves policy spend before Meridian relay. Failed settlement cancels the reservation. The backend retries policy and reputation accounting after an RPC failure.
           </div>
         </aside>
       </section>

@@ -81,7 +81,27 @@ export const config = {
     // compatibility setting for existing environments.
     testnetPolicyRegistry: process.env.BOTCHAIN_TESTNET_POLICY_REGISTRY_ADDRESS ?? "",
     testnetX402Ledger: process.env.BOTCHAIN_TESTNET_X402_LEDGER_ADDRESS ?? "",
-    testnetReputation: process.env.BOTCHAIN_TESTNET_REPUTATION_ADDRESS ?? ""
+    testnetReputation: process.env.BOTCHAIN_TESTNET_REPUTATION_ADDRESS ?? "",
+    mainnetPolicyRegistry: process.env.BOTCHAIN_MAINNET_POLICY_REGISTRY_ADDRESS ?? "",
+    mainnetReputation: process.env.BOTCHAIN_MAINNET_REPUTATION_ADDRESS ?? "",
+    mainnetEnabled: (process.env.NEXORA_ENABLE_BOTCHAIN_MAINNET ?? "false").toLowerCase() === "true",
+    testnetReservationsEnabled: (process.env.BOTCHAIN_TESTNET_POLICY_RESERVATIONS_ENABLED ?? "false").toLowerCase() === "true",
+    mainnetReservationsEnabled: (process.env.BOTCHAIN_MAINNET_POLICY_RESERVATIONS_ENABLED ?? "true").toLowerCase() !== "false",
+    reservationTtlSeconds: normalizeBoundedInteger(process.env.BOTCHAIN_POLICY_RESERVATION_TTL_SECONDS, 900, 60, 86_400),
+    accountingReconciliationIntervalMs: normalizeBoundedInteger(
+      process.env.BOTCHAIN_ACCOUNTING_RECONCILIATION_INTERVAL_MS,
+      60_000,
+      0,
+      86_400_000
+    ),
+    testnetPaymasterUrl: process.env.BOTCHAIN_TESTNET_PAYMASTER_RPC_URL ?? "",
+    mainnetPaymasterUrl: process.env.BOTCHAIN_MAINNET_PAYMASTER_RPC_URL ?? "",
+    paymasterEnabled: (process.env.BOTCHAIN_PAYMASTER_ENABLED ?? "false").toLowerCase() === "true",
+    bridgeUrl: process.env.BOTCHAIN_BRIDGE_URL ?? "https://bridge.botchain.ai",
+    dexUrl: process.env.BOTCHAIN_DEX_URL ?? "https://dex.botchain.ai",
+    vcomputeProviderUrl: process.env.BOTCHAIN_VCOMPUTE_PROVIDER_URL ?? "",
+    vcomputeUnitPriceUsdt: normalizeOptionalPositiveNumber(process.env.BOTCHAIN_VCOMPUTE_UNIT_PRICE_USDT, 0.002),
+    vcomputeMaxUnits: normalizeBoundedInteger(process.env.BOTCHAIN_VCOMPUTE_MAX_UNITS, 10_000, 1, 1_000_000)
   },
   circle: {
     apiKey: process.env.CIRCLE_API_KEY ?? "",
@@ -115,8 +135,21 @@ export const config = {
     // as a Bearer token. Keep the old variable as a backwards-compatible
     // fallback, but never load or send MERIDIAN_API_SECRET.
     publicKey: process.env.MERIDIAN_PUBLIC_KEY ?? process.env.MERIDIAN_API_KEY ?? "",
-    sellerAddress: process.env.MERIDIAN_SELLER_ADDRESS ?? process.env.NEXORA_MARKETPLACE_PUBLISHER_ADDRESS ?? "",
-    policyRelayerPrivateKey: process.env.BOTCHAIN_POLICY_RELAYER_PRIVATE_KEY ?? "",
+    sellerAddress: process.env.MERIDIAN_SELLER_ADDRESS ?? "",
+    // Meridian applies the marketplace fee configured in Command Centre. This
+    // value must match that setting and is used for disclosure and receipts; it
+    // is not sent as an unsupported paymentRequirements field.
+    marketplaceFeeBps: normalizeBoundedInteger(
+      process.env.NEXORA_BOTCHAIN_MARKETPLACE_FEE_BPS ?? process.env.NEXORA_BOTCHAIN_PLATFORM_FEE_BPS,
+      200,
+      0,
+      1_000
+    ),
+    testnetPolicyRelayerPrivateKey:
+      process.env.BOTCHAIN_TESTNET_POLICY_RELAYER_PRIVATE_KEY
+      ?? process.env.BOTCHAIN_POLICY_RELAYER_PRIVATE_KEY
+      ?? "",
+    mainnetPolicyRelayerPrivateKey: process.env.BOTCHAIN_MAINNET_POLICY_RELAYER_PRIVATE_KEY ?? "",
     // Meridian's fixed contract set (same across supported EVM chains).
     permit2: process.env.MERIDIAN_PERMIT2_ADDRESS ?? "0x000000000022D473030F116dDEE9F6B43aC78BA3",
     exactPermit2Proxy: process.env.MERIDIAN_EXACT_PERMIT2_PROXY_ADDRESS ?? "0x402085c248EeA27D92E8b30b2C58ed07f9E20001",
@@ -215,6 +248,13 @@ function normalizeOptionalPositiveNumber(value: string | undefined, fallback: nu
   if (value === undefined || value === null || value.trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeBoundedInteger(value: string | undefined, fallback: number, minimum: number, maximum: number) {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) return fallback;
+  return parsed;
 }
 
 function normalizeCircleGatewaySellerMode(value: string | undefined): "testnet" | "mainnet" {

@@ -28,6 +28,20 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         bool requireOnchainPolicy;
     }
 
+    struct SpendReservation {
+        address agentWallet;
+        address targetContract;
+        address recipient;
+        uint256 amount;
+        bytes32 serviceId;
+        uint256 units;
+        uint256 day;
+        uint256 week;
+        uint256 month;
+        uint64 expiresAt;
+        uint8 status;
+    }
+
     mapping(address => AgentProfile) public agentProfiles;
     mapping(address => SpendingPolicy) public policies;
     mapping(address => mapping(address => bool)) public allowedContracts;
@@ -39,6 +53,10 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     mapping(address => mapping(uint256 => uint256)) public weeklySpend;
     mapping(address => mapping(uint256 => uint256)) public monthlySpend;
     mapping(address => uint256) public lastSpendAt;
+    mapping(bytes32 => SpendReservation) public spendReservations;
+    mapping(address => mapping(uint256 => uint256)) public reservedDailySpend;
+    mapping(address => mapping(uint256 => uint256)) public reservedWeeklySpend;
+    mapping(address => mapping(uint256 => uint256)) public reservedMonthlySpend;
 
     event FacilitatorSet(address indexed facilitator, bool enabled);
     event AgentRegistered(address indexed agentWallet, address indexed operator, bytes32 arcNameHash);
@@ -64,6 +82,18 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         bool requireOnchainPolicy
     );
     event ServiceAllowlistUpdated(address indexed agentWallet, bytes32 indexed serviceId, bool allowed);
+    event SpendReserved(
+        bytes32 indexed settlementId,
+        address indexed agentWallet,
+        address indexed recipient,
+        uint256 amount,
+        bytes32 serviceId,
+        uint256 units,
+        uint64 expiresAt
+    );
+    event SpendReservationFinalized(bytes32 indexed settlementId, address indexed agentWallet, uint256 amount);
+    event SpendReservationCancelled(bytes32 indexed settlementId, address indexed agentWallet, uint256 amount);
+    event SpendReservationExpired(bytes32 indexed settlementId, address indexed agentWallet, uint256 amount);
 
     error NotOperatorOrOwner();
     error NotFacilitator();
@@ -79,9 +109,27 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     error UnitsExceeded();
     error CooldownActive();
     error PolicyExpired();
+    error AgentRegistrationUnauthorized();
+    error InvalidSettlementId();
+    error ReservationAlreadyExists();
+    error ReservationNotPending();
+    error ReservationNotExpired();
+    error InvalidReservationExpiry();
+
+    uint8 private constant _RESERVATION_PENDING = 1;
+    uint8 private constant _RESERVATION_FINALIZED = 2;
+    uint8 private constant _RESERVATION_CANCELLED = 3;
+    uint8 private constant _RESERVATION_EXPIRED = 4;
 
     function initialize(address initialOwner) external {
         __Nexora_init(initialOwner);
+    }
+
+    function initialize(address initialOwner, address initialFacilitator) external {
+        __Nexora_init(initialOwner);
+        require(initialFacilitator != address(0), "ZERO_FACILITATOR");
+        facilitators[initialFacilitator] = true;
+        emit FacilitatorSet(initialFacilitator, true);
     }
 
     modifier onlyOperatorOrOwner(address agentWallet) {
@@ -111,11 +159,11 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         bool active,
         address[] calldata contractAllowlist,
         address[] calldata recipientAllowlist
-    ) external {
+    ) external whenNotPaused {
         AgentProfile memory profile = agentProfiles[agentWallet];
 
         if (!profile.active) {
-            if (msg.sender != owner && msg.sender != operator) revert NotOperatorOrOwner();
+            if (msg.sender != owner && msg.sender != agentWallet) revert AgentRegistrationUnauthorized();
             _registerAgent(agentWallet, operator, arcNameHash);
         } else if (msg.sender != owner && msg.sender != profile.operator) {
             revert NotOperatorOrOwner();
@@ -155,7 +203,7 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         bool contractAllowlistEnabled,
         bool recipientAllowlistEnabled,
         bool active
-    ) external onlyOperatorOrOwner(agentWallet) {
+    ) external onlyOperatorOrOwner(agentWallet) whenNotPaused {
         _setPolicy(
             agentWallet,
             dailyLimit,
@@ -194,6 +242,7 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     function setAllowedContract(address agentWallet, address target, bool allowed)
         external
         onlyOperatorOrOwner(agentWallet)
+        whenNotPaused
     {
         allowedContracts[agentWallet][target] = allowed;
         emit ContractAllowlistUpdated(agentWallet, target, allowed);
@@ -202,6 +251,7 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     function setAllowedRecipient(address agentWallet, address recipient, bool allowed)
         external
         onlyOperatorOrOwner(agentWallet)
+        whenNotPaused
     {
         allowedRecipients[agentWallet][recipient] = allowed;
         emit RecipientAllowlistUpdated(agentWallet, recipient, allowed);
@@ -216,7 +266,7 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         uint64 expiresAt,
         bool requireServiceAllowlist,
         bool requireOnchainPolicy
-    ) external onlyOperatorOrOwner(agentWallet) {
+    ) external onlyOperatorOrOwner(agentWallet) whenNotPaused {
         policyV2[agentWallet] = PolicyV2({
             weeklyLimit: weeklyLimit,
             monthlyLimit: monthlyLimit,
@@ -241,6 +291,7 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
     function setAllowedService(address agentWallet, bytes32 serviceId, bool allowed)
         external
         onlyOperatorOrOwner(agentWallet)
+        whenNotPaused
     {
         allowedServiceIds[agentWallet][serviceId] = allowed;
         emit ServiceAllowlistUpdated(agentWallet, serviceId, allowed);
@@ -279,7 +330,10 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         return agentProfiles[agentWallet].active;
     }
 
-    function recordSpend(address agentWallet, address targetContract, address recipient, uint256 amount) external {
+    function recordSpend(address agentWallet, address targetContract, address recipient, uint256 amount)
+        external
+        whenNotPaused
+    {
         if (!facilitators[msg.sender]) revert NotFacilitator();
 
         AgentProfile memory profile = agentProfiles[agentWallet];
@@ -308,8 +362,80 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         uint256 amount,
         bytes32 serviceId,
         uint256 units
-    ) external {
+    ) external whenNotPaused {
         _recordSpend(agentWallet, targetContract, recipient, amount, serviceId, units);
+    }
+
+    function reserveSpendV2(
+        bytes32 settlementId,
+        address agentWallet,
+        address targetContract,
+        address recipient,
+        uint256 amount,
+        bytes32 serviceId,
+        uint256 units,
+        uint64 expiresAt
+    ) external whenNotPaused {
+        if (!facilitators[msg.sender]) revert NotFacilitator();
+        if (settlementId == bytes32(0)) revert InvalidSettlementId();
+        if (spendReservations[settlementId].status != 0) revert ReservationAlreadyExists();
+        if (expiresAt <= block.timestamp || expiresAt > block.timestamp + 7 days) {
+            revert InvalidReservationExpiry();
+        }
+        _requireCanSpend(agentWallet, targetContract, recipient, amount, serviceId, units, true);
+
+        uint256 day = block.timestamp / 1 days;
+        uint256 week = block.timestamp / 1 weeks;
+        uint256 month = _monthIndex(block.timestamp);
+        spendReservations[settlementId] = SpendReservation({
+            agentWallet: agentWallet,
+            targetContract: targetContract,
+            recipient: recipient,
+            amount: amount,
+            serviceId: serviceId,
+            units: units,
+            day: day,
+            week: week,
+            month: month,
+            expiresAt: expiresAt,
+            status: _RESERVATION_PENDING
+        });
+        reservedDailySpend[agentWallet][day] += amount;
+        reservedWeeklySpend[agentWallet][week] += amount;
+        reservedMonthlySpend[agentWallet][month] += amount;
+        emit SpendReserved(settlementId, agentWallet, recipient, amount, serviceId, units, expiresAt);
+    }
+
+    function finalizeSpendV2(bytes32 settlementId) external whenNotPaused {
+        if (!facilitators[msg.sender]) revert NotFacilitator();
+        SpendReservation storage reservation = spendReservations[settlementId];
+        if (reservation.status == _RESERVATION_FINALIZED) return;
+        if (reservation.status == _RESERVATION_PENDING) {
+            _releaseReserved(reservation);
+        } else if (reservation.status != _RESERVATION_EXPIRED) {
+            revert ReservationNotPending();
+        }
+        dailySpend[reservation.agentWallet][reservation.day] += reservation.amount;
+        weeklySpend[reservation.agentWallet][reservation.week] += reservation.amount;
+        monthlySpend[reservation.agentWallet][reservation.month] += reservation.amount;
+        lastSpendAt[reservation.agentWallet] = block.timestamp;
+        reservation.status = _RESERVATION_FINALIZED;
+        emit SpendRecorded(
+            reservation.agentWallet,
+            reservation.targetContract,
+            reservation.recipient,
+            reservation.amount
+        );
+        emit SpendReservationFinalized(settlementId, reservation.agentWallet, reservation.amount);
+    }
+
+    function cancelSpendReservation(bytes32 settlementId) external whenNotPaused {
+        if (!facilitators[msg.sender]) revert NotFacilitator();
+        _cancelSpendReservation(settlementId, false);
+    }
+
+    function releaseExpiredSpendReservation(bytes32 settlementId) external {
+        _cancelSpendReservation(settlementId, true);
     }
 
     function _recordSpend(
@@ -359,6 +485,28 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         emit SpendRecorded(agentWallet, targetContract, recipient, amount);
     }
 
+    function _cancelSpendReservation(bytes32 settlementId, bool requireExpired) internal {
+        SpendReservation storage reservation = spendReservations[settlementId];
+        if (reservation.status == _RESERVATION_CANCELLED) return;
+        if (reservation.status == _RESERVATION_EXPIRED) return;
+        if (reservation.status != _RESERVATION_PENDING) revert ReservationNotPending();
+        if (requireExpired && block.timestamp <= reservation.expiresAt) revert ReservationNotExpired();
+        _releaseReserved(reservation);
+        if (requireExpired) {
+            reservation.status = _RESERVATION_EXPIRED;
+            emit SpendReservationExpired(settlementId, reservation.agentWallet, reservation.amount);
+        } else {
+            reservation.status = _RESERVATION_CANCELLED;
+            emit SpendReservationCancelled(settlementId, reservation.agentWallet, reservation.amount);
+        }
+    }
+
+    function _releaseReserved(SpendReservation storage reservation) internal {
+        reservedDailySpend[reservation.agentWallet][reservation.day] -= reservation.amount;
+        reservedWeeklySpend[reservation.agentWallet][reservation.week] -= reservation.amount;
+        reservedMonthlySpend[reservation.agentWallet][reservation.month] -= reservation.amount;
+    }
+
     function _canSpend(
         address agentWallet,
         address targetContract,
@@ -380,15 +528,69 @@ contract NexoraPolicyRegistry is NexoraUpgradeable {
         if (advanced.cooldownSeconds != 0 && lastSpendAt[agentWallet] != 0) {
             if (block.timestamp < lastSpendAt[agentWallet] + advanced.cooldownSeconds) return false;
         }
-        if (dailySpend[agentWallet][day] + amount > policy.dailyLimit) return false;
+        if (dailySpend[agentWallet][day] + reservedDailySpend[agentWallet][day] + amount > policy.dailyLimit) {
+            return false;
+        }
         uint256 week = block.timestamp / 1 weeks;
-        if (advanced.weeklyLimit != 0 && weeklySpend[agentWallet][week] + amount > advanced.weeklyLimit) return false;
+        if (
+            advanced.weeklyLimit != 0
+                && weeklySpend[agentWallet][week] + reservedWeeklySpend[agentWallet][week] + amount
+                    > advanced.weeklyLimit
+        ) return false;
         uint256 month = _monthIndex(block.timestamp);
-        if (advanced.monthlyLimit != 0 && monthlySpend[agentWallet][month] + amount > advanced.monthlyLimit) return false;
+        if (
+            advanced.monthlyLimit != 0
+                && monthlySpend[agentWallet][month] + reservedMonthlySpend[agentWallet][month] + amount
+                    > advanced.monthlyLimit
+        ) return false;
         if (policy.contractAllowlistEnabled && !allowedContracts[agentWallet][targetContract]) return false;
         if (policy.recipientAllowlistEnabled && !allowedRecipients[agentWallet][recipient]) return false;
 
         return true;
+    }
+
+    function _requireCanSpend(
+        address agentWallet,
+        address targetContract,
+        address recipient,
+        uint256 amount,
+        bytes32 serviceId,
+        uint256 units,
+        bool includeReservations
+    ) internal view {
+        AgentProfile memory profile = agentProfiles[agentWallet];
+        SpendingPolicy memory policy = policies[agentWallet];
+        PolicyV2 memory advanced = policyV2[agentWallet];
+        if (!profile.active) revert AgentNotActive();
+        if (!policy.active) revert PolicyNotActive();
+        if (amount == 0 || amount > policy.transactionCap) revert TransactionCapExceeded();
+        if (advanced.expiresAt != 0 && block.timestamp > advanced.expiresAt) revert PolicyExpired();
+        if (advanced.maxUnitsPerRequest != 0 && units > advanced.maxUnitsPerRequest) revert UnitsExceeded();
+        if (advanced.requireServiceAllowlist && !allowedServiceIds[agentWallet][serviceId]) revert ServiceNotAllowed();
+        if (advanced.cooldownSeconds != 0 && lastSpendAt[agentWallet] != 0) {
+            if (block.timestamp < lastSpendAt[agentWallet] + advanced.cooldownSeconds) revert CooldownActive();
+        }
+
+        uint256 day = block.timestamp / 1 days;
+        uint256 dailyReserved = includeReservations ? reservedDailySpend[agentWallet][day] : 0;
+        if (dailySpend[agentWallet][day] + dailyReserved + amount > policy.dailyLimit) revert DailyLimitExceeded();
+        uint256 week = block.timestamp / 1 weeks;
+        uint256 weeklyReserved = includeReservations ? reservedWeeklySpend[agentWallet][week] : 0;
+        if (advanced.weeklyLimit != 0 && weeklySpend[agentWallet][week] + weeklyReserved + amount > advanced.weeklyLimit) {
+            revert WeeklyLimitExceeded();
+        }
+        uint256 month = _monthIndex(block.timestamp);
+        uint256 monthlyReserved = includeReservations ? reservedMonthlySpend[agentWallet][month] : 0;
+        if (
+            advanced.monthlyLimit != 0
+                && monthlySpend[agentWallet][month] + monthlyReserved + amount > advanced.monthlyLimit
+        ) revert MonthlyLimitExceeded();
+        if (policy.contractAllowlistEnabled && !allowedContracts[agentWallet][targetContract]) {
+            revert ContractNotAllowed();
+        }
+        if (policy.recipientAllowlistEnabled && !allowedRecipients[agentWallet][recipient]) {
+            revert RecipientNotAllowed();
+        }
     }
 
     function _monthIndex(uint256 timestamp) internal pure returns (uint256) {

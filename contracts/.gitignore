@@ -18,6 +18,6 @@ docs/
 
 # Dotenv file
 .env
-.env.arbitrum-one
-.env.arbitrum-sepolia
-.env.base-sepolia
+.env.*
+!.env.example
+.env.example

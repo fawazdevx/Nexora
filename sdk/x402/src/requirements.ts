@@ -1,5 +1,7 @@
 import {
+  BOTCHAIN_MAINNET_USDT,
   BOTCHAIN_TESTNET_USDT,
+  MERIDIAN_BOTCHAIN_MAINNET_FACILITATOR,
   MERIDIAN_BOTCHAIN_TESTNET_FACILITATOR,
   type MeridianPaymentRequirementsConfig,
   type NexoraX402Config,
@@ -61,13 +63,15 @@ export function createPaymentRequirements(config: NexoraX402Config): PaymentRequ
  */
 export function createMeridianPaymentRequirements(config: MeridianPaymentRequirementsConfig): PaymentRequirements {
   const network = config.network ?? "bot-chain-testnet";
-  if (network !== "bot-chain-testnet") {
-    throw new Error("BOT Chain mainnet Meridian requirements are not enabled by this SDK release");
-  }
+  const mainnet = network === "bot-chain";
+  const creditedRecipient = config.creditedRecipient ?? config.extra?.creditedRecipient;
+  if (creditedRecipient) assertAddress(creditedRecipient, "creditedRecipient");
   return createPaymentRequirements({
     facilitatorUrl: config.facilitatorUrl,
-    payTo: config.facilitator ?? MERIDIAN_BOTCHAIN_TESTNET_FACILITATOR,
-    asset: config.asset ?? BOTCHAIN_TESTNET_USDT,
+    payTo: config.facilitator ?? (
+      mainnet ? MERIDIAN_BOTCHAIN_MAINNET_FACILITATOR : MERIDIAN_BOTCHAIN_TESTNET_FACILITATOR
+    ),
+    asset: config.asset ?? (mainnet ? BOTCHAIN_MAINNET_USDT : BOTCHAIN_TESTNET_USDT),
     price: config.price,
     amountAtomic: config.amountAtomic,
     network,
@@ -76,7 +80,10 @@ export function createMeridianPaymentRequirements(config: MeridianPaymentRequire
     description: config.description,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     outputSchema: config.outputSchema,
-    extra: config.extra
+    extra: {
+      ...config.extra,
+      ...(creditedRecipient ? {creditedRecipient} : {})
+    }
   });
 }
 

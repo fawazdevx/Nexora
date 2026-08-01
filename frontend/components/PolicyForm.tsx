@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import {useAccount} from "wagmi";
 import {chainLabel, contractAddressesForChain, isNexoraPolicyChain, writeAgentPolicy} from "@/lib/contracts";
 import {apiPost, type AppSnapshot} from "@/lib/api";
-import {botChainTestnetWagmiChain, shortAddress} from "@/lib/arc";
+import {isBotChainId, shortAddress} from "@/lib/arc";
 import {AgentPicker} from "@/components/AgentPicker";
 import {AgentAvatar} from "@/components/AgentAvatar";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
@@ -22,7 +22,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   const {address, chain, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
   const selectedChainId = chain?.id;
-  const isBotPolicy = selectedChainId === botChainTestnetWagmiChain.id;
+  const isBotPolicy = isBotChainId(selectedChainId);
   const chainContracts = useMemo(() => contractAddressesForChain(chain?.id), [chain?.id]);
   const policyChainReady = isNexoraPolicyChain(chain?.id);
   const contractOptions = useMemo(() => [
@@ -38,11 +38,14 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       ? agents.find((agent) => (
         agent.walletKind === "external_eoa"
         && agent.operatorAddress.toLowerCase() === address.toLowerCase()
-        && agent.chainWallets?.some((wallet) => wallet.chainId === botChainTestnetWagmiChain.id)
+        && agent.chainWallets?.some((wallet) => wallet.chainId === selectedChainId)
       ))
       : undefined
-  ), [address, agents]);
-  const draftBotAgent = useMemo(() => address ? externalBotAgentDraft(address) : undefined, [address]);
+  ), [address, agents, selectedChainId]);
+  const draftBotAgent = useMemo(
+    () => address && selectedChainId ? externalBotAgentDraft(address, selectedChainId, chain?.name ?? "BOT Chain") : undefined,
+    [address, chain?.name, selectedChainId]
+  );
 
   const [internalId, setInternalId] = useState("");
   const agentId = selectedAgentId ?? internalId;
@@ -275,12 +278,44 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
     setSaving(true);
     const toastId = toast.loading(selectedChainWallet?.address ? `Saving policy on ${chainLabel(chain?.id)}…` : "Saving pending policy…");
     try {
+      const v2 = policyV2Payload({
+        weeklyLimit,
+        monthlyLimit,
+        maxUnitsPerRequest,
+        cooldownSeconds,
+        expiresAt,
+        serviceAllowlist: serviceItems,
+        previousServiceAllowlist: selectedAgent.policy.v2?.serviceAllowlist ?? [],
+        requireOnchainPolicy
+      });
       const policyAgent = isBotPolicy
         ? await apiPost<AppSnapshot["agents"][number]>("/api/agents/external-eoa", {
             operatorAddress: address,
-            chainId: botChainTestnetWagmiChain.id
+            chainId: selectedChainId
           })
         : selectedAgent;
+      const registration = !isBotPolicy && selectedChainWallet?.address
+        ? await apiPost<{
+            status: "already_registered" | "registered" | "pending";
+            registered: boolean;
+            transactionId: string | null;
+            txHash: string | null;
+          }>(`/api/agents/${encodeURIComponent(policyAgent.id)}/policies/register`, {
+            operatorAddress: address,
+            chainId: selectedChainId,
+            policyRegistry: chainContracts.policyRegistry,
+            dailyLimitUsdc: Number(dailyLimit),
+            transactionCapUsdc: Number(transactionCap),
+            contractAllowlist: contractItems,
+            recipientAllowlist: recipientItems,
+            policyV2: v2
+          })
+        : null;
+      if (registration?.status === "pending") {
+        await snapshot.refetch();
+        toast.success("Circle submitted the agent wallet registration. Wait for confirmation, then save the policy again.", {id: toastId});
+        return;
+      }
       const txHash = selectedChainWallet?.address
         ? await writeAgentPolicy({
             agentWallet: selectedChainWallet.address,
@@ -290,17 +325,9 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             transactionCapUsdc: transactionCap,
             contractAllowlist: contractItems,
             recipientAllowlist: recipientItems,
-            policyV2: policyV2Payload({
-              weeklyLimit,
-              monthlyLimit,
-              maxUnitsPerRequest,
-              cooldownSeconds,
-              expiresAt,
-              serviceAllowlist: serviceItems,
-              previousServiceAllowlist: selectedAgent.policy.v2?.serviceAllowlist ?? [],
-              requireOnchainPolicy
-            }),
-            active: true
+            policyV2: v2,
+            active: true,
+            skipBasicPolicy: registration?.registered === true
           })
         : null;
 
@@ -311,15 +338,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
         contractAllowlist: contractItems,
         recipientAllowlist: recipientItems,
         chainId: selectedChainId,
-        policyV2: policyV2Payload({
-          weeklyLimit,
-          monthlyLimit,
-          maxUnitsPerRequest,
-          cooldownSeconds,
-          expiresAt,
-          serviceAllowlist: serviceItems,
-          requireOnchainPolicy
-        }),
+        policyV2: v2,
         txHash
       });
 
@@ -988,10 +1007,10 @@ function policyV2Payload(input: {
   };
 }
 
-function externalBotAgentDraft(address: string): AppSnapshot["agents"][number] {
+function externalBotAgentDraft(address: string, chainId: number, chainName: string): AppSnapshot["agents"][number] {
   const now = new Date().toISOString();
   return {
-    id: `external-eoa-${botChainTestnetWagmiChain.id}-${address.toLowerCase()}`,
+    id: `external-eoa-${chainId}-${address.toLowerCase()}`,
     walletKind: "external_eoa",
     operatorAddress: address,
     arcName: null,
@@ -1002,8 +1021,8 @@ function externalBotAgentDraft(address: string): AppSnapshot["agents"][number] {
     settlementMode: null,
     circleWalletStatus: "external_eoa_ready",
     chainWallets: [{
-      chainId: botChainTestnetWagmiChain.id,
-      chain: botChainTestnetWagmiChain.name,
+      chainId,
+      chain: chainName,
       circleBlockchain: "EXTERNAL-EVM",
       address,
       circleWalletId: null,

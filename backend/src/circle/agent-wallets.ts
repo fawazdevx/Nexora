@@ -48,7 +48,7 @@ type CircleSettlementClient = Pick<
 type CircleContractExecution = {
   contractAddress: string;
   abiFunctionSignature: string;
-  abiParameters: string[];
+  abiParameters: unknown[];
 };
 
 type CircleTransactionResult = {
@@ -61,6 +61,13 @@ export type AgentX402SettlementDependencies = {
   publicClient?: (context: NexoraChainContext) => ReturnType<typeof chainPublicClient>;
   pollTransaction?: (transactionId: string) => Promise<CircleTransactionResult>;
   idempotencyKey?: (stage?: "approval" | "settlement") => string;
+};
+
+export type CirclePolicyRegistrationDependencies = {
+  circleClient?: () => CircleSettlementClient;
+  publicClient?: (context: NexoraChainContext) => ReturnType<typeof chainPublicClient>;
+  pollTransaction?: (transactionId: string) => Promise<CircleTransactionResult>;
+  idempotencyKey?: () => string;
 };
 
 export async function createAgentWallet(input: CreateAgentWalletInput) {
@@ -222,8 +229,10 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
  */
 export async function upsertExternalPolicyWallet(input: {operatorAddress: string; chainId: number}) {
   if (!isAddress(input.operatorAddress)) throw new Error("operatorAddress is invalid");
-  if (input.chainId !== config.botchain.testnetChainId) {
-    const error = new Error("External EOA policy profiles are currently available on BOT Chain Testnet only.");
+  const isTestnet = input.chainId === config.botchain.testnetChainId;
+  const isEnabledMainnet = input.chainId === config.botchain.mainnetChainId && config.botchain.mainnetEnabled;
+  if (!isTestnet && !isEnabledMainnet) {
+    const error = new Error("External EOA policy profiles are not enabled for this BOT Chain network.");
     (error as Error & {status?: number}).status = 400;
     throw error;
   }
@@ -253,7 +262,7 @@ export async function upsertExternalPolicyWallet(input: {operatorAddress: string
       settlementMode: null,
       chainWallets: [{
         chainId: input.chainId,
-        chain: "BOT Chain Testnet",
+        chain: isTestnet ? "BOT Chain Testnet" : "BOT Chain",
         circleBlockchain: "EXTERNAL-EVM",
         address: input.operatorAddress,
         circleWalletId: null,
@@ -397,6 +406,162 @@ export async function updateAgentPolicy(agentId: string, input: AgentPolicyInput
     agentId: result.agentId,
     onchainStatus: result.onchainStatus,
     policy: result.policy
+  };
+}
+
+/**
+ * Securely performs the first on-chain registration for a Circle-controlled
+ * agent wallet. The policy registry requires the initial call to come from the
+ * agent wallet (or the registry owner), so the connected operator must not send
+ * this first transaction from their browser wallet.
+ *
+ * Once registered, the operator recorded by this transaction can manage later
+ * policy updates directly through the normal frontend contract flow.
+ */
+export async function ensureCircleAgentPolicyRegistration(
+  agentId: string,
+  input: AgentPolicyInput,
+  dependencies: CirclePolicyRegistrationDependencies = {}
+) {
+  await assertPremiumPolicyAccess(input.operatorAddress, input.policyV2);
+  if (!config.circle.apiKey) throw new Error("Circle API key is required for agent policy registration");
+
+  const context = chainContext(input.chainId);
+  if (!context.policyRegistry) {
+    throw new Error(`Nexora policy registry is not configured on ${context.label}`);
+  }
+  if (
+    input.policyRegistry
+    && input.policyRegistry.toLowerCase() !== context.policyRegistry.toLowerCase()
+  ) {
+    throw new Error(`The requested policy registry does not match Nexora's configured proxy on ${context.label}`);
+  }
+
+  const store = await readStore();
+  const agent = store.agents.find((item) => isVisibleAgent(item) && item.id === agentId);
+  if (!agent) throw new Error("agent wallet not found");
+  if (agent.walletKind === "external_eoa") {
+    throw new Error("External EOA policies must be registered by the connected wallet");
+  }
+  if (agent.operatorAddress.toLowerCase() !== input.operatorAddress.toLowerCase()) {
+    const error = new Error("agent operator wallet required");
+    (error as Error & {status?: number}).status = 403;
+    throw error;
+  }
+
+  const chainWallet = walletForChain(agent, context.chainId);
+  if (!chainWallet?.circleWalletId) throw new Error(`Agent Circle wallet id is missing on ${context.label}`);
+  if (!chainWallet.address) throw new Error(`Agent wallet address is not ready on ${context.label}`);
+
+  const deployment = agent.policy.deployments?.find((item) => item.chainId === context.chainId);
+  if (
+    deployment?.policyRegistry
+    && deployment.policyRegistry.toLowerCase() !== context.policyRegistry.toLowerCase()
+  ) {
+    throw new Error(
+      `The recorded agent policy on ${context.label} targets a different policy registry. Review the configured proxy before registering this wallet.`
+    );
+  }
+
+  const publicClient = dependencies.publicClient?.(context) ?? chainPublicClient(context);
+  const profile = await readAgentPolicyProfile({
+    client: publicClient,
+    policyRegistry: context.policyRegistry,
+    agentAddress: chainWallet.address,
+    context
+  });
+  const [registeredOperator, , active] = profile;
+  if (active) {
+    if (registeredOperator.toLowerCase() !== input.operatorAddress.toLowerCase()) {
+      throw new Error(`This agent wallet is registered to a different operator on ${context.label}.`);
+    }
+    return {
+      status: "already_registered" as const,
+      registered: false,
+      chainId: context.chainId,
+      chain: context.label,
+      agentWallet: chainWallet.address,
+      transactionId: null,
+      txHash: deployment?.txHash ?? null
+    };
+  }
+
+  const client = dependencies.circleClient?.() ?? circleClient();
+  const pollTransaction = dependencies.pollTransaction ?? ((transactionId: string) => pollCircleTransaction(transactionId, client));
+  const idempotencyKey = dependencies.idempotencyKey ?? (() => stableIdempotencyKey(
+    `nexora:policy-registration:${agent.id}:${context.chainId}:${policyRegistrationFingerprint(input)}`
+  ));
+  const contractAllowlist = [...new Set(input.contractAllowlist.map((address) => address.toLowerCase()))];
+  const recipientAllowlist = [...new Set(input.recipientAllowlist.map((address) => address.toLowerCase()))];
+  const execution: CircleContractExecution = {
+    contractAddress: context.policyRegistry,
+    abiFunctionSignature: "configureAgentPolicy(address,address,bytes32,uint256,uint256,bool,bool,bool,address[],address[])",
+    abiParameters: [
+      chainWallet.address,
+      input.operatorAddress,
+      keccak256(stringToHex(agent.arcName?.trim() || input.operatorAddress)),
+      parseUnits(String(input.dailyLimitUsdc), 6).toString(),
+      parseUnits(String(input.transactionCapUsdc), 6).toString(),
+      contractAllowlist.length > 0,
+      recipientAllowlist.length > 0,
+      true,
+      contractAllowlist,
+      recipientAllowlist
+    ]
+  };
+  const registrationNetworkFee = await estimateCircleContractExecutionFee({
+    client,
+    walletId: chainWallet.circleWalletId,
+    execution,
+    context,
+    action: "Agent policy registration"
+  });
+  const accountType = agent.circleAccountType ?? "EOA";
+  await assertAgentNativeGasBalance({
+    agentAddress: chainWallet.address,
+    accountType,
+    requiredBaseUnits: registrationNetworkFee.baseUnits,
+    context,
+    client: publicClient,
+    action: "Agent policy registration"
+  });
+
+  const submitted = await client.createContractExecutionTransaction({
+    walletId: chainWallet.circleWalletId,
+    ...execution,
+    idempotencyKey: idempotencyKey(),
+    refId: `nexora-policy-register-${context.chainId}`,
+    fee: {type: "level", config: {feeLevel: "MEDIUM"}}
+  });
+  const transactionId = submitted.data?.id;
+  if (!transactionId) throw new Error(circleErrorMessage("Circle policy registration failed", submitted));
+
+  const transaction = await pollTransaction(transactionId);
+  if (transaction.state !== "COMPLETE") {
+    return {
+      status: "pending" as const,
+      registered: false,
+      chainId: context.chainId,
+      chain: context.label,
+      agentWallet: chainWallet.address,
+      transactionId,
+      txHash: transaction.txHash
+    };
+  }
+  if (!transaction.txHash) {
+    throw new Error(`Circle policy registration completed without a transaction hash on ${context.label}`);
+  }
+
+  return {
+    status: "registered" as const,
+    registered: true,
+    chainId: context.chainId,
+    chain: context.label,
+    agentWallet: chainWallet.address,
+    transactionId,
+    txHash: transaction.txHash,
+    networkFee: registrationNetworkFee.display,
+    networkFeeCurrency: context.nativeCurrency.symbol
   };
 }
 
@@ -754,17 +919,12 @@ async function assertAgentPolicyRegistration(input: {
     );
   }
 
-  let profile: readonly [string, `0x${string}`, boolean];
-  try {
-    profile = await input.client.readContract({
-      address: input.context.policyRegistry as `0x${string}`,
-      abi: policyRegistryReadAbi,
-      functionName: "agentProfiles",
-      args: [input.agentAddress as `0x${string}`]
-    });
-  } catch {
-    throw new Error(`Nexora could not verify the agent policy registry on ${input.context.label}. Check the network RPC and try again.`);
-  }
+  const profile = await readAgentPolicyProfile({
+    client: input.client,
+    policyRegistry: input.context.policyRegistry,
+    agentAddress: input.agentAddress,
+    context: input.context
+  });
 
   const [registeredOperator, , active] = profile;
   if (!active) {
@@ -775,6 +935,34 @@ async function assertAgentPolicyRegistration(input: {
   if (registeredOperator.toLowerCase() !== input.operatorAddress.toLowerCase()) {
     throw new Error(`This agent wallet is registered to a different operator on ${input.context.label}.`);
   }
+}
+
+async function readAgentPolicyProfile(input: {
+  client: ReturnType<typeof chainPublicClient>;
+  policyRegistry: string;
+  agentAddress: string;
+  context: NexoraChainContext;
+}) {
+  try {
+    return await input.client.readContract({
+      address: input.policyRegistry as `0x${string}`,
+      abi: policyRegistryReadAbi,
+      functionName: "agentProfiles",
+      args: [input.agentAddress as `0x${string}`]
+    });
+  } catch {
+    throw new Error(`Nexora could not verify the agent policy registry on ${input.context.label}. Check the network RPC and try again.`);
+  }
+}
+
+function policyRegistrationFingerprint(input: AgentPolicyInput) {
+  return JSON.stringify({
+    operatorAddress: input.operatorAddress.toLowerCase(),
+    dailyLimitUsdc: input.dailyLimitUsdc,
+    transactionCapUsdc: input.transactionCapUsdc,
+    contractAllowlist: [...input.contractAllowlist].map((address) => address.toLowerCase()).sort(),
+    recipientAllowlist: [...input.recipientAllowlist].map((address) => address.toLowerCase()).sort()
+  });
 }
 
 async function assertAgentSettlementBalance(

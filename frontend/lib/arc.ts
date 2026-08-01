@@ -83,12 +83,36 @@ export const botChainTestnetWagmiChain = {
   testnet: true
 } as const;
 
+export const botChainMainnetWagmiChain = {
+  id: Number(import.meta.env.VITE_BOTCHAIN_MAINNET_CHAIN_ID ?? 677),
+  name: "BOT Chain",
+  nativeCurrency: {name: "BOT", symbol: "BOT", decimals: 18},
+  rpcUrls: {
+    default: {http: [import.meta.env.VITE_BOTCHAIN_MAINNET_RPC_URL ?? "https://rpc.botchain.ai"]}
+  },
+  blockExplorers: {
+    default: {name: "BOTScan", url: import.meta.env.VITE_BOTCHAIN_MAINNET_EXPLORER_URL ?? "https://scan.botchain.ai"}
+  },
+  testnet: false
+} as const;
+
+export function isBotChainId(chainId?: number) {
+  return chainId === botChainTestnetWagmiChain.id || chainId === botChainMainnetWagmiChain.id;
+}
+
+export function configuredBotChain() {
+  return (import.meta.env.VITE_BOTCHAIN_MERIDIAN_NETWORK ?? "bot-chain-testnet") === "bot-chain"
+    ? botChainMainnetWagmiChain
+    : botChainTestnetWagmiChain;
+}
+
 export const supportedChains = [
   arcTestnetWagmiChain,
   arbitrumSepoliaWagmiChain,
   baseSepoliaWagmiChain,
   ...(import.meta.env.VITE_ENABLE_ARBITRUM_ONE === "true" ? [arbitrumOneWagmiChain] : []),
-  ...(import.meta.env.VITE_ENABLE_BOTCHAIN_TESTNET === "true" ? [botChainTestnetWagmiChain] : [])
+  ...(import.meta.env.VITE_ENABLE_BOTCHAIN_TESTNET === "true" ? [botChainTestnetWagmiChain] : []),
+  ...(import.meta.env.VITE_ENABLE_BOTCHAIN_MAINNET === "true" ? [botChainMainnetWagmiChain] : [])
 ] as const;
 
 export const marketplaceSettlementChains = [

@@ -14,6 +14,7 @@ contract OperatorReputation is NexoraUpgradeable {
 
     mapping(address => bool) public updaters;
     mapping(address => Scorecard) public scorecards;
+    mapping(bytes32 => bool) public processedEvents;
 
     event UpdaterSet(address indexed updater, bool enabled);
     event ReputationRecorded(address indexed operator, uint8 metric, uint256 amount);
@@ -27,6 +28,13 @@ contract OperatorReputation is NexoraUpgradeable {
         emit UpdaterSet(initialOwner, true);
     }
 
+    function initialize(address initialOwner, address initialUpdater) external {
+        __Nexora_init(initialOwner);
+        require(initialUpdater != address(0), "ZERO_UPDATER");
+        updaters[initialUpdater] = true;
+        emit UpdaterSet(initialUpdater, true);
+    }
+
     modifier onlyUpdater() {
         if (!updaters[msg.sender]) revert NotUpdater();
         _;
@@ -37,7 +45,22 @@ contract OperatorReputation is NexoraUpgradeable {
         emit UpdaterSet(updater, enabled);
     }
 
-    function record(address operator, uint8 metric, uint256 amount) external onlyUpdater {
+    function record(address operator, uint8 metric, uint256 amount) external onlyUpdater whenNotPaused {
+        _record(operator, metric, amount);
+    }
+
+    function recordWithId(bytes32 eventId, address operator, uint8 metric, uint256 amount)
+        external
+        onlyUpdater
+        whenNotPaused
+    {
+        require(eventId != bytes32(0), "ZERO_EVENT_ID");
+        if (processedEvents[eventId]) return;
+        processedEvents[eventId] = true;
+        _record(operator, metric, amount);
+    }
+
+    function _record(address operator, uint8 metric, uint256 amount) internal {
         require(operator != address(0), "ZERO_OPERATOR");
         require(amount > 0, "ZERO_AMOUNT");
 
@@ -51,7 +74,7 @@ contract OperatorReputation is NexoraUpgradeable {
         emit ReputationRecorded(operator, metric, amount);
     }
 
-    function setVerifiedBuilder(address operator, bool verified) external onlyUpdater {
+    function setVerifiedBuilder(address operator, bool verified) external onlyUpdater whenNotPaused {
         scorecards[operator].verifiedBuilder = verified;
         emit VerifiedBuilderSet(operator, verified);
     }

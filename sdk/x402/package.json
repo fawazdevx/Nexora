@@ -1,7 +1,7 @@
 {
   "name": "@nexorafi/x402",
-  "version": "0.3.0",
-  "description": "Nexora x402 v1/v2 facilitator SDK and middleware for USDC paid APIs on Arc, Base, and Arbitrum.",
+  "version": "0.4.0",
+  "description": "Nexora x402 SDK and middleware for policy-aware USDC and BOT Chain Permit2 payments.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

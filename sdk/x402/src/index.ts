@@ -4,7 +4,14 @@ export {withNexoraX402, type NexoraNextHandler} from "./next.js";
 export {createMeridianPaymentRequirements, createPaymentRequirements, networkForX402Version, paymentRequiredResponse, paymentRequiredResponseForVersion, usdcToAtomic} from "./requirements.js";
 export {createNexoraServiceManifest, inferServiceKind, policyHintsForKind} from "./manifest.js";
 export {createWebhookExecutor, dispatchReceiptCallback, type NexoraWebhookHandler} from "./webhook.js";
-export {BOTCHAIN_TESTNET_USDT, MERIDIAN_BOTCHAIN_TESTNET_FACILITATOR, PERMIT2_ADDRESS, X402_EXACT_PERMIT2_PROXY} from "./types.js";
+export {
+  BOTCHAIN_MAINNET_USDT,
+  BOTCHAIN_TESTNET_USDT,
+  MERIDIAN_BOTCHAIN_MAINNET_FACILITATOR,
+  MERIDIAN_BOTCHAIN_TESTNET_FACILITATOR,
+  PERMIT2_ADDRESS,
+  X402_EXACT_PERMIT2_PROXY
+} from "./types.js";
 export {
   buildPermit2WitnessTypedData,
   buildMeridianPermit2Payload,

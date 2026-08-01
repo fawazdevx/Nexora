@@ -38,7 +38,7 @@ process.env.USDC_ADDRESS = arcUsdc;
 process.env.POLICY_REGISTRY_ADDRESS = arcPolicyRegistry;
 process.env.X402_LEDGER_ADDRESS = arcLedger;
 
-const {submitAgentX402Settlement} = await import("../src/circle/agent-wallets.js");
+const {ensureCircleAgentPolicyRegistration, submitAgentX402Settlement} = await import("../src/circle/agent-wallets.js");
 const {updateStore} = await import("../src/store.js");
 
 test.after(async () => {
@@ -195,6 +195,111 @@ test("inactive Base policy registration blocks before Circle estimates or transa
     }),
     /not registered with an active policy on Base Sepolia/
   );
+  assert.equal(circleCalls, 0);
+});
+
+test("a new Circle agent policy is registered by the Circle wallet before operator-managed updates", async () => {
+  const route = {
+    name: "Base Sepolia",
+    chainId: 84532,
+    wallet: baseWallet,
+    walletId: "circle-base-wallet-id",
+    circleBlockchain: "BASE-SEPOLIA",
+    policyRegistry: basePolicyRegistry,
+    ledger: baseLedger,
+    usdc: baseUsdc
+  };
+  await seedAgent(route);
+  const executions: Array<Record<string, unknown>> = [];
+  const result = await ensureCircleAgentPolicyRegistration(`agent-${route.chainId}`, {
+    operatorAddress: operator,
+    chainId: route.chainId,
+    policyRegistry: route.policyRegistry,
+    dailyLimitUsdc: 125,
+    transactionCapUsdc: 15,
+    contractAllowlist: [route.ledger],
+    recipientAllowlist: ["0x8888888888888888888888888888888888888888"]
+  }, {
+    circleClient: () => ({
+      async estimateContractExecutionFee() {
+        return {data: {medium: {networkFee: "0.0001"}}} as never;
+      },
+      async createContractExecutionTransaction(input) {
+        executions.push(input as unknown as Record<string, unknown>);
+        return {data: {id: "circle-policy-registration"}} as never;
+      },
+      async getTransaction() {
+        throw new Error("pollTransaction injection must be used");
+      }
+    }),
+    publicClient: () => ({
+      async readContract() {
+        return ["0x0000000000000000000000000000000000000000", `0x${"00".repeat(32)}`, false] as const;
+      },
+      async getBalance() {
+        return 1_000_000_000_000_000_000n;
+      }
+    } as never),
+    pollTransaction: async () => ({state: "COMPLETE", txHash: `0x${"91".repeat(32)}`}),
+    idempotencyKey: () => "policy-registration-idempotency-key"
+  });
+
+  assert.equal(result.status, "registered");
+  assert.equal(result.registered, true);
+  assert.equal(result.agentWallet, route.wallet);
+  assert.equal(result.txHash, `0x${"91".repeat(32)}`);
+  assert.equal(executions.length, 1);
+  assert.equal(executions[0]?.walletId, route.walletId);
+  assert.equal(executions[0]?.contractAddress, route.policyRegistry);
+  assert.equal(
+    executions[0]?.abiFunctionSignature,
+    "configureAgentPolicy(address,address,bytes32,uint256,uint256,bool,bool,bool,address[],address[])"
+  );
+  assert.equal(executions[0]?.idempotencyKey, "policy-registration-idempotency-key");
+  const parameters = executions[0]?.abiParameters as unknown[];
+  assert.equal(parameters[0], route.wallet);
+  assert.equal(parameters[1], operator);
+  assert.equal(parameters[3], "125000000");
+  assert.equal(parameters[4], "15000000");
+  assert.deepEqual(parameters[8], [route.ledger.toLowerCase()]);
+  assert.deepEqual(parameters[9], ["0x8888888888888888888888888888888888888888"]);
+});
+
+test("an already registered Circle policy does not submit another Circle transaction", async () => {
+  const route = {
+    name: "Base Sepolia",
+    chainId: 84532,
+    wallet: baseWallet,
+    walletId: "circle-base-wallet-id",
+    circleBlockchain: "BASE-SEPOLIA",
+    policyRegistry: basePolicyRegistry,
+    ledger: baseLedger,
+    usdc: baseUsdc
+  };
+  await seedAgent(route);
+  let circleCalls = 0;
+  const result = await ensureCircleAgentPolicyRegistration(`agent-${route.chainId}`, {
+    operatorAddress: operator,
+    chainId: route.chainId,
+    policyRegistry: route.policyRegistry,
+    dailyLimitUsdc: 100,
+    transactionCapUsdc: 10,
+    contractAllowlist: [],
+    recipientAllowlist: []
+  }, {
+    circleClient: () => {
+      circleCalls += 1;
+      throw new Error("Circle must not be initialized for an active registration");
+    },
+    publicClient: () => ({
+      async readContract() {
+        return [operator, `0x${"00".repeat(32)}`, true] as const;
+      }
+    } as never)
+  });
+
+  assert.equal(result.status, "already_registered");
+  assert.equal(result.registered, false);
   assert.equal(circleCalls, 0);
 });
 

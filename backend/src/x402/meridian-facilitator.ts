@@ -16,8 +16,9 @@
 import {createPublicClient, createWalletClient, http, isAddress, keccak256, parseAbi, stringToHex, type Address, type Hex} from "viem";
 import {privateKeyToAccount} from "viem/accounts";
 import {config} from "../config.js";
+import {encodeBotContractCall, isBotPaymasterSponsorable} from "../botchain/paymaster.js";
 import {dispatchNotification} from "../notifications.js";
-import {insertPayment, pushNotification, readStore, withAgentSpendLock, type PaymentRecord} from "../store.js";
+import {insertPayment, pushNotification, readStore, updatePaymentById, withAgentSpendLock, type PaymentRecord} from "../store.js";
 
 // Meridian networks Nexora exposes. Testnet-first per rollout; mainnet is wired
 // but gated behind an explicit opt-in env so we don't advertise it prematurely.
@@ -35,6 +36,15 @@ type MeridianNetworkConfig = {
   assetDecimals: number;
   facilitator: string;
   label: string;
+};
+
+export type BotPolicyRuntime = MeridianNetworkConfig & {
+  enabled: boolean;
+  policyRegistry: string;
+  reputation: string;
+  relayerPrivateKey: string;
+  reservationsEnabled: boolean;
+  paymasterUrl: string;
 };
 
 // Build the per-network Meridian config from config.ts. Kept as a function (not
@@ -92,25 +102,62 @@ export function meridianConfigured() {
   return Boolean(config.meridian.publicKey.trim());
 }
 
-export function guardedMeridianConfigured() {
-  return meridianConfigured()
-    && isAddress(config.meridian.sellerAddress)
-    && isAddress(config.botchain.testnetPolicyRegistry)
-    && isAddress(config.botchain.testnetReputation)
-    && /^0x[0-9a-fA-F]{64}$/.test(config.meridian.policyRelayerPrivateKey);
+export function botchainPolicyRuntime(network: MeridianNetwork): BotPolicyRuntime {
+  const base = meridianNetworkConfig(network);
+  if (network === "bot-chain") {
+    return {
+      ...base,
+      enabled: config.botchain.mainnetEnabled,
+      policyRegistry: config.botchain.mainnetPolicyRegistry,
+      reputation: config.botchain.mainnetReputation,
+      relayerPrivateKey: config.meridian.mainnetPolicyRelayerPrivateKey,
+      reservationsEnabled: config.botchain.mainnetReservationsEnabled,
+      paymasterUrl: config.botchain.mainnetPaymasterUrl
+    };
+  }
+  return {
+    ...base,
+    enabled: true,
+    policyRegistry: config.botchain.testnetPolicyRegistry,
+    reputation: config.botchain.testnetReputation,
+    relayerPrivateKey: config.meridian.testnetPolicyRelayerPrivateKey,
+    reservationsEnabled: config.botchain.testnetReservationsEnabled,
+    paymasterUrl: config.botchain.testnetPaymasterUrl
+  };
+}
+
+export function guardedMeridianConfigured(network?: MeridianNetwork) {
+  const configured = (candidate: MeridianNetwork) => {
+    const runtime = botchainPolicyRuntime(candidate);
+    return runtime.enabled
+      && meridianConfigured()
+      && isAddress(config.meridian.sellerAddress)
+      && isAddress(runtime.policyRegistry)
+      && isAddress(runtime.reputation)
+      && /^0x[0-9a-fA-F]{64}$/.test(runtime.relayerPrivateKey);
+  };
+  return network ? configured(network) : configured("bot-chain-testnet") || configured("bot-chain");
 }
 
 // Which Meridian networks Nexora actively advertises. Mainnet stays off until
 // explicitly enabled so testnet-first rollout is the default.
 export function enabledMeridianNetworks(): MeridianNetworkConfig[] {
-  if (!guardedMeridianConfigured()) return [];
   const networks = meridianNetworks();
   const enabled: MeridianNetworkConfig[] = [];
   const testnet = networks.get("bot-chain-testnet");
-  if (testnet && isAddress(testnet.asset) && isAddress(testnet.facilitator)) enabled.push(testnet);
-  // Mainnet advertisement stays off until Nexora has separate mainnet policy,
-  // reputation, and relayer configuration. Reusing testnet controls would make
-  // the guard misleading.
+  if (
+    testnet
+    && guardedMeridianConfigured("bot-chain-testnet")
+    && isAddress(testnet.asset)
+    && isAddress(testnet.facilitator)
+  ) enabled.push(testnet);
+  const mainnet = networks.get("bot-chain");
+  if (
+    mainnet
+    && guardedMeridianConfigured("bot-chain")
+    && isAddress(mainnet.asset)
+    && isAddress(mainnet.facilitator)
+  ) enabled.push(mainnet);
   return enabled;
 }
 
@@ -148,6 +195,7 @@ export type MeridianPaymentRequirements = {
   extra: {
     name: string;
     version: string;
+    creditedRecipient: string;
   };
 };
 
@@ -163,6 +211,9 @@ export function buildMeridianPaymentRequirements(input: {
   maxTimeoutSeconds?: number;
 }): MeridianPaymentRequirements {
   const net = meridianNetworkConfig(input.network);
+  if (!isAddress(config.meridian.sellerAddress)) {
+    throw new Error("MERIDIAN_SELLER_ADDRESS must be a valid EVM address");
+  }
   if (!/^\d+$/.test(input.amountBaseUnits) || input.amountBaseUnits === "0") {
     throw new Error("amountBaseUnits must be a positive integer string in token base units");
   }
@@ -178,7 +229,8 @@ export function buildMeridianPaymentRequirements(input: {
     maxTimeoutSeconds: input.maxTimeoutSeconds ?? 300,
     extra: {
       name: net.assetName,
-      version: net.assetVersion
+      version: net.assetVersion,
+      creditedRecipient: config.meridian.sellerAddress
     }
   };
 }
@@ -386,16 +438,22 @@ export async function settleMeridianPayment(
 
 const botPolicyAbi = parseAbi([
   "function canSpendV2(address agentWallet,address targetContract,address recipient,uint256 amount,bytes32 serviceId,uint256 units) view returns (bool)",
-  "function recordSpendV2(address agentWallet,address targetContract,address recipient,uint256 amount,bytes32 serviceId,uint256 units)"
+  "function recordSpendV2(address agentWallet,address targetContract,address recipient,uint256 amount,bytes32 serviceId,uint256 units)",
+  "function reserveSpendV2(bytes32 settlementId,address agentWallet,address targetContract,address recipient,uint256 amount,bytes32 serviceId,uint256 units,uint64 expiresAt)",
+  "function finalizeSpendV2(bytes32 settlementId)",
+  "function cancelSpendReservation(bytes32 settlementId)"
 ]);
 const botReputationAbi = parseAbi([
-  "function record(address operator,uint8 metric,uint256 amount)"
+  "function record(address operator,uint8 metric,uint256 amount)",
+  "function recordWithId(bytes32 eventId,address operator,uint8 metric,uint256 amount)"
 ]);
 
 type GuardedMeridianDependencies = {
   fetchImpl?: FetchLike;
   canSpend?: (input: GuardedMeridianPolicyContext) => Promise<boolean>;
+  reserveAccounting?: (input: GuardedMeridianPolicyContext) => Promise<string[]>;
   recordAccounting?: (input: GuardedMeridianPolicyContext) => Promise<string[]>;
+  cancelAccounting?: (input: GuardedMeridianPolicyContext) => Promise<string[]>;
 };
 
 type GuardedMeridianPolicyContext = {
@@ -405,6 +463,7 @@ type GuardedMeridianPolicyContext = {
   seller: Address;
   amount: bigint;
   serviceId: Hex;
+  settlementId: Hex;
   resource: string;
   units: bigint;
 };
@@ -421,10 +480,11 @@ export async function settleGuardedMeridianPayment(
 ) {
   const network = normalizeMeridianNetwork(input.paymentRequirements?.network);
   if (!network) return {success: false, errorReason: "This BOT Chain network is not supported."};
-  if (network !== "bot-chain-testnet") {
-    return {success: false, network, errorReason: "BOT Chain mainnet policy settlement is not enabled yet."};
+  const runtime = botchainPolicyRuntime(network);
+  if (!runtime.enabled) {
+    return {success: false, network, errorReason: "BOT Chain mainnet policy settlement is not enabled."};
   }
-  if (!guardedMeridianConfigured() && (!dependencies.canSpend || !dependencies.recordAccounting)) {
+  if (!guardedMeridianConfigured(network) && (!dependencies.canSpend || !dependencies.recordAccounting)) {
     return {
       success: false,
       network,
@@ -444,24 +504,35 @@ export async function settleGuardedMeridianPayment(
     maxTimeoutSeconds: input.paymentRequirements.maxTimeoutSeconds
   });
   const owner = verification.payer as Address;
+  const authorizationId = `meridian:${network}:${owner.toLowerCase()}:${input.paymentPayload.payload.permit.nonce}`;
   const context: GuardedMeridianPolicyContext = {
     network,
     owner,
     facilitator: requirements.payTo as Address,
-    seller: config.meridian.sellerAddress as Address,
+    seller: requirements.extra.creditedRecipient as Address,
     amount: BigInt(requirements.maxAmountRequired),
     serviceId: keccak256(stringToHex(requirements.resource.trim().toLowerCase())),
+    settlementId: keccak256(stringToHex(authorizationId)),
     resource: requirements.resource,
     units: 1n
   };
-  const authorizationId = `meridian:${network}:${owner.toLowerCase()}:${input.paymentPayload.payload.permit.nonce}`;
 
   return withAgentSpendLock(`external:${network}:${owner.toLowerCase()}`, async () => {
-    const before = await readStore();
+    let before = await readStore();
+    const pending = before.payments.filter((payment) => (
+      payment.external?.provider === "meridian"
+      && payment.external.network === network
+      && payment.agentWallet?.toLowerCase() === owner.toLowerCase()
+      && payment.external.accountingStatus === "pending"
+    ));
+    for (const payment of pending) {
+      await reconcileMeridianPaymentRecord(payment, dependencies).catch(() => undefined);
+    }
+    if (pending.length > 0) before = await readStore();
     const externalAgentId = before.agents.find((agent) => (
       agent.walletKind === "external_eoa"
       && agent.operatorAddress.toLowerCase() === owner.toLowerCase()
-      && agent.chainWallets?.some((wallet) => wallet.chainId === config.botchain.testnetChainId)
+      && agent.chainWallets?.some((wallet) => wallet.chainId === runtime.chainId)
     ))?.id ?? null;
     const replay = before.payments.find((payment) => payment.authorizationId === authorizationId);
     if (replay) {
@@ -479,6 +550,7 @@ export async function settleGuardedMeridianPayment(
     }
     const accountingPending = before.payments.some((payment) => (
       payment.external?.provider === "meridian"
+      && payment.external.network === network
       && payment.agentWallet?.toLowerCase() === owner.toLowerCase()
       && payment.external.accountingStatus === "pending"
     ));
@@ -513,27 +585,77 @@ export async function settleGuardedMeridianPayment(
       };
     }
 
+    let reservationStatus: "reserved" | "legacy" = "legacy";
+    let reservationTxHashes: string[] = [];
+    if (runtime.reservationsEnabled) {
+      try {
+        reservationTxHashes = dependencies.reserveAccounting
+          ? await dependencies.reserveAccounting(context)
+          : await reserveBotPolicySpend(context);
+        reservationStatus = "reserved";
+      } catch {
+        const receipt = await recordGuardedMeridianPayment({
+          authorizationId,
+          context,
+          requirements,
+          agentId: externalAgentId,
+          status: "policy_blocked",
+          policyReason: "Nexora could not reserve this BOT Chain spend under the active policy.",
+          reservationStatus
+        });
+        return {
+          success: false,
+          network,
+          payer: owner,
+          amount: requirements.maxAmountRequired,
+          asset: requirements.asset,
+          receiptId: receipt.id,
+          errorReason: receipt.policyReason
+        };
+      }
+    }
+
     const settlement = await settleMeridianPayment(input, {fetchImpl: dependencies.fetchImpl});
     if (!settlement.success) {
+      let accountingStatus: "recorded" | "pending" = "recorded";
+      let cancellationHashes: string[] = [];
+      let accountingError: string | null = null;
+      if (reservationStatus === "reserved") {
+        try {
+          cancellationHashes = dependencies.cancelAccounting
+            ? await dependencies.cancelAccounting(context)
+            : await cancelBotPolicySpend(context);
+        } catch (error) {
+          accountingStatus = "pending";
+          accountingError = error instanceof Error ? error.message : "BOT spend reservation cancellation failed";
+        }
+      }
       const receipt = await recordGuardedMeridianPayment({
         authorizationId,
         context,
         requirements,
         agentId: externalAgentId,
         status: "failed",
-        policyReason: settlement.errorReason ?? "BOT Chain settlement failed."
+        policyReason: settlement.errorReason ?? "BOT Chain settlement failed.",
+        accountingStatus,
+        accountingTxHashes: [...reservationTxHashes, ...cancellationHashes],
+        accountingError,
+        reservationStatus: accountingStatus === "recorded" && reservationStatus === "reserved" ? "cancelled" : reservationStatus
       });
       return {...settlement, receiptId: receipt.id};
     }
 
     let accountingStatus: "recorded" | "pending" = "recorded";
-    let accountingTxHashes: string[] = [];
+    let accountingTxHashes: string[] = [...reservationTxHashes];
+    let accountingError: string | null = null;
     try {
-      accountingTxHashes = dependencies.recordAccounting
+      const recordedHashes = dependencies.recordAccounting
         ? await dependencies.recordAccounting(context)
         : await recordBotPolicyAndReputation(context);
-    } catch {
+      accountingTxHashes.push(...recordedHashes);
+    } catch (error) {
       accountingStatus = "pending";
+      accountingError = error instanceof Error ? error.message : "BOT policy accounting failed";
     }
     const receipt = await recordGuardedMeridianPayment({
       authorizationId,
@@ -543,7 +665,9 @@ export async function settleGuardedMeridianPayment(
       status: "settled",
       txHash: settlement.transaction ?? null,
       accountingStatus,
-      accountingTxHashes
+      accountingTxHashes,
+      accountingError,
+      reservationStatus: reservationStatus === "reserved" && accountingStatus === "recorded" ? "finalized" : reservationStatus
     });
     return {
       ...settlement,
@@ -557,9 +681,10 @@ export async function settleGuardedMeridianPayment(
 }
 
 async function botPolicyCanSpend(input: GuardedMeridianPolicyContext) {
-  const client = createPublicClient({transport: http(config.botchain.testnetRpcUrl, {timeout: 20_000})});
+  const runtime = botchainPolicyRuntime(input.network);
+  const client = createPublicClient({transport: http(runtime.rpcUrl, {timeout: 20_000})});
   return client.readContract({
-    address: config.botchain.testnetPolicyRegistry as Address,
+    address: runtime.policyRegistry as Address,
     abi: botPolicyAbi,
     functionName: "canSpendV2",
     args: [input.owner, input.facilitator, input.seller, input.amount, input.serviceId, input.units]
@@ -567,40 +692,138 @@ async function botPolicyCanSpend(input: GuardedMeridianPolicyContext) {
 }
 
 async function recordBotPolicyAndReputation(input: GuardedMeridianPolicyContext) {
-  const account = privateKeyToAccount(config.meridian.policyRelayerPrivateKey as Hex);
-  const wallet = createWalletClient({account, transport: http(config.botchain.testnetRpcUrl, {timeout: 20_000})});
-  const publicClient = createPublicClient({transport: http(config.botchain.testnetRpcUrl, {timeout: 20_000})});
+  const runtime = botchainPolicyRuntime(input.network);
+  const {wallet, publicClient} = botRelayerClients(runtime);
   const hashes: string[] = [];
-  const spendHash = await wallet.writeContract({
-    chain: undefined,
-    address: config.botchain.testnetPolicyRegistry as Address,
+  const spendFunctionName = runtime.reservationsEnabled ? "finalizeSpendV2" : "recordSpendV2";
+  const spendArgs = runtime.reservationsEnabled
+    ? [input.settlementId]
+    : [input.owner, input.facilitator, input.seller, input.amount, input.serviceId, input.units];
+  const spendHash = await botWriteContract({
+    runtime,
+    wallet,
+    address: runtime.policyRegistry as Address,
     abi: botPolicyAbi,
-    functionName: "recordSpendV2",
-    args: [input.owner, input.facilitator, input.seller, input.amount, input.serviceId, input.units]
+    functionName: spendFunctionName,
+    args: spendArgs
   });
   await publicClient.waitForTransactionReceipt({hash: spendHash});
   hashes.push(spendHash);
 
-  const payerReputationHash = await wallet.writeContract({
-    chain: undefined,
-    address: config.botchain.testnetReputation as Address,
+  const payerReputationHash = await botWriteContract({
+    runtime,
+    wallet,
+    address: runtime.reputation as Address,
     abi: botReputationAbi,
-    functionName: "record",
-    args: [input.owner, 0, 1n]
+    functionName: "recordWithId",
+    args: [keccak256(stringToHex(`${input.settlementId}:payer`)), input.owner, 0, 1n]
   });
   await publicClient.waitForTransactionReceipt({hash: payerReputationHash});
   hashes.push(payerReputationHash);
 
-  const sellerReputationHash = await wallet.writeContract({
-    chain: undefined,
-    address: config.botchain.testnetReputation as Address,
+  const sellerReputationHash = await botWriteContract({
+    runtime,
+    wallet,
+    address: runtime.reputation as Address,
     abi: botReputationAbi,
-    functionName: "record",
-    args: [input.seller, 2, 1n]
+    functionName: "recordWithId",
+    args: [keccak256(stringToHex(`${input.settlementId}:seller`)), input.seller, 2, 1n]
   });
   await publicClient.waitForTransactionReceipt({hash: sellerReputationHash});
   hashes.push(sellerReputationHash);
   return hashes;
+}
+
+async function reserveBotPolicySpend(input: GuardedMeridianPolicyContext) {
+  const runtime = botchainPolicyRuntime(input.network);
+  const {wallet, publicClient} = botRelayerClients(runtime);
+  const hash = await botWriteContract({
+    runtime,
+    wallet,
+    address: runtime.policyRegistry as Address,
+    abi: botPolicyAbi,
+    functionName: "reserveSpendV2",
+    args: [
+      input.settlementId,
+      input.owner,
+      input.facilitator,
+      input.seller,
+      input.amount,
+      input.serviceId,
+      input.units,
+      BigInt(Math.floor(Date.now() / 1_000) + config.botchain.reservationTtlSeconds)
+    ]
+  });
+  await publicClient.waitForTransactionReceipt({hash});
+  return [hash];
+}
+
+async function cancelBotPolicySpend(input: GuardedMeridianPolicyContext) {
+  const runtime = botchainPolicyRuntime(input.network);
+  if (!runtime.reservationsEnabled) return [];
+  const {wallet, publicClient} = botRelayerClients(runtime);
+  const hash = await botWriteContract({
+    runtime,
+    wallet,
+    address: runtime.policyRegistry as Address,
+    abi: botPolicyAbi,
+    functionName: "cancelSpendReservation",
+    args: [input.settlementId]
+  });
+  await publicClient.waitForTransactionReceipt({hash});
+  return [hash];
+}
+
+function botRelayerClients(runtime: BotPolicyRuntime) {
+  const account = privateKeyToAccount(runtime.relayerPrivateKey as Hex);
+  return {
+    wallet: createWalletClient({account, transport: http(runtime.rpcUrl, {timeout: 20_000})}),
+    publicClient: createPublicClient({transport: http(runtime.rpcUrl, {timeout: 20_000})})
+  };
+}
+
+async function botWriteContract(input: {
+  runtime: BotPolicyRuntime;
+  wallet: ReturnType<typeof createWalletClient>;
+  address: Address;
+  abi: typeof botPolicyAbi | typeof botReputationAbi;
+  functionName: string;
+  args: readonly unknown[];
+}) {
+  const data = await encodeBotContractCall({
+    abi: input.abi,
+    functionName: input.functionName,
+    args: input.args
+  });
+  const sponsored = await isBotPaymasterSponsorable({
+    runtime: input.runtime,
+    from: (input.wallet.account?.address ?? "0x0000000000000000000000000000000000000000") as Address,
+    to: input.address,
+    data
+  });
+  if (sponsored && input.runtime.paymasterUrl) {
+    try {
+      return await input.wallet.writeContract({
+        chain: undefined,
+        account: input.wallet.account!,
+        address: input.address,
+        abi: input.abi,
+        functionName: input.functionName as never,
+        args: input.args as never,
+        gasPrice: 0n
+      });
+    } catch {
+      // Provider rejected sponsorship; retry through the ordinary BOT RPC.
+    }
+  }
+  return input.wallet.writeContract({
+    chain: undefined,
+    account: input.wallet.account!,
+    address: input.address,
+    abi: input.abi,
+    functionName: input.functionName as never,
+    args: input.args as never
+  });
 }
 
 async function recordGuardedMeridianPayment(input: {
@@ -613,9 +836,14 @@ async function recordGuardedMeridianPayment(input: {
   policyReason?: string | null;
   accountingStatus?: "recorded" | "pending";
   accountingTxHashes?: string[];
+  accountingError?: string | null;
+  reservationStatus?: "reserved" | "finalized" | "cancelled" | "legacy";
 }) {
   const now = new Date().toISOString();
-  const amount = Number(input.context.amount) / 10 ** meridianNetworkConfig(input.context.network).assetDecimals;
+  const net = meridianNetworkConfig(input.context.network);
+  const amount = Number(input.context.amount) / 10 ** net.assetDecimals;
+  const feeBps = config.meridian.marketplaceFeeBps;
+  const platformFee = input.status === "settled" ? roundUsdc(amount * feeBps / 10_000) : 0;
   const payment: PaymentRecord = {
     id: crypto.randomUUID(),
     authorizationId: input.authorizationId,
@@ -627,9 +855,9 @@ async function recordGuardedMeridianPayment(input: {
     publisherAddress: input.context.seller,
     amountUsdc: amount,
     grossAmountUsdc: amount,
-    platformFeeUsdc: 0,
-    publisherNetUsdc: input.status === "settled" ? amount : 0,
-    facilitatorFeeBps: 0,
+    platformFeeUsdc: platformFee,
+    publisherNetUsdc: input.status === "settled" ? roundUsdc(amount - platformFee) : 0,
+    facilitatorFeeBps: feeBps,
     units: Number(input.context.units),
     requestHash: input.context.serviceId,
     status: input.status,
@@ -639,14 +867,18 @@ async function recordGuardedMeridianPayment(input: {
     external: {
       provider: "meridian",
       serviceUrl: input.context.resource,
-      chain: "BOT Chain Testnet",
-      chainId: config.botchain.testnetChainId,
+      chain: net.label,
+      chainId: net.chainId,
       network: input.context.network,
       paymentScheme: "permit2-x402ExactPermit2Proxy",
       resultSummary: null,
       accountingStatus: input.accountingStatus ?? null,
       accountingTxHashes: input.accountingTxHashes ?? null,
-      assetSymbol: meridianNetworkConfig(input.context.network).assetSymbol
+      accountingAttempts: input.accountingStatus === "pending" ? 1 : 0,
+      lastAccountingError: input.accountingError ?? null,
+      settlementId: input.context.settlementId,
+      reservationStatus: input.reservationStatus ?? null,
+      assetSymbol: net.assetSymbol
     },
     createdAt: now,
     settledAt: input.status === "settled" ? now : null
@@ -671,6 +903,93 @@ async function recordGuardedMeridianPayment(input: {
     }).catch(() => undefined);
   }
   return payment;
+}
+
+/**
+ * Retry the on-chain accounting half of a Meridian payment. Meridian has
+ * already moved funds at this point, so this function never retries settlement;
+ * it only finalizes/cancels the reservation and records idempotent reputation.
+ */
+export async function reconcileMeridianPaymentRecord(
+  payment: PaymentRecord,
+  dependencies: Pick<GuardedMeridianDependencies, "recordAccounting" | "cancelAccounting"> = {}
+) {
+  if (payment.external?.provider !== "meridian" || payment.external.accountingStatus !== "pending") return false;
+  const network = normalizeMeridianNetwork(payment.external.network);
+  if (!network || !payment.external.settlementId || !isAddress(payment.agentWallet ?? payment.payer)) return false;
+  const requirements = buildMeridianPaymentRequirements({
+    network,
+    amountBaseUnits: meridianAmountToBaseUnits(network, payment.grossAmountUsdc ?? payment.amountUsdc),
+    resource: payment.external.serviceUrl,
+    description: payment.serviceName
+  });
+  const context: GuardedMeridianPolicyContext = {
+    network,
+    owner: (payment.agentWallet ?? payment.payer) as Address,
+    facilitator: requirements.payTo as Address,
+    seller: payment.publisherAddress as Address,
+    amount: BigInt(requirements.maxAmountRequired),
+    serviceId: payment.requestHash as Hex,
+    settlementId: payment.external.settlementId as Hex,
+    resource: payment.external.serviceUrl,
+    units: BigInt(payment.units || 1)
+  };
+  const runtime = botchainPolicyRuntime(network);
+  try {
+    const hashes = payment.status === "failed"
+      ? dependencies.cancelAccounting
+        ? await dependencies.cancelAccounting(context)
+        : await cancelBotPolicySpend(context)
+      : dependencies.recordAccounting
+        ? await dependencies.recordAccounting(context)
+        : await recordBotPolicyAndReputation(context);
+    await updatePaymentById((candidate) => candidate.id === payment.id, (candidate) => {
+      const external = candidate.external;
+      if (!external) return candidate;
+      candidate.external = {
+        ...external,
+        accountingStatus: "recorded",
+        accountingTxHashes: [...(candidate.external?.accountingTxHashes ?? []), ...hashes],
+        accountingAttempts: (candidate.external?.accountingAttempts ?? 0) + 1,
+        lastAccountingError: null,
+        reservationStatus: payment.status === "failed" ? "cancelled" : runtime.reservationsEnabled ? "finalized" : "legacy"
+      };
+      return candidate;
+    });
+    return true;
+  } catch (error) {
+    await updatePaymentById((candidate) => candidate.id === payment.id, (candidate) => {
+      const external = candidate.external;
+      if (!external) return candidate;
+      candidate.external = {
+        ...external,
+        accountingStatus: "pending",
+        accountingAttempts: (candidate.external?.accountingAttempts ?? 0) + 1,
+        lastAccountingError: error instanceof Error ? error.message : "BOT policy accounting failed"
+      };
+      return candidate;
+    });
+    return false;
+  }
+}
+
+export async function reconcilePendingMeridianAccounting(input: {network?: MeridianNetwork; owner?: string} = {}) {
+  const store = await readStore();
+  const pending = store.payments.filter((payment) => (
+    payment.external?.provider === "meridian"
+    && payment.external.accountingStatus === "pending"
+    && (!input.network || payment.external.network === input.network)
+    && (!input.owner || payment.agentWallet?.toLowerCase() === input.owner.toLowerCase())
+  ));
+  let reconciled = 0;
+  for (const payment of pending) {
+    if (await reconcileMeridianPaymentRecord(payment)) reconciled += 1;
+  }
+  return {attempted: pending.length, reconciled};
+}
+
+function roundUsdc(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 function safeMeridianErrorReason(reason: string | null, status: number) {

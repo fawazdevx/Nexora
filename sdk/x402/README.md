@@ -1,10 +1,12 @@
 # `@nexorafi/x402`
 
-`@nexorafi/x402` v0.3 adds Nexora payment requirements and middleware to Express and Next.js APIs. It supports x402 v1 and v2, USDC settlement on Arc, Base, and Arbitrum, and policy-guarded Permit2/USDT settlement on BOT Chain Testnet through Meridian.
+`@nexorafi/x402` adds Nexora payment requirements and middleware to Express and Next.js APIs. It supports x402 v1 and v2, USDC settlement on Arc, Base, and Arbitrum, and policy-guarded Permit2/USDT settlement on BOT Chain through Meridian.
 
 The package also exposes Circle Agent Stack helpers for creating Nexora-controlled payment intents, checking approval, and submitting an externally executed payment for onchain receipt verification.
 
 > Network types describe protocol compatibility. A route is live only when its chain contracts, token, RPC, facilitator, and application configuration are deployed and verified.
+
+> npm v0.3 is the current published release. This source tree is v0.4.0 and prepares BOT Chain mainnet, Meridian Marketplace attribution, and mainnet constants. Publish v0.4.0 before using `@0.4` in an installation command.
 
 ## Install
 
@@ -29,7 +31,7 @@ type X402Network =
   | `eip155:${number}`;
 ```
 
-x402 v2 challenges use CAIP-2 network IDs. V1 challenges preserve readable aliases for compatibility. Nexora currently enables BOT only on `bot-chain-testnet`; BOT mainnet remains disabled until its policy, reputation, relayer, and settlement configuration are separately deployed and tested.
+x402 v2 challenges use CAIP-2 network IDs. V1 challenges preserve readable aliases for compatibility. Applications must enable `bot-chain` only after they configure separate mainnet policy, reputation, relayer, seller, treasury, and settlement values.
 
 ## Express
 
@@ -131,7 +133,7 @@ POST /api/x402/facilitator-settle
 
 `/api/x402/facilitator-settle` is intentionally separate from Nexora Marketplace authorization settlement, which requires an internal authorization ID.
 
-## BOT Chain Testnet
+## BOT Chain
 
 BOT uses Permit2 because its configured USDT does not expose EIP-3009. Use the dedicated builder so `payTo` and the Permit2 witness always target Meridian's facilitator, not the seller wallet.
 
@@ -145,9 +147,11 @@ import {
 
 const requirements = createMeridianPaymentRequirements({
   facilitatorUrl: "https://api.nexora.example",
+  network: "bot-chain-testnet",
   amountAtomic: "10000",
   resource: "https://seller.example/paid-report",
-  description: "BOT Chain paid report"
+  description: "BOT Chain paid report",
+  creditedRecipient: process.env.MERIDIAN_SELLER_ADDRESS!
 });
 
 const nonce = randomPermit2Nonce();
@@ -185,6 +189,17 @@ facilitator  0x8e633dBf31adCc7D41BE3e95B7c8DD3526B5235A
 ```
 
 When this payment is routed through Nexora, the backend checks the connected EOA's BOT policy before Meridian relay. A direct Meridian request bypasses Nexora's policy, receipt, notification, and reputation layer.
+
+Mainnet uses:
+
+```text
+network      bot-chain
+chain ID     677
+USDT         0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C
+facilitator  0x8E7769D440b3460b92159Dd9C6D17302b036e2d6
+```
+
+Set `network: "bot-chain"` in both the requirements and payload builders. For Marketplace attribution, pass the seller wallet as `creditedRecipient`; the builder places it in `extra.creditedRecipient`. Configure Nexora's percentage fee in Meridian Command Centre rather than adding custom fee fields to `paymentRequirements`.
 
 ## External Circle Agent Stack flow
 
@@ -249,15 +264,13 @@ The SDK can protect paid HTTP resources used by games, SaaS products, AI agents,
 
 It does not create a complete custody ledger, refund system, payout engine, or entitlement database. Applications must authenticate users, enforce idempotency, deliver the paid resource exactly once, and reconcile each settlement with their own product ledger.
 
-## Migration from v0.2
+## Migration from v0.3 to v0.4
 
-1. Install `@nexorafi/x402@0.3`.
-2. Existing Arc v1 middleware can remain unchanged.
-3. Prefer `x402Version: 2` for new Arc, Base, and Arbitrum routes.
-4. Update clients to send `PAYMENT-SIGNATURE` and read `PAYMENT-RESPONSE` for v2.
-5. Keep v1 clients during migration; v0.3 still accepts `X-PAYMENT`.
-6. Use `createMeridianPaymentRequirements` for BOT instead of manually setting `payTo`.
-7. Use the Circle intent helpers only with an authenticated Nexora session in production.
+1. Publish and install `@nexorafi/x402@0.4`.
+2. Keep existing Arc, Base, and Arbitrum middleware unchanged.
+3. Set `network: "bot-chain"` for BOT mainnet and retain `bot-chain-testnet` for chain `968`.
+4. Add `creditedRecipient` for Meridian Marketplace seller attribution, and configure the Marketplace fee in Meridian Command Centre.
+5. Keep mainnet disabled in the application until the backend advertises it from verified configuration.
 
 Run release commands from the package directory. The parent `sdk/` directory has no `package.json`.
 
@@ -271,7 +284,7 @@ npm whoami
 npm publish --access public
 ```
 
-Run the block from the repository root. The package version must be unused on npm. Check it with `npm view @nexorafi/x402 versions --json` and increment the patch version when needed.
+Run the block from the repository root. The package version must be unused on npm. Check it with `npm view @nexorafi/x402 versions --json` before publication.
 
 ## Security checklist
 

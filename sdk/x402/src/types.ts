@@ -27,6 +27,8 @@ export const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 export const X402_EXACT_PERMIT2_PROXY = "0x402085c248EeA27D92E8b30b2C58ed07f9E20001";
 export const BOTCHAIN_TESTNET_USDT = "0x75edC9335175Fc0552D51D48439F229c10420fe3";
 export const MERIDIAN_BOTCHAIN_TESTNET_FACILITATOR = "0x8e633dBf31adCc7D41BE3e95B7c8DD3526B5235A";
+export const BOTCHAIN_MAINNET_USDT = "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
+export const MERIDIAN_BOTCHAIN_MAINNET_FACILITATOR = "0x8E7769D440b3460b92159Dd9C6D17302b036e2d6";
 export type NexoraServiceKind =
   | "website_analyzer"
   | "github_repo_analyzer"
@@ -106,6 +108,7 @@ export type PaymentRequirements = {
   extra?: {
     name?: string;
     version?: string;
+    creditedRecipient?: string;
     serviceId?: string;
     x402Version?: X402Version;
   };
@@ -193,6 +196,7 @@ export type MeridianPaymentRequirementsConfig = {
   facilitatorUrl: string;
   facilitator?: string;
   asset?: string;
+  creditedRecipient?: string;
   price?: string;
   amountAtomic?: string;
   network?: MeridianPermit2Network;

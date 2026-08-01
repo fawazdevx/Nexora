@@ -62,11 +62,173 @@ contract NexoraPolicyRegistryV2Test {
         assert(!registry.canSpendV2(AGENT, TARGET, RECIPIENT, 1e6, bytes32(0), 1));
     }
 
+    function testUnrelatedOperatorCannotClaimInactiveAgentWallet() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        vm.prank(OPERATOR);
+        try registry.configureAgentPolicy(
+            AGENT,
+            OPERATOR,
+            bytes32(0),
+            100e6,
+            20e6,
+            false,
+            false,
+            true,
+            new address[](0),
+            new address[](0)
+        ) {
+            revert("AGENT_WALLET_CLAIM_SUCCEEDED");
+        } catch {}
+
+        assert(!registry.isAgentActive(AGENT));
+    }
+
+    function testAgentWalletCanAuthorizeItsOwnOperator() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        vm.prank(AGENT);
+        registry.configureAgentPolicy(
+            AGENT,
+            OPERATOR,
+            bytes32(0),
+            100e6,
+            20e6,
+            false,
+            false,
+            true,
+            new address[](0),
+            new address[](0)
+        );
+
+        (address operator,, bool active) = registry.agentProfiles(AGENT);
+        assert(operator == OPERATOR);
+        assert(active);
+    }
+
+    function testReservationPreventsConcurrentLimitOverspendAndFinalizesOnce() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        configureBasePolicy(registry);
+        registry.setPolicy(AGENT, 20e6, 20e6, true, true, true);
+        bytes32 first = keccak256("settlement:first");
+        bytes32 second = keccak256("settlement:second");
+        vm.warp(10_000);
+
+        vm.prank(FACILITATOR);
+        registry.reserveSpendV2(first, AGENT, TARGET, RECIPIENT, 15e6, SERVICE_ID, 1, 10_300);
+        assert(!registry.canSpendV2(AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1));
+
+        vm.prank(FACILITATOR);
+        try registry.reserveSpendV2(second, AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1, 10_300) {
+            revert("CONCURRENT_RESERVATION_SUCCEEDED");
+        } catch {}
+
+        vm.prank(FACILITATOR);
+        registry.finalizeSpendV2(first);
+        vm.prank(FACILITATOR);
+        registry.finalizeSpendV2(first);
+
+        uint256 day = block.timestamp / 1 days;
+        assert(registry.dailySpend(AGENT, day) == 15e6);
+        assert(registry.reservedDailySpend(AGENT, day) == 0);
+    }
+
+    function testExpiredReservationCanBeReleased() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        configureBasePolicy(registry);
+        bytes32 settlementId = keccak256("settlement:expired");
+        vm.warp(20_000);
+
+        vm.prank(FACILITATOR);
+        registry.reserveSpendV2(settlementId, AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1, 20_100);
+        vm.warp(20_101);
+        registry.releaseExpiredSpendReservation(settlementId);
+
+        assert(registry.canSpendV2(AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1));
+    }
+
+    function testPendingReservationCanBeFinalizedAfterExpiry() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        configureBasePolicy(registry);
+        bytes32 settlementId = keccak256("settlement:late-finalization");
+        uint256 reservedAt = 30_000;
+        vm.warp(reservedAt);
+
+        vm.prank(FACILITATOR);
+        registry.reserveSpendV2(settlementId, AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1, 30_100);
+        vm.warp(30_101);
+        vm.prank(FACILITATOR);
+        registry.finalizeSpendV2(settlementId);
+
+        uint256 day = reservedAt / 1 days;
+        assert(registry.dailySpend(AGENT, day) == 10e6);
+        assert(registry.reservedDailySpend(AGENT, day) == 0);
+        (, , , , , , , , , , uint8 status) = registry.spendReservations(settlementId);
+        assert(status == 2);
+    }
+
+    function testReleasedExpiredReservationCanStillRecordConfirmedSettlement() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        configureBasePolicy(registry);
+        bytes32 settlementId = keccak256("settlement:released-before-reconciliation");
+        uint256 reservedAt = 40_000;
+        vm.warp(reservedAt);
+
+        vm.prank(FACILITATOR);
+        registry.reserveSpendV2(settlementId, AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1, 40_100);
+        vm.warp(40_101);
+        registry.releaseExpiredSpendReservation(settlementId);
+        vm.prank(FACILITATOR);
+        registry.finalizeSpendV2(settlementId);
+
+        uint256 day = reservedAt / 1 days;
+        assert(registry.dailySpend(AGENT, day) == 10e6);
+        assert(registry.reservedDailySpend(AGENT, day) == 0);
+        (, , , , , , , , , , uint8 status) = registry.spendReservations(settlementId);
+        assert(status == 2);
+    }
+
+    function testReleasedExpiredReservationIsAlreadyCancelledForFailedSettlement() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        configureBasePolicy(registry);
+        bytes32 settlementId = keccak256("settlement:expired-failure");
+        vm.warp(45_000);
+
+        vm.prank(FACILITATOR);
+        registry.reserveSpendV2(settlementId, AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1, 45_100);
+        vm.warp(45_101);
+        registry.releaseExpiredSpendReservation(settlementId);
+        vm.prank(FACILITATOR);
+        registry.cancelSpendReservation(settlementId);
+
+        (, , , , , , , , , , uint8 status) = registry.spendReservations(settlementId);
+        assert(status == 4);
+    }
+
+    function testCancelledReservationCannotBeFinalized() external {
+        NexoraPolicyRegistry registry = newRegistry();
+        configureBasePolicy(registry);
+        bytes32 settlementId = keccak256("settlement:cancelled");
+        uint256 reservedAt = 50_000;
+        vm.warp(reservedAt);
+
+        vm.prank(FACILITATOR);
+        registry.reserveSpendV2(settlementId, AGENT, TARGET, RECIPIENT, 10e6, SERVICE_ID, 1, 50_100);
+        vm.prank(FACILITATOR);
+        registry.cancelSpendReservation(settlementId);
+        vm.prank(FACILITATOR);
+        try registry.finalizeSpendV2(settlementId) {
+            revert("CANCELLED_RESERVATION_FINALIZED");
+        } catch {}
+
+        uint256 day = reservedAt / 1 days;
+        assert(registry.dailySpend(AGENT, day) == 0);
+        assert(registry.reservedDailySpend(AGENT, day) == 0);
+    }
+
     function newRegistry() internal returns (NexoraPolicyRegistry) {
         NexoraPolicyRegistry implementation = new NexoraPolicyRegistry();
         NexoraProxy proxy = new NexoraProxy(
             address(implementation),
-            abi.encodeCall(NexoraPolicyRegistry.initialize, (address(this)))
+            abi.encodeWithSignature("initialize(address)", address(this))
         );
         NexoraPolicyRegistry registry = NexoraPolicyRegistry(address(proxy));
         registry.setFacilitator(FACILITATOR, true);
