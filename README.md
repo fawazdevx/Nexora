@@ -2,7 +2,7 @@
 
 Nexora is an Arc-first financial control layer for autonomous agents and USDC applications. It combines Circle developer-controlled wallets, onchain spending policies, approval queues, x402 settlement, Gateway liquidity, receipts, notifications, reputation, escrow, and automated Save/Earn routing.
 
-Arc is the primary network. USDC-denominated gas and fast settlement support autonomous money flows. Base Sepolia and Arbitrum Sepolia extend the agent and Marketplace experience for cross-chain testing. BOT Chain uses connected EOAs with Meridian and Permit2 because Circle Agent Wallets do not support that chain.
+Arc is the primary network. USDC-denominated gas and fast settlement support autonomous money flows. Base Sepolia and Arbitrum Sepolia extend the agent and Marketplace experience for cross-chain testing.
 
 Nexora gives autonomous agents a Circle developer-controlled wallet and enforces spending rules before USDC leaves it. Agents can buy x402 APIs on Arc, route idle USDC into approved strategies, and leave receipts that an operator can audit.
 
@@ -47,10 +47,6 @@ Arc is Nexora's primary network. USDC-denominated gas keeps costs predictable, w
 - Circle Gateway balance views and cross-chain transfer preparation
 - Save/Earn automation for approved Arc vault routes
 - public receipts, notifications, reputation, revenue reporting, and escrow
-- BOT Chain mainnet configuration for chain ID `677`, gated behind an explicit backend and frontend flag
-- BOT spend reservations, failed-settlement cancellation, accounting reconciliation, and idempotent reputation
-- BOT seller attribution and a configurable Meridian Marketplace fee
-- BOT funding readiness and vCompute payment quotes
 
 The Arc testnet path provides the primary ledger-settlement demo. Circle Gateway Nanopayments expose the same six services on Arc Testnet, Base Sepolia, and Arbitrum Sepolia without requiring a separate Marketplace contract publication on each network.
 
@@ -97,14 +93,6 @@ Circle Gateway gives the operator an aggregate USDC view across supported domain
 
 Save/Earn ranks approved Arc vault routes for idle USDC. The automation reviews a position after 24 hours and reallocates funds only when policy permits a better route. Vault ranking does not guarantee yield or safety.
 
-## BOT Chain and Meridian
-
-BOT Chain payments use a connected EOA. The wallet signs a Permit2 authorization, Nexora checks policy and reserves the spend, and Meridian settles USDT.
-
-Nexora finalizes policy accounting and records reputation after Meridian returns a successful result. Failed settlements cancel the reservation. The backend retries pending accounting and exposes an admin reconciliation route.
-
-`MERIDIAN_SELLER_ADDRESS` is sent as `extra.creditedRecipient`, so Meridian can attribute and route publisher earnings correctly. Nexora's Marketplace fee defaults to `200` basis points and must be configured to the same value in Meridian Command Centre; it is not inserted into the settlement payload as a custom field. The policy relayer pays BOT gas for accounting writes and does not need USDT.
-
 ## Network support
 
 | Network | Wallet model | Asset | Status |
@@ -112,12 +100,11 @@ Nexora finalizes policy accounting and records reputation after Meridian returns
 | Arc Testnet | Circle developer-controlled wallet | USDC | Primary end-to-end demo |
 | Base Sepolia | Circle developer-controlled wallet | USDC | Gateway x402 seller and agent-wallet payment route |
 | Arbitrum Sepolia | Circle developer-controlled wallet | USDC | Gateway x402 seller and agent-wallet payment route |
-| BOT Chain Testnet | Connected EOA with Meridian Permit2 | USDT | Testnet policy and settlement route |
-| BOT Chain Mainnet | Connected EOA with Meridian Permit2 | USDT | Code-ready; disabled until mainnet contracts and operations are verified |
+| BOT Chain | Connected EOA with Meridian Permit2 | USDT | Optional integrated-chain route |
 
 ## SDK
 
-The `@nexorafi/x402` v0.3 SDK is live on npm. This repository prepares v0.4 with BOT Chain mainnet requirements, Meridian Marketplace seller attribution, and mainnet constants. The v0.4 package is not published from this repository state.
+The `@nexorafi/x402` v0.3 SDK is live on npm. This repository contains the v0.4 release work, including expanded chain requirements and Marketplace seller attribution.
 
 ```bash
 npm install @nexorafi/x402@0.3
@@ -128,9 +115,9 @@ It provides:
 - x402 v1 and v2 headers and CAIP-2 network identifiers
 - Arc, Base, and Arbitrum USDC route types
 - payment requirement, authorization, settlement, and replay types
-- Circle intent, approval, external receipt, and BOT Permit2 helpers
-- BOT Chain testnet and mainnet requirement builders
-- optional Meridian `extra.creditedRecipient` Marketplace attribution
+- Circle intent, approval, external receipt, and Permit2 helpers
+- requirement builders for supported Circle and Meridian routes
+- optional credited-recipient Marketplace attribution
 
 Developers building on supported or integrated chains can use the SDK to add paid game actions, API calls, marketplace purchases, and other metered resources. Applications manage their own authentication, player balances, entitlements, refunds, payouts, and internal ledger.
 
@@ -173,25 +160,7 @@ VITE_NEXORA_API_URL=http://localhost:4000 npm run dev -- --port 5173
 
 Open `http://localhost:5173`. Circle-backed wallet operations require server credentials from a Circle developer account. Copy the package `.env.example` files into ignored local env files, or configure the same names in your production secret manager.
 
-The Gateway seller defaults to testnet. It requires a public seller wallet address through `NEXORA_MARKETPLACE_PUBLISHER_ADDRESS`. Set `NEXORA_PUBLIC_API_URL` to the trusted public backend origin when managed agent wallets buy Nexora services. `NEXORA_CIRCLE_GATEWAY_SELLER_MODE=mainnet` does not activate mainnet by itself; `NEXORA_ENABLE_AGENT_MAINNETS=true` is also required. Keep Circle API credentials, entity secrets, database URLs, and wallet keys out of Git.
-
-`.nexora-data/store.json` is an ignored local fallback for mutable development state. It is not the Marketplace catalog and must not be committed. Hosted deployments should use persistent storage through `DATABASE_URL`.
-
-## BOT Chain deployment and upgrades
-
-The BOT deployment creates policy and reputation proxies. Meridian remains the payment facilitator, so Nexora does not deploy a BOT Marketplace ledger.
-
-The hardened policy implementation affects existing Arc, Base, and Arbitrum policy proxies that use the shared implementation. Keep each proxy address and upgrade its implementation. Existing policy storage remains at the proxy address.
-
-`OWNER_ADDRESS` can be a Safe or another multisig for a fresh BOT deployment. The deployment initializer grants the separate policy relayer its required roles without requiring the owner to broadcast the deployment.
-
-See [BOT Chain mainnet operations](docs/botchain-mainnet.md) for:
-
-- the simulation and broadcast commands;
-- backend and frontend environment placement;
-- wallet funding roles;
-- Safe ownership and terminal upgrade calldata;
-- the Arc, Base, and Arbitrum proxy upgrade process.
+Keep Circle API credentials, entity secrets, database URLs, and wallet keys out of Git.
 
 ## Verification
 
@@ -214,7 +183,7 @@ See the [application payment architecture](docs/application-payments.md) and [ga
 
 ## Security
 
-Nexora rejects unsupported chains, assets, recipients, wallet routes, expired authorizations, mismatched amounts, reverted receipts, policy violations, and replayed payment identifiers. The policy registry now requires a new wallet to register itself or use the registry owner. Circle-controlled wallets perform that first transaction through Circle before the operator manages later updates.
+Nexora rejects unsupported chains, assets, recipients, wallet routes, expired authorizations, mismatched amounts, reverted receipts, policy violations, and replayed payment identifiers.
 
 Production use requires an independent contract audit, application penetration testing, operational monitoring, and application-specific accounting controls.
 
