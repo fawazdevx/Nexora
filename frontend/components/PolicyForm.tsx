@@ -291,7 +291,8 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       const policyAgent = isBotPolicy
         ? await apiPost<AppSnapshot["agents"][number]>("/api/agents/external-eoa", {
             operatorAddress: address,
-            chainId: selectedChainId
+            chainId: selectedChainId,
+            policyRegistry: chainContracts.policyRegistry
           })
         : selectedAgent;
       const registration = !isBotPolicy && selectedChainWallet?.address

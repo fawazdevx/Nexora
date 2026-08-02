@@ -14,18 +14,21 @@ An autonomous wallet can sign transactions, but an operator still needs transact
 
 Nexora puts those controls in one payment layer. The operator defines policy, the agent requests a payment, and Nexora checks the request before the selected Circle wallet settles it.
 
-## Arc and Circle
+## Arc and Circle products
 
 Arc is Nexora's primary network. USDC-denominated gas keeps costs predictable, while fast finality suits agent payments and paid API calls.
 
-| Component | Role in Nexora |
+| Circle product or infrastructure | Use in Nexora |
 | --- | --- |
-| Arc | Primary chain for policy-controlled USDC payments and the hackathon demo |
-| Circle Developer-Controlled Wallets | Create and operate wallets for autonomous agents |
-| USDC | Payment asset and Arc gas token |
-| Circle Gateway | Show unified USDC liquidity and prepare cross-chain transfers |
-| x402 | Price API requests and bind payment authorization to each request |
-| Circle Agent Stack patterns | Support approval, managed execution, and external payment verification |
+| Arc Testnet | Primary chain for policy-controlled payments, receipts, reputation, and the hackathon demo |
+| USDC | Agent payment asset and Arc gas token |
+| Circle Developer-Controlled Wallets | Create and operate chain-specific wallets for autonomous agents |
+| Circle Gateway | Query unified USDC balances and prepare cross-chain transfers across Arc, Base, and Arbitrum testnets |
+| Circle Gateway Nanopayments | Protect Nexora's paid API endpoints with HTTP `402` payment requirements and settlement receipts |
+| Circle x402 batching middleware | Build and verify Gateway payment requirements for Nexora-owned services |
+| Circle Agent Marketplace interfaces | Search, inspect, guard, and pay compatible x402 services through Circle discovery and CLI integrations |
+
+Nexora implements x402 v1 and v2 as the payment protocol around these Circle products. It does not currently use CCTP, Circle Smart Contract Platform, or Circle Modular Wallets.
 
 ## End-to-end demo
 

@@ -30,8 +30,8 @@ frontend/.env.arbitrum-one
 frontend/.env.example
 backend/.env.arbitrum-sepolia
 backend/.env.arbitrum-one
-backend/.env.example
 backend/.env.base-sepolia
+backend/.env.example
 contracts/.env.arbitrum-sepolia
 contracts/.env.arbitrum-one
 contracts/.env.base-sepolia

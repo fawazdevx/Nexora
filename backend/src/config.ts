@@ -10,12 +10,12 @@ export const config = {
   redisUrl: process.env.REDIS_URL ?? "",
   arc: {
     rpcUrl: process.env.ARC_RPC_URL ?? "https://rpc.testnet.arc.network",
-    chainId: Number(process.env.ARC_CHAIN_ID ?? 5042002),
+    chainId: normalizeChainId(process.env.ARC_CHAIN_ID, 5042002),
     explorerUrl: process.env.ARC_EXPLORER_URL ?? "https://testnet.arcscan.app"
   },
   arbitrum: {
     sepoliaRpcUrl: process.env.ARB_SEPOLIA_RPC_URL ?? process.env.ARBITRUM_SEPOLIA_RPC_URL ?? "https://sepolia-rollup.arbitrum.io/rpc",
-    sepoliaChainId: Number(process.env.ARB_SEPOLIA_CHAIN_ID ?? 421614),
+    sepoliaChainId: normalizeChainId(process.env.ARB_SEPOLIA_CHAIN_ID, 421614),
     sepoliaExplorerUrl: process.env.ARB_SEPOLIA_EXPLORER_URL ?? "https://sepolia.arbiscan.io",
     sepoliaUsdc: process.env.ARB_SEPOLIA_USDC_ADDRESS ?? "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
     sepoliaPolicyRegistry: process.env.ARB_SEPOLIA_POLICY_REGISTRY_ADDRESS ?? "",
@@ -25,14 +25,14 @@ export const config = {
     sepoliaSaveEarnVault: process.env.ARB_SEPOLIA_SAVE_EARN_VAULT_ADDRESS ?? "",
     sepoliaEscrow: process.env.ARB_SEPOLIA_NEXORA_ESCROW_ADDRESS ?? "",
     oneRpcUrl: process.env.ARB_ONE_RPC_URL ?? process.env.ARBITRUM_ONE_RPC_URL ?? "https://arb1.arbitrum.io/rpc",
-    oneChainId: Number(process.env.ARB_ONE_CHAIN_ID ?? 42161),
+    oneChainId: normalizeChainId(process.env.ARB_ONE_CHAIN_ID, 42161),
     oneExplorerUrl: process.env.ARB_ONE_EXPLORER_URL ?? "https://arbiscan.io",
     oneUsdc: process.env.ARB_ONE_USDC_ADDRESS ?? "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
     oneX402Ledger: process.env.ARB_ONE_X402_LEDGER_ADDRESS ?? ""
   },
   base: {
     sepoliaRpcUrl: process.env.BASE_SEPOLIA_RPC_URL ?? "https://base-sepolia-rpc.publicnode.com",
-    sepoliaChainId: Number(process.env.BASE_SEPOLIA_CHAIN_ID ?? 84532),
+    sepoliaChainId: normalizeChainId(process.env.BASE_SEPOLIA_CHAIN_ID, 84532),
     sepoliaExplorerUrl: process.env.BASE_SEPOLIA_EXPLORER_URL ?? "https://sepolia.basescan.org",
     sepoliaUsdc: process.env.BASE_SEPOLIA_USDC_ADDRESS ?? "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     sepoliaPolicyRegistry: process.env.BASE_SEPOLIA_POLICY_REGISTRY_ADDRESS ?? "",
@@ -42,7 +42,7 @@ export const config = {
     sepoliaSaveEarnVault: process.env.BASE_SEPOLIA_SAVE_EARN_VAULT_ADDRESS ?? "",
     sepoliaEscrow: process.env.BASE_SEPOLIA_NEXORA_ESCROW_ADDRESS ?? "",
     mainnetRpcUrl: process.env.BASE_MAINNET_RPC_URL ?? process.env.BASE_RPC_URL ?? "https://mainnet.base.org",
-    mainnetChainId: Number(process.env.BASE_MAINNET_CHAIN_ID ?? 8453),
+    mainnetChainId: normalizeChainId(process.env.BASE_MAINNET_CHAIN_ID, 8453),
     mainnetExplorerUrl: process.env.BASE_MAINNET_EXPLORER_URL ?? "https://basescan.org",
     mainnetUsdc: process.env.BASE_MAINNET_USDC_ADDRESS ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     mainnetX402Ledger: process.env.BASE_MAINNET_X402_LEDGER_ADDRESS ?? ""
@@ -65,14 +65,14 @@ export const config = {
   // Nexora self-submitting like on Arc. Testnet-first per rollout plan.
   botchain: {
     testnetRpcUrl: process.env.BOTCHAIN_TESTNET_RPC_URL ?? "https://rpc.bohr.life",
-    testnetChainId: Number(process.env.BOTCHAIN_TESTNET_CHAIN_ID ?? 968),
+    testnetChainId: normalizeChainId(process.env.BOTCHAIN_TESTNET_CHAIN_ID, 968),
     testnetExplorerUrl: process.env.BOTCHAIN_TESTNET_EXPLORER_URL ?? "",
     // Meridian's default testnet payment token (USDT). NOTE: token decimals are
     // NOT assumed — Meridian's docs warn against hardcoding 6. `tokenDecimals`
     // is overridable and should be confirmed on-chain (decimals()) before use.
     testnetUsdt: process.env.BOTCHAIN_TESTNET_USDT_ADDRESS ?? "0x75edC9335175Fc0552D51D48439F229c10420fe3",
     mainnetRpcUrl: process.env.BOTCHAIN_MAINNET_RPC_URL ?? "https://rpc.botchain.ai",
-    mainnetChainId: Number(process.env.BOTCHAIN_MAINNET_CHAIN_ID ?? 677),
+    mainnetChainId: normalizeChainId(process.env.BOTCHAIN_MAINNET_CHAIN_ID, 677),
     mainnetExplorerUrl: process.env.BOTCHAIN_MAINNET_EXPLORER_URL ?? "",
     mainnetUsdt: process.env.BOTCHAIN_MAINNET_USDT_ADDRESS ?? "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C",
     tokenDecimals: Number(process.env.BOTCHAIN_USDT_DECIMALS ?? 6),
@@ -255,6 +255,10 @@ function normalizeBoundedInteger(value: string | undefined, fallback: number, mi
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) return fallback;
   return parsed;
+}
+
+function normalizeChainId(value: string | undefined, fallback: number) {
+  return normalizeBoundedInteger(value, fallback, 1, 4_294_967_295);
 }
 
 function normalizeCircleGatewaySellerMode(value: string | undefined): "testnet" | "mainnet" {

@@ -11,6 +11,7 @@ const MAX_BODY_BYTES = 256_000;
 const MAX_TEXT_LENGTH = 5_000;
 const MAX_URL_LENGTH = 2_048;
 const MAX_USDC_AMOUNT = 1_000_000;
+const MAX_EVM_CHAIN_ID = 4_294_967_295;
 const nonceTtlMs = 5 * 60 * 1000;
 const nonces = new Map<string, {address: string; expiresAt: number}>();
 
@@ -165,8 +166,17 @@ export function optionalBps(value: unknown, fallback: number, max: number) {
 
 export function requiredPositiveInteger(value: unknown, label: string, max = 10_000) {
   const numberValue = typeof value === "number" ? value : Number(value);
-  if (!Number.isInteger(numberValue) || numberValue <= 0 || numberValue > max) throw new Error(`${label} must be a positive integer`);
+  if (!Number.isSafeInteger(numberValue) || numberValue <= 0 || numberValue > max) throw new Error(`${label} must be a positive integer`);
   return numberValue;
+}
+
+export function requiredChainId(value: unknown, label = "chainId") {
+  return requiredPositiveInteger(value, label, MAX_EVM_CHAIN_ID);
+}
+
+export function optionalChainId(value: unknown, label = "chainId") {
+  if (value === undefined || value === null || value === "") return undefined;
+  return requiredChainId(value, label);
 }
 
 export function addressArray(value: unknown, label: string, max = 25) {

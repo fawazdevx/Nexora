@@ -1,8 +1,14 @@
 import {ARCNames} from "@arcnames/sdk";
 import {ANS_REGISTRY_ADDRESSES} from "@arcnames/sdk/constants";
 
+function envChainId(value: string | undefined, fallback: number) {
+  if (!value?.trim()) return fallback;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 4_294_967_295 ? parsed : fallback;
+}
+
 export const arcTestnet = {
-  id: Number(import.meta.env.VITE_ARC_CHAIN_ID ?? 5042002),
+  id: envChainId(import.meta.env.VITE_ARC_CHAIN_ID, 5042002),
   name: import.meta.env.VITE_CHAIN_NAME ?? "Arc Testnet",
   rpcUrl: import.meta.env.VITE_ARC_RPC_URL ?? "https://rpc.testnet.arc.network",
   explorerUrl: import.meta.env.VITE_ARC_EXPLORER_URL ?? "https://testnet.arcscan.app",
@@ -30,7 +36,7 @@ export const arcTestnetWagmiChain = {
 } as const;
 
 export const arbitrumSepoliaWagmiChain = {
-  id: 421614,
+  id: envChainId(import.meta.env.VITE_ARB_SEPOLIA_CHAIN_ID, 421614),
   name: "Arbitrum Sepolia",
   nativeCurrency: {name: "Ether", symbol: "ETH", decimals: 18},
   rpcUrls: {
@@ -43,7 +49,7 @@ export const arbitrumSepoliaWagmiChain = {
 } as const;
 
 export const baseSepoliaWagmiChain = {
-  id: 84532,
+  id: envChainId(import.meta.env.VITE_BASE_SEPOLIA_CHAIN_ID, 84532),
   name: "Base Sepolia",
   nativeCurrency: {name: "Ether", symbol: "ETH", decimals: 18},
   rpcUrls: {
@@ -71,7 +77,7 @@ export const arbitrumOneWagmiChain = {
 // BOT Chain testnet. x402 payments here settle via Permit2 through Meridian's
 // facilitator (USDT has no EIP-3009), not Nexora's Arc self-settle path.
 export const botChainTestnetWagmiChain = {
-  id: Number(import.meta.env.VITE_BOTCHAIN_TESTNET_CHAIN_ID ?? 968),
+  id: envChainId(import.meta.env.VITE_BOTCHAIN_TESTNET_CHAIN_ID, 968),
   name: "BOT Chain Testnet",
   nativeCurrency: {name: "BOT", symbol: "tBOT", decimals: 18},
   rpcUrls: {
@@ -84,7 +90,7 @@ export const botChainTestnetWagmiChain = {
 } as const;
 
 export const botChainMainnetWagmiChain = {
-  id: Number(import.meta.env.VITE_BOTCHAIN_MAINNET_CHAIN_ID ?? 677),
+  id: envChainId(import.meta.env.VITE_BOTCHAIN_MAINNET_CHAIN_ID, 677),
   name: "BOT Chain",
   nativeCurrency: {name: "BOT", symbol: "BOT", decimals: 18},
   rpcUrls: {

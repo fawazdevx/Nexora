@@ -1,7 +1,7 @@
 import {config} from "./config.js";
 
 export type NexoraChainContext = {
-  key: "arc-testnet" | "base-sepolia" | "arbitrum-sepolia" | "base" | "arbitrum";
+  key: "arc-testnet" | "base-sepolia" | "arbitrum-sepolia" | "base" | "arbitrum" | "bot-chain-testnet" | "bot-chain";
   chainId: number;
   label: string;
   rpcUrl: string;
@@ -9,7 +9,7 @@ export type NexoraChainContext = {
   usdc: string;
   policyRegistry: string;
   x402Ledger: string;
-  circleBlockchain: "ARC-TESTNET" | "BASE-SEPOLIA" | "ARB-SEPOLIA" | "BASE" | "ARB";
+  circleBlockchain: "ARC-TESTNET" | "BASE-SEPOLIA" | "ARB-SEPOLIA" | "BASE" | "ARB" | "EXTERNAL-EVM";
   nativeCurrency: {
     name: string;
     symbol: string;
@@ -19,8 +19,13 @@ export type NexoraChainContext = {
   gatewayDomain?: number;
 };
 
-export function agentChainContexts(): NexoraChainContext[] {
-  const contexts: NexoraChainContext[] = [
+export type NexoraCircleChainContext = NexoraChainContext & {
+  key: "arc-testnet" | "base-sepolia" | "arbitrum-sepolia" | "base" | "arbitrum";
+  circleBlockchain: "ARC-TESTNET" | "BASE-SEPOLIA" | "ARB-SEPOLIA" | "BASE" | "ARB";
+};
+
+export function agentChainContexts(): NexoraCircleChainContext[] {
+  const contexts: NexoraCircleChainContext[] = [
     {
       key: "arc-testnet",
       chainId: config.arc.chainId,
@@ -99,9 +104,46 @@ export function agentChainContexts(): NexoraChainContext[] {
   return contexts;
 }
 
+export function nexoraChainContexts(): NexoraChainContext[] {
+  const contexts: NexoraChainContext[] = [
+    ...agentChainContexts(),
+    {
+      key: "bot-chain-testnet",
+      chainId: config.botchain.testnetChainId,
+      label: "BOT Chain Testnet",
+      rpcUrl: config.botchain.testnetRpcUrl,
+      explorerUrl: config.botchain.testnetExplorerUrl,
+      usdc: config.botchain.testnetUsdt,
+      policyRegistry: config.botchain.testnetPolicyRegistry,
+      x402Ledger: "",
+      circleBlockchain: "EXTERNAL-EVM",
+      nativeCurrency: {name: "BOT", symbol: "tBOT", decimals: 18},
+      testnet: true
+    }
+  ];
+
+  if (config.botchain.mainnetEnabled) {
+    contexts.push({
+      key: "bot-chain",
+      chainId: config.botchain.mainnetChainId,
+      label: "BOT Chain",
+      rpcUrl: config.botchain.mainnetRpcUrl,
+      explorerUrl: config.botchain.mainnetExplorerUrl,
+      usdc: config.botchain.mainnetUsdt,
+      policyRegistry: config.botchain.mainnetPolicyRegistry,
+      x402Ledger: "",
+      circleBlockchain: "EXTERNAL-EVM",
+      nativeCurrency: {name: "BOT", symbol: "BOT", decimals: 18},
+      testnet: false
+    });
+  }
+
+  return contexts;
+}
+
 export function chainContext(chainId?: number | null) {
   const resolvedId = chainId ?? config.arc.chainId;
-  const context = agentChainContexts().find((item) => item.chainId === resolvedId);
+  const context = nexoraChainContexts().find((item) => item.chainId === resolvedId);
   if (!context) throw new Error(`Chain ${resolvedId} is not enabled for Nexora agents.`);
   return context;
 }

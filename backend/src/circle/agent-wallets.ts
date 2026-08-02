@@ -1,7 +1,7 @@
 import {Blockchain, initiateDeveloperControlledWalletsClient, type AccountType, type EvmBlockchain} from "@circle-fin/developer-controlled-wallets";
 import {createHash} from "node:crypto";
 import {createPublicClient, encodeFunctionData, formatUnits, http, isAddress, keccak256, parseAbi, parseEventLogs, parseUnits, stringToHex} from "viem";
-import {agentChainContexts, chainContext, type NexoraChainContext} from "../chains.js";
+import {agentChainContexts, chainContext, type NexoraChainContext, type NexoraCircleChainContext} from "../chains.js";
 import {config} from "../config.js";
 import {ARC_MEMO_CONTRACT, arcMemoAbi, normalizeMemo, publicMemoData, type NexoraStructuredMemo} from "../memos.js";
 import {dispatchNotification} from "../notifications.js";
@@ -227,14 +227,21 @@ export async function createAgentWallet(input: CreateAgentWalletInput) {
  * Circle Agent Wallets do not support BOT; payment signing remains in the
  * user's wallet and settlement remains with Meridian.
  */
-export async function upsertExternalPolicyWallet(input: {operatorAddress: string; chainId: number}) {
+export async function upsertExternalPolicyWallet(input: {operatorAddress: string; chainId: number; policyRegistry?: string}) {
   if (!isAddress(input.operatorAddress)) throw new Error("operatorAddress is invalid");
-  const isTestnet = input.chainId === config.botchain.testnetChainId;
-  const isEnabledMainnet = input.chainId === config.botchain.mainnetChainId && config.botchain.mainnetEnabled;
-  if (!isTestnet && !isEnabledMainnet) {
+  const isBotTestnet = input.chainId === config.botchain.testnetChainId;
+  const isBotMainnet = input.chainId === config.botchain.mainnetChainId && config.botchain.mainnetEnabled;
+  if (!isBotTestnet && !isBotMainnet) {
     const error = new Error("External EOA policy profiles are not enabled for this BOT Chain network.");
     (error as Error & {status?: number}).status = 400;
     throw error;
+  }
+  const context = chainContext(input.chainId);
+  if (!isAddress(context.policyRegistry)) {
+    throw new Error(`Nexora policy registry is not configured on ${context.label}`);
+  }
+  if (input.policyRegistry && input.policyRegistry.toLowerCase() !== context.policyRegistry.toLowerCase()) {
+    throw new Error(`The requested policy registry does not match Nexora's configured proxy on ${context.label}`);
   }
 
   const normalizedAddress = input.operatorAddress.toLowerCase();
@@ -262,7 +269,7 @@ export async function upsertExternalPolicyWallet(input: {operatorAddress: string
       settlementMode: null,
       chainWallets: [{
         chainId: input.chainId,
-        chain: isTestnet ? "BOT Chain Testnet" : "BOT Chain",
+        chain: context.label,
         circleBlockchain: "EXTERNAL-EVM",
         address: input.operatorAddress,
         circleWalletId: null,
@@ -887,8 +894,8 @@ function circleClient() {
   });
 }
 
-function circleBlockchain(context: NexoraChainContext): EvmBlockchain {
-  const values: Record<NexoraChainContext["circleBlockchain"], EvmBlockchain> = {
+function circleBlockchain(context: NexoraCircleChainContext): EvmBlockchain {
+  const values: Record<NexoraCircleChainContext["circleBlockchain"], EvmBlockchain> = {
     "ARC-TESTNET": Blockchain.ArcTestnet,
     "BASE-SEPOLIA": Blockchain.BaseSepolia,
     "ARB-SEPOLIA": Blockchain.ArbSepolia,

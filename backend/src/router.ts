@@ -27,10 +27,12 @@ import {
   issueAuthNonce,
   nonNegativeUsdcAmount,
   optionalBps,
+  optionalChainId,
   optionalLimitedString,
   optionalTxHash,
   requiredAddress,
   requiredBytes32,
+  requiredChainId,
   requiredLimitedString,
   requiredPositiveInteger,
   requiredTxHash,
@@ -297,7 +299,10 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       assertTokenAddress(auth, operatorAddress, "operatorAddress");
       return ok(await upsertExternalPolicyWallet({
         operatorAddress,
-        chainId: requiredPositiveInteger(body.chainId, "chainId")
+        chainId: requiredChainId(body.chainId),
+        policyRegistry: body.policyRegistry === undefined || body.policyRegistry === null || body.policyRegistry === ""
+          ? undefined
+          : requiredAddress(body.policyRegistry, "policyRegistry")
       }));
     }
 
@@ -314,7 +319,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       assertTokenAddress(auth, operatorAddress, "operatorAddress");
       return ok(await ensureCircleAgentPolicyRegistration(agentId, {
         operatorAddress,
-        chainId: requiredPositiveInteger(body.chainId, "chainId"),
+        chainId: requiredChainId(body.chainId),
         policyRegistry: optionalLimitedString(body.policyRegistry, "policyRegistry", 80),
         dailyLimitUsdc: requiredUsdcAmount(body.dailyLimitUsdc, "dailyLimitUsdc"),
         transactionCapUsdc: requiredUsdcAmount(body.transactionCapUsdc, "transactionCapUsdc"),
@@ -330,7 +335,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       assertTokenAddress(auth, operatorAddress, "operatorAddress");
       return ok(await updateAgentPolicy(agentId, {
         operatorAddress,
-        chainId: optionalNumber(body.chainId),
+        chainId: optionalChainId(body.chainId),
         dailyLimitUsdc: requiredUsdcAmount(body.dailyLimitUsdc, "dailyLimitUsdc"),
         transactionCapUsdc: requiredUsdcAmount(body.transactionCapUsdc, "transactionCapUsdc"),
         contractAllowlist: addressArray(body.contractAllowlist, "contractAllowlist"),
