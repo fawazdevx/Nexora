@@ -93,6 +93,17 @@ create table if not exists payment_intents (
 create index if not exists payment_intents_operator
   on payment_intents (operator_address, created_at desc);
 
+create table if not exists notification_channel_bindings (
+  store_key text not null,
+  channel text not null check (channel in ('email', 'telegram')),
+  normalized_target text not null,
+  operator_address text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (store_key, channel, normalized_target),
+  unique (store_key, operator_address, channel)
+);
+
 create table if not exists earn_opportunities (
   id uuid primary key,
   title text not null,

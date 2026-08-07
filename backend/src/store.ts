@@ -1444,11 +1444,29 @@ export async function updateNotificationPreferences(input: {
     const lower = input.operatorAddress.toLowerCase();
     const current = preferencesForOperator(store, input.operatorAddress);
     const now = new Date().toISOString();
+    const email = input.email === undefined ? current.email : normalizeNotificationEmail(input.email);
+    const telegram = input.telegram === undefined ? current.telegram : normalizeTelegramChatId(input.telegram);
+    if (telegram && telegram !== current.telegram) {
+      throw notificationBindingError(
+        "Telegram accounts must be connected through the Nexora bot link flow.",
+        400
+      );
+    }
+    assertNotificationBindingAvailable(store, {
+      operatorAddress: input.operatorAddress,
+      channel: "email",
+      target: email
+    });
+    assertNotificationBindingAvailable(store, {
+      operatorAddress: input.operatorAddress,
+      channel: "telegram",
+      target: telegram
+    });
     const next = normalizeNotificationPreferences({
       ...current,
-      email: input.email === undefined ? current.email : input.email,
+      email,
       whatsapp: input.whatsapp === undefined ? current.whatsapp : input.whatsapp,
-      telegram: input.telegram === undefined ? current.telegram : input.telegram,
+      telegram,
       channels: {...current.channels, ...(input.channels ?? {})},
       events: {...current.events, ...(input.events ?? {})},
       updatedAt: now
@@ -1508,6 +1526,12 @@ export async function completeTelegramNotificationLink(input: {
     if (current.telegramLink?.expiresAt && new Date(current.telegramLink.expiresAt).getTime() < Date.now()) {
       throw new Error("Telegram link request expired. Start Telegram linking again.");
     }
+
+    assertNotificationBindingAvailable(store, {
+      operatorAddress: current.operatorAddress,
+      channel: "telegram",
+      target: input.chatId
+    });
 
     const next = normalizeNotificationPreferences({
       ...current,
@@ -1569,6 +1593,51 @@ export function preferencesForOperator(store: StoreShape, operatorAddress: strin
   };
 }
 
+function assertNotificationBindingAvailable(
+  store: StoreShape,
+  input: {
+    operatorAddress: string;
+    channel: "email" | "telegram";
+    target: string | null;
+  }
+) {
+  const target = input.channel === "email"
+    ? normalizeNotificationEmail(input.target)
+    : normalizeTelegramChatId(input.target);
+  if (!target) return;
+  const operator = input.operatorAddress.toLowerCase();
+  const conflict = store.notificationPreferences
+    .map(normalizeNotificationPreferences)
+    .find((preferences) => {
+      if (preferences.operatorAddress.toLowerCase() === operator) return false;
+      const existing = input.channel === "email" ? preferences.email : preferences.telegram;
+      return existing === target;
+    });
+  if (!conflict) return;
+  throw notificationBindingError(
+    input.channel === "email"
+      ? "This email address is already linked to another Nexora account."
+      : "This Telegram account is already linked to another Nexora account.",
+    409
+  );
+}
+
+function notificationBindingError(message: string, status: number) {
+  return Object.assign(new Error(message), {
+    name: "NotificationBindingError",
+    status,
+    code: "notification_binding_conflict"
+  });
+}
+
+function normalizeNotificationEmail(value: string | null | undefined) {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
+}
+
+function normalizeTelegramChatId(value: string | null | undefined) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 async function persist() {
   writeQueue = writeQueue.then(async () => {
     if (!cache) return;
@@ -1607,7 +1676,9 @@ function normalizeStore(value: unknown): StoreShape {
   store.indexedEvents = Array.isArray(store.indexedEvents) ? store.indexedEvents : [];
   store.indexerCursors = Array.isArray(store.indexerCursors) ? store.indexerCursors : [];
   store.paymentIntents = Array.isArray(store.paymentIntents) ? store.paymentIntents.map(normalizePaymentIntent) : [];
-  store.notificationPreferences = Array.isArray(store.notificationPreferences) ? store.notificationPreferences.map(normalizeNotificationPreferences) : [];
+  store.notificationPreferences = Array.isArray(store.notificationPreferences)
+    ? uniqueNotificationBindings(store.notificationPreferences.map(normalizeNotificationPreferences))
+    : [];
   store.notificationDeliveries = Array.isArray(store.notificationDeliveries) ? store.notificationDeliveries.map(normalizeNotificationDelivery) : [];
   store.escrowReminderRuns = Array.isArray(store.escrowReminderRuns) ? store.escrowReminderRuns.map(normalizeEscrowReminderRun) : [];
   store.approvalRequests = Array.isArray(store.approvalRequests) ? store.approvalRequests.map(normalizeApprovalRequest) : [];
@@ -1964,9 +2035,9 @@ function normalizeNotificationPreferences(value: NotificationPreferencesRecord):
     : null;
   return {
     operatorAddress,
-    email: typeof value.email === "string" && value.email.trim() ? value.email.trim().toLowerCase() : null,
+    email: normalizeNotificationEmail(value.email),
     whatsapp: typeof value.whatsapp === "string" && value.whatsapp.trim() ? value.whatsapp.trim() : null,
-    telegram: typeof value.telegram === "string" && value.telegram.trim() ? value.telegram.trim() : null,
+    telegram: normalizeTelegramChatId(value.telegram),
     telegramLink,
     channels: {
       inApp: value.channels?.inApp !== false,
@@ -1983,6 +2054,41 @@ function normalizeNotificationPreferences(value: NotificationPreferencesRecord):
     createdAt: value.createdAt ?? now,
     updatedAt: value.updatedAt ?? value.createdAt ?? now
   };
+}
+
+function uniqueNotificationBindings(preferences: NotificationPreferencesRecord[]) {
+  const emailOwners = new Map<string, string>();
+  const telegramOwners = new Map<string, string>();
+  return preferences.map((record) => {
+    const operator = record.operatorAddress.toLowerCase();
+    let email = record.email;
+    let telegram = record.telegram;
+    let telegramLink = record.telegramLink;
+    const channels = {...record.channels};
+
+    if (email) {
+      const owner = emailOwners.get(email);
+      if (owner && owner !== operator) {
+        email = null;
+        channels.email = false;
+      } else {
+        emailOwners.set(email, operator);
+      }
+    }
+
+    if (telegram) {
+      const owner = telegramOwners.get(telegram);
+      if (owner && owner !== operator) {
+        telegram = null;
+        telegramLink = null;
+        channels.telegram = false;
+      } else {
+        telegramOwners.set(telegram, operator);
+      }
+    }
+
+    return {...record, email, telegram, telegramLink, channels};
+  });
 }
 
 function normalizeNotificationDelivery(value: NotificationDeliveryRecord): NotificationDeliveryRecord {
@@ -2527,6 +2633,7 @@ async function updateDatabaseStore<T>(mutate: (store: StoreShape) => T | Promise
     store.payments = await loadPaymentsFromTable(client);
     store.paymentIntents = await loadPaymentIntentsFromTable(client);
     const result = await mutate(store);
+    await syncNotificationBindingRows(client, store.notificationPreferences);
     await client.query(
       `insert into app_store (key, value, updated_at)
        values ($1, $2::jsonb, now())
@@ -2675,6 +2782,7 @@ async function ensureDatabase() {
   if (databaseReady) return;
   await ensureStoreTable(database());
   await ensureMoneyPathTables(database());
+  await ensureNotificationBindingTable(database());
   databaseReady = true;
 }
 
@@ -2732,6 +2840,44 @@ async function ensureMoneyPathTables(client: Pool | PoolClient) {
     create index if not exists payment_intents_operator
       on payment_intents (operator_address, created_at desc)
   `);
+}
+
+async function ensureNotificationBindingTable(client: Pool | PoolClient) {
+  await client.query(`
+    create table if not exists notification_channel_bindings (
+      store_key text not null,
+      channel text not null check (channel in ('email', 'telegram')),
+      normalized_target text not null,
+      operator_address text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (store_key, channel, normalized_target),
+      unique (store_key, operator_address, channel)
+    )
+  `);
+}
+
+async function syncNotificationBindingRows(
+  client: PoolClient,
+  preferences: NotificationPreferencesRecord[]
+) {
+  const normalized = uniqueNotificationBindings(preferences.map(normalizeNotificationPreferences));
+  await client.query("delete from notification_channel_bindings where store_key = $1", [STORE_KEY]);
+  for (const record of normalized) {
+    const bindings = [
+      ["email", record.email],
+      ["telegram", record.telegram]
+    ] as const;
+    for (const [channel, target] of bindings) {
+      if (!target) continue;
+      await client.query(
+        `insert into notification_channel_bindings
+           (store_key, channel, normalized_target, operator_address, updated_at)
+         values ($1, $2, $3, $4, now())`,
+        [STORE_KEY, channel, target, record.operatorAddress.toLowerCase()]
+      );
+    }
+  }
 }
 
 function database() {

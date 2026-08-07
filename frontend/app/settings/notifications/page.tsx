@@ -208,7 +208,14 @@ export default function NotificationsPage() {
 
           <div className="mt-5 space-y-5 border-t border-white/[0.08] pt-5">
             <div className="grid gap-3 md:grid-cols-3">
-              <ContactField icon={<Mail size={17} />} label="Email" value={form.email} placeholder="you@example.com" onChange={(email) => setForm((current) => ({...current, email}))} />
+              <ContactField
+                icon={<Mail size={17} />}
+                label="Email"
+                value={form.email}
+                placeholder="you@example.com"
+                help="One email address can be linked to one Nexora operator wallet."
+                onChange={(email) => setForm((current) => ({...current, email}))}
+              />
               {whatsAppAvailable ? (
                 <ContactField
                   icon={<MessageCircle size={17} />}
@@ -423,7 +430,7 @@ function TelegramConnectField({
             </button>
           </div>
         ) : null}
-        <span className="mt-2 block text-xs leading-relaxed text-slate-500">Open the Nexora bot and send /start once to bind Telegram.</span>
+        <span className="mt-2 block text-xs leading-relaxed text-slate-500">Open the Nexora bot and send /start once. One Telegram account can be linked to one Nexora operator wallet.</span>
       </div>
     </div>
   );
