@@ -1,3 +1,4 @@
+import {timingSafeEqual} from "node:crypto";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname, resolve} from "node:path";
 import {Pool, type PoolClient} from "pg";
@@ -422,6 +423,7 @@ export type NotificationRecord = {
 export type NotificationPreferencesRecord = {
   operatorAddress: string;
   email: string | null;
+  emailVerifiedAt: string | null;
   whatsapp: string | null;
   telegram: string | null;
   telegramLink?: {
@@ -446,6 +448,17 @@ export type NotificationPreferencesRecord = {
   };
   createdAt: string;
   updatedAt: string;
+};
+
+export type EmailVerificationChallengeRecord = {
+  operatorAddress: string;
+  email: string;
+  codeHash: string;
+  attempts: number;
+  maxAttempts: number;
+  expiresAt: string;
+  lastSentAt: string;
+  createdAt: string;
 };
 
 export type NotificationDeliveryRecord = {
@@ -527,6 +540,7 @@ export type StoreShape = {
   escrowReminderRuns: EscrowReminderRunRecord[];
   notifications: NotificationRecord[];
   notificationPreferences: NotificationPreferencesRecord[];
+  emailVerificationChallenges: EmailVerificationChallengeRecord[];
   notificationDeliveries: NotificationDeliveryRecord[];
   facilitatorEvents: FacilitatorEventRecord[];
   indexedEvents: IndexedChainEventRecord[];
@@ -1446,36 +1460,219 @@ export async function updateNotificationPreferences(input: {
     const now = new Date().toISOString();
     const email = input.email === undefined ? current.email : normalizeNotificationEmail(input.email);
     const telegram = input.telegram === undefined ? current.telegram : normalizeTelegramChatId(input.telegram);
+    if (email && email !== current.email) {
+      throw notificationBindingError(
+        "Email addresses must be verified with a one-time code before they can be linked.",
+        400,
+        "email_verification_required"
+      );
+    }
     if (telegram && telegram !== current.telegram) {
       throw notificationBindingError(
         "Telegram accounts must be connected through the Nexora bot link flow.",
-        400
+        400,
+        "telegram_verification_required"
       );
     }
-    assertNotificationBindingAvailable(store, {
-      operatorAddress: input.operatorAddress,
-      channel: "email",
-      target: email
-    });
+    const emailVerifiedAt = email ? current.emailVerifiedAt : null;
     assertNotificationBindingAvailable(store, {
       operatorAddress: input.operatorAddress,
       channel: "telegram",
       target: telegram
     });
+    const channels = {...current.channels, ...(input.channels ?? {})};
+    if (!email || !emailVerifiedAt) channels.email = false;
     const next = normalizeNotificationPreferences({
       ...current,
       email,
+      emailVerifiedAt,
       whatsapp: input.whatsapp === undefined ? current.whatsapp : input.whatsapp,
       telegram,
-      channels: {...current.channels, ...(input.channels ?? {})},
+      channels,
       events: {...current.events, ...(input.events ?? {})},
       updatedAt: now
     });
+    if (!email) {
+      store.emailVerificationChallenges = store.emailVerificationChallenges.filter(
+        (challenge) => challenge.operatorAddress.toLowerCase() !== lower
+      );
+    }
     const index = store.notificationPreferences.findIndex((item) => item.operatorAddress.toLowerCase() === lower);
     if (index >= 0) store.notificationPreferences[index] = next;
     else store.notificationPreferences.push(next);
     return next;
   });
+}
+
+export async function beginEmailNotificationVerification(input: {
+  operatorAddress: string;
+  email: string;
+  codeHash: string;
+  expiresAt: string;
+  minResendIntervalMs?: number;
+  maxAttempts?: number;
+}) {
+  const email = normalizeNotificationEmail(input.email);
+  if (!email) {
+    throw notificationBindingError("A valid email address is required.", 400, "invalid_email");
+  }
+  if (!/^[a-f0-9]{64}$/i.test(input.codeHash)) {
+    throw notificationBindingError("Email verification could not be prepared.", 400, "invalid_email_verification");
+  }
+
+  return updateStore((store) => {
+    const operator = input.operatorAddress.toLowerCase();
+    const now = new Date();
+    const minResendIntervalMs = Math.max(0, input.minResendIntervalMs ?? 60_000);
+    const current = store.emailVerificationChallenges.find(
+      (challenge) => challenge.operatorAddress.toLowerCase() === operator
+    );
+    if (
+      current
+      && new Date(current.lastSentAt).getTime() + minResendIntervalMs > now.getTime()
+    ) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((new Date(current.lastSentAt).getTime() + minResendIntervalMs - now.getTime()) / 1_000)
+      );
+      throw notificationBindingError(
+        `Wait ${retryAfterSeconds} seconds before requesting another verification code.`,
+        429,
+        "email_verification_rate_limited"
+      );
+    }
+
+    assertNotificationBindingAvailable(store, {
+      operatorAddress: input.operatorAddress,
+      channel: "email",
+      target: email
+    });
+
+    const record: EmailVerificationChallengeRecord = {
+      operatorAddress: input.operatorAddress,
+      email,
+      codeHash: input.codeHash.toLowerCase(),
+      attempts: 0,
+      maxAttempts: Math.max(1, input.maxAttempts ?? 5),
+      expiresAt: new Date(input.expiresAt).toISOString(),
+      lastSentAt: now.toISOString(),
+      createdAt: now.toISOString()
+    };
+    store.emailVerificationChallenges = store.emailVerificationChallenges.filter(
+      (challenge) => challenge.operatorAddress.toLowerCase() !== operator
+    );
+    store.emailVerificationChallenges.push(record);
+    return {
+      email: record.email,
+      expiresAt: record.expiresAt,
+      resendAt: new Date(now.getTime() + minResendIntervalMs).toISOString(),
+      maxAttempts: record.maxAttempts
+    };
+  });
+}
+
+export async function cancelEmailNotificationVerification(input: {
+  operatorAddress: string;
+  email: string;
+  codeHash: string;
+}) {
+  const email = normalizeNotificationEmail(input.email);
+  if (!email) return;
+  await updateStore((store) => {
+    const operator = input.operatorAddress.toLowerCase();
+    store.emailVerificationChallenges = store.emailVerificationChallenges.filter((challenge) => !(
+      challenge.operatorAddress.toLowerCase() === operator
+      && challenge.email === email
+      && emailVerificationHashMatches(challenge.codeHash, input.codeHash)
+    ));
+  });
+}
+
+export async function completeEmailNotificationVerification(input: {
+  operatorAddress: string;
+  email: string;
+  codeHash: string;
+}) {
+  const email = normalizeNotificationEmail(input.email);
+  if (!email) {
+    throw notificationBindingError("A valid email address is required.", 400, "invalid_email");
+  }
+
+  const outcome = await updateStore((store) => {
+    const operator = input.operatorAddress.toLowerCase();
+    const challengeIndex = store.emailVerificationChallenges.findIndex(
+      (challenge) => challenge.operatorAddress.toLowerCase() === operator && challenge.email === email
+    );
+    if (challengeIndex === -1) {
+      return {
+        ok: false as const,
+        status: 400,
+        code: "email_verification_not_found",
+        message: "Request a new email verification code."
+      };
+    }
+
+    const challenge = store.emailVerificationChallenges[challengeIndex];
+    if (new Date(challenge.expiresAt).getTime() <= Date.now()) {
+      store.emailVerificationChallenges.splice(challengeIndex, 1);
+      return {
+        ok: false as const,
+        status: 410,
+        code: "email_verification_expired",
+        message: "The verification code expired. Request a new code."
+      };
+    }
+
+    if (!emailVerificationHashMatches(challenge.codeHash, input.codeHash)) {
+      challenge.attempts += 1;
+      const attemptsRemaining = Math.max(0, challenge.maxAttempts - challenge.attempts);
+      if (attemptsRemaining === 0) {
+        store.emailVerificationChallenges.splice(challengeIndex, 1);
+        return {
+          ok: false as const,
+          status: 429,
+          code: "email_verification_attempts_exhausted",
+          message: "Too many incorrect codes. Request a new verification code."
+        };
+      }
+      return {
+        ok: false as const,
+        status: 400,
+        code: "email_verification_invalid",
+        message: `The verification code is incorrect. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"} remaining.`
+      };
+    }
+
+    assertNotificationBindingAvailable(store, {
+      operatorAddress: input.operatorAddress,
+      channel: "email",
+      target: email
+    });
+
+    const current = preferencesForOperator(store, input.operatorAddress);
+    const now = new Date().toISOString();
+    const next = normalizeNotificationPreferences({
+      ...current,
+      email,
+      emailVerifiedAt: now,
+      channels: {...current.channels, email: true},
+      updatedAt: now
+    });
+    const preferencesIndex = store.notificationPreferences.findIndex(
+      (preferences) => preferences.operatorAddress.toLowerCase() === operator
+    );
+    if (preferencesIndex >= 0) store.notificationPreferences[preferencesIndex] = next;
+    else store.notificationPreferences.push(next);
+    store.emailVerificationChallenges = store.emailVerificationChallenges.filter(
+      (challengeRecord) => challengeRecord.operatorAddress.toLowerCase() !== operator
+    );
+    return {ok: true as const, preferences: next};
+  });
+
+  if (!outcome.ok) {
+    throw notificationBindingError(outcome.message, outcome.status, outcome.code);
+  }
+  return outcome.preferences;
 }
 
 export async function beginTelegramNotificationLink(input: {
@@ -1573,6 +1770,7 @@ export function preferencesForOperator(store: StoreShape, operatorAddress: strin
   return {
     operatorAddress,
     email: null,
+    emailVerifiedAt: null,
     whatsapp: null,
     telegram: null,
     telegramLink: null,
@@ -1610,6 +1808,7 @@ function assertNotificationBindingAvailable(
     .map(normalizeNotificationPreferences)
     .find((preferences) => {
       if (preferences.operatorAddress.toLowerCase() === operator) return false;
+      if (input.channel === "email" && !preferences.emailVerifiedAt) return false;
       const existing = input.channel === "email" ? preferences.email : preferences.telegram;
       return existing === target;
     });
@@ -1622,11 +1821,15 @@ function assertNotificationBindingAvailable(
   );
 }
 
-function notificationBindingError(message: string, status: number) {
+function notificationBindingError(
+  message: string,
+  status: number,
+  code = "notification_binding_conflict"
+) {
   return Object.assign(new Error(message), {
     name: "NotificationBindingError",
     status,
-    code: "notification_binding_conflict"
+    code
   });
 }
 
@@ -1636,6 +1839,13 @@ function normalizeNotificationEmail(value: string | null | undefined) {
 
 function normalizeTelegramChatId(value: string | null | undefined) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function emailVerificationHashMatches(expected: string, actual: string) {
+  if (!/^[a-f0-9]{64}$/i.test(expected) || !/^[a-f0-9]{64}$/i.test(actual)) return false;
+  const expectedBytes = Buffer.from(expected, "hex");
+  const actualBytes = Buffer.from(actual, "hex");
+  return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
 }
 
 async function persist() {
@@ -1661,6 +1871,7 @@ function emptyStore(): StoreShape {
     escrowReminderRuns: [],
     notifications: [],
     notificationPreferences: [],
+    emailVerificationChallenges: [],
     notificationDeliveries: [],
     facilitatorEvents: [],
     indexedEvents: [],
@@ -1678,6 +1889,9 @@ function normalizeStore(value: unknown): StoreShape {
   store.paymentIntents = Array.isArray(store.paymentIntents) ? store.paymentIntents.map(normalizePaymentIntent) : [];
   store.notificationPreferences = Array.isArray(store.notificationPreferences)
     ? uniqueNotificationBindings(store.notificationPreferences.map(normalizeNotificationPreferences))
+    : [];
+  store.emailVerificationChallenges = Array.isArray(store.emailVerificationChallenges)
+    ? store.emailVerificationChallenges.map(normalizeEmailVerificationChallenge).filter((item): item is EmailVerificationChallengeRecord => Boolean(item))
     : [];
   store.notificationDeliveries = Array.isArray(store.notificationDeliveries) ? store.notificationDeliveries.map(normalizeNotificationDelivery) : [];
   store.escrowReminderRuns = Array.isArray(store.escrowReminderRuns) ? store.escrowReminderRuns.map(normalizeEscrowReminderRun) : [];
@@ -2036,6 +2250,7 @@ function normalizeNotificationPreferences(value: NotificationPreferencesRecord):
   return {
     operatorAddress,
     email: normalizeNotificationEmail(value.email),
+    emailVerifiedAt: normalizeIsoTimestamp(value.emailVerifiedAt),
     whatsapp: typeof value.whatsapp === "string" && value.whatsapp.trim() ? value.whatsapp.trim() : null,
     telegram: normalizeTelegramChatId(value.telegram),
     telegramLink,
@@ -2066,14 +2281,19 @@ function uniqueNotificationBindings(preferences: NotificationPreferencesRecord[]
     let telegramLink = record.telegramLink;
     const channels = {...record.channels};
 
-    if (email) {
+    let emailVerifiedAt = record.emailVerifiedAt;
+
+    if (email && emailVerifiedAt) {
       const owner = emailOwners.get(email);
       if (owner && owner !== operator) {
         email = null;
+        emailVerifiedAt = null;
         channels.email = false;
       } else {
         emailOwners.set(email, operator);
       }
+    } else {
+      channels.email = false;
     }
 
     if (telegram) {
@@ -2087,8 +2307,37 @@ function uniqueNotificationBindings(preferences: NotificationPreferencesRecord[]
       }
     }
 
-    return {...record, email, telegram, telegramLink, channels};
+    return {...record, email, emailVerifiedAt, telegram, telegramLink, channels};
   });
+}
+
+function normalizeEmailVerificationChallenge(value: unknown): EmailVerificationChallengeRecord | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<EmailVerificationChallengeRecord>;
+  const operatorAddress = typeof record.operatorAddress === "string" ? record.operatorAddress : "";
+  const email = normalizeNotificationEmail(record.email);
+  const codeHash = typeof record.codeHash === "string" && /^[a-f0-9]{64}$/i.test(record.codeHash)
+    ? record.codeHash.toLowerCase()
+    : "";
+  const expiresAt = normalizeIsoTimestamp(record.expiresAt);
+  const lastSentAt = normalizeIsoTimestamp(record.lastSentAt);
+  const createdAt = normalizeIsoTimestamp(record.createdAt);
+  if (!operatorAddress || !email || !codeHash || !expiresAt || !lastSentAt || !createdAt) return null;
+  return {
+    operatorAddress,
+    email,
+    codeHash,
+    attempts: Math.max(0, Number.isInteger(record.attempts) ? Number(record.attempts) : 0),
+    maxAttempts: Math.max(1, Number.isInteger(record.maxAttempts) ? Number(record.maxAttempts) : 5),
+    expiresAt,
+    lastSentAt,
+    createdAt
+  };
+}
+
+function normalizeIsoTimestamp(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  return Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 }
 
 function normalizeNotificationDelivery(value: NotificationDeliveryRecord): NotificationDeliveryRecord {
@@ -2865,7 +3114,7 @@ async function syncNotificationBindingRows(
   await client.query("delete from notification_channel_bindings where store_key = $1", [STORE_KEY]);
   for (const record of normalized) {
     const bindings = [
-      ["email", record.email],
+      ["email", record.emailVerifiedAt ? record.email : null],
       ["telegram", record.telegram]
     ] as const;
     for (const [channel, target] of bindings) {

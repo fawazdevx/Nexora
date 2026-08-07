@@ -420,6 +420,7 @@ export type AppSnapshot = {
   notificationPreferences: {
     operatorAddress: string;
     email: string | null;
+    emailVerifiedAt: string | null;
     whatsapp: string | null;
     telegram: string | null;
     telegramLink?: {

@@ -284,6 +284,8 @@ triggers      spend threshold · failed-payment burst · expiring approval
 actions       notify operator · pause configured automation
 ```
 
+Notification mutations use a wallet-signed operator session. Email then uses a six-digit OTP before the address is linked. Verified email addresses and Telegram chats are unique across operator wallets, so one external notification target cannot receive alerts for multiple Nexora accounts.
+
 Notification delivery runs separately from settlement. A notification-provider failure cannot change a completed payment into a failed payment.
 
 The analytics layer separates payment volume from collected platform revenue across Marketplace, facilitator, escrow, Save/Earn, paid-service, and subscription activity.

@@ -12,7 +12,14 @@ import {integrationReadiness} from "./readiness.js";
 import {synthraApproval, synthraQuote, synthraReadiness, synthraSwap} from "./swap/synthra.js";
 import {indexedAnalytics, syncArcIndexer} from "./indexer/arc.js";
 import {normalizeMemo, paymentMemoSummary, publicMemoView} from "./memos.js";
-import {dispatchNotification, handleTelegramWebhookUpdate, syncTelegramNotificationLink, telegramBotStartUrl} from "./notifications.js";
+import {
+  dispatchNotification,
+  handleTelegramWebhookUpdate,
+  requestEmailNotificationVerification,
+  syncTelegramNotificationLink,
+  telegramBotStartUrl,
+  verifyEmailNotificationCode
+} from "./notifications.js";
 import {automationRecipeTemplates, createAutomationRecipe, evaluateAutomationRecipes, updateAutomationRecipe} from "./automation/recipes.js";
 import {evaluateEscrowReminders, updateEscrowReminderSettings} from "./escrow/reminders.js";
 import {fetchDefiLlamaUsdcYields} from "./providers/defillama.js";
@@ -20,6 +27,7 @@ import {prepareTransactionPreflightArgs, runAgentTransactionPreflight} from "./p
 import {simulateWithTenderly, tenderlyReadiness} from "./providers/tenderly.js";
 import {
   addressArray,
+  assertAuthenticatedTokenAddress,
   assertJsonObject,
   assertSharedSecret,
   assertTokenAddress,
@@ -242,20 +250,45 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "POST" && path === "/api/notifications/preferences") {
       const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
-      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      assertAuthenticatedTokenAddress(auth, operatorAddress, "operatorAddress");
       return ok(await updateNotificationPreferences({
         operatorAddress,
-        email: optionalEmail(body.email),
-        whatsapp: optionalWhatsApp(body.whatsapp),
-        telegram: optionalTelegram(body.telegram),
-        channels: optionalNotificationChannels(body.channels),
-        events: optionalNotificationEvents(body.events)
+        email: Object.hasOwn(body, "email") ? optionalEmail(body.email) : undefined,
+        whatsapp: Object.hasOwn(body, "whatsapp") ? optionalWhatsApp(body.whatsapp) : undefined,
+        telegram: Object.hasOwn(body, "telegram") ? optionalTelegram(body.telegram) : undefined,
+        channels: Object.hasOwn(body, "channels") ? optionalNotificationChannels(body.channels) : undefined,
+        events: Object.hasOwn(body, "events") ? optionalNotificationEvents(body.events) : undefined
       }));
+    }
+
+    if (req.method === "POST" && path === "/api/notifications/email/request") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertAuthenticatedTokenAddress(auth, operatorAddress, "operatorAddress");
+      return ok(await requestEmailNotificationVerification({
+        operatorAddress,
+        email: optionalEmail(body.email) ?? ""
+      }));
+    }
+
+    if (req.method === "POST" && path === "/api/notifications/email/verify") {
+      const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
+      assertAuthenticatedTokenAddress(auth, operatorAddress, "operatorAddress");
+      const preferences = await verifyEmailNotificationCode({
+        operatorAddress,
+        email: optionalEmail(body.email) ?? "",
+        code: requiredLimitedString(body.code, "code", 6)
+      });
+      return ok({
+        verified: true,
+        email: preferences.email,
+        emailVerifiedAt: preferences.emailVerifiedAt,
+        channels: preferences.channels
+      });
     }
 
     if (req.method === "POST" && path === "/api/notifications/telegram/link") {
       const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
-      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      assertAuthenticatedTokenAddress(auth, operatorAddress, "operatorAddress");
       const code = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       const preferences = await beginTelegramNotificationLink({operatorAddress, code, expiresAt});
@@ -269,7 +302,7 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
 
     if (req.method === "POST" && path === "/api/notifications/telegram/confirm") {
       const operatorAddress = requiredAddress(body.operatorAddress, "operatorAddress");
-      assertTokenAddress(auth, operatorAddress, "operatorAddress");
+      assertAuthenticatedTokenAddress(auth, operatorAddress, "operatorAddress");
       const code = requiredLimitedString(body.code, "code", 80);
       const preferences = await syncTelegramNotificationLink({operatorAddress, code});
       return ok({

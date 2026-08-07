@@ -95,6 +95,11 @@ export function authContext(authorization?: string): AuthContext {
 export function assertTokenAddress(auth: AuthContext, expected: string, label = "wallet") {
   const address = requiredAddress(expected, label);
   if (!config.security.requireSignedAuth) return address;
+  return assertAuthenticatedTokenAddress(auth, address, label);
+}
+
+export function assertAuthenticatedTokenAddress(auth: AuthContext, expected: string, label = "wallet") {
+  const address = requiredAddress(expected, label);
   if (!auth.tokenValid || auth.address?.toLowerCase() !== address.toLowerCase()) {
     throw new Error(`${label} authentication required`);
   }

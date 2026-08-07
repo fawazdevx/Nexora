@@ -1,16 +1,17 @@
 import {useEffect, useState, type ReactNode} from "react";
 import {Activity, ArrowLeftRight, BadgeCheck, Bell, Bot, BriefcaseBusiness, CheckCircle2, CircleDollarSign, ExternalLink, Loader2, Mail, MessageCircle, RefreshCw, Send, ShieldCheck, Sparkles, Store, Unlink} from "lucide-react";
-import {useAccount} from "wagmi";
+import {useAccount, useSignMessage} from "wagmi";
 import toast from "react-hot-toast";
 import {EmptyState} from "@/components/EmptyState";
 import {PageHeader} from "@/components/PageHeader";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
-import {apiPost} from "@/lib/api";
+import {apiPost, apiPostWithHeaders} from "@/lib/api";
 import {arcTestnet} from "@/lib/arc";
 import {formatTimestamp, timeAgo} from "@/lib/time";
 
 type NotificationRecord = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["notifications"][number];
-type Preferences = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["notificationPreferences"];
+type Preferences = NonNullable<NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["notificationPreferences"]>;
+type EmailChallenge = {email: string; expiresAt: string; resendAt: string; maxAttempts: number};
 
 const whatsAppAvailable = import.meta.env.VITE_NEXORA_WHATSAPP_ENABLED === "true";
 
@@ -48,6 +49,33 @@ function explorerTx(hash: string) {
   return `${arcTestnet.explorerUrl.replace(/\/$/, "")}/tx/${hash}`;
 }
 
+async function notificationAuthToken(
+  address: string,
+  signMessageAsync: (input: {message: string}) => Promise<`0x${string}`>
+) {
+  const storageKey = notificationAuthStorageKey(address);
+  const cached = window.sessionStorage.getItem(storageKey);
+  if (cached) return cached;
+
+  const {nonce} = await apiPost<{nonce: string}>("/api/auth/nonce", {address});
+  const signature = await signMessageAsync({message: nonce});
+  const {token} = await apiPost<{token: string}>("/api/auth/verify", {
+    address,
+    nonce,
+    signature
+  });
+  window.sessionStorage.setItem(storageKey, token);
+  return token;
+}
+
+function clearNotificationAuthToken(address: string) {
+  window.sessionStorage.removeItem(notificationAuthStorageKey(address));
+}
+
+function notificationAuthStorageKey(address: string) {
+  return `nexora:notification-auth:${address.toLowerCase()}`;
+}
+
 function activityHref(item: NotificationRecord) {
   if (item.actionHref) return item.actionHref;
   if (item.receiptId) return `/receipts/${encodeURIComponent(item.receiptId)}`;
@@ -56,6 +84,7 @@ function activityHref(item: NotificationRecord) {
 
 export default function NotificationsPage() {
   const {address, isConnected} = useAccount();
+  const {signMessageAsync} = useSignMessage();
   const snapshot = useAppSnapshot();
   const preferences = snapshot.data?.notificationPreferences ?? null;
   const notifications = [...(snapshot.data?.notifications ?? [])].sort(
@@ -64,22 +93,40 @@ export default function NotificationsPage() {
   const deliveries = snapshot.data?.notificationDeliveries ?? [];
   const [form, setForm] = useState(defaultPreferences);
   const [saving, setSaving] = useState(false);
+  const [emailDraftDirty, setEmailDraftDirty] = useState(false);
+  const [emailChallenge, setEmailChallenge] = useState<EmailChallenge | null>(null);
+  const [emailCode, setEmailCode] = useState("");
+  const [requestingEmailCode, setRequestingEmailCode] = useState(false);
+  const [verifyingEmailCode, setVerifyingEmailCode] = useState(false);
   const [telegramLink, setTelegramLink] = useState<{code: string; startUrl: string; expiresAt: string} | null>(null);
   const [linkingTelegram, setLinkingTelegram] = useState(false);
   const [confirmingTelegram, setConfirmingTelegram] = useState(false);
   const payments = notifications.filter((item) => /pay|settle/i.test(item.kind)).length;
   const controls = notifications.filter((item) => /policy|approval|cooldown/i.test(`${item.kind} ${item.title}`)).length;
 
+  async function notificationPost<T>(path: string, body: unknown): Promise<T> {
+    if (!address) throw new Error("Connect your wallet before changing notification settings.");
+    let token = await notificationAuthToken(address, signMessageAsync);
+    try {
+      return await apiPostWithHeaders<T>(path, body, {authorization: `Bearer ${token}`});
+    } catch (error) {
+      if (!(error instanceof Error) || !/authentication required/i.test(error.message)) throw error;
+      clearNotificationAuthToken(address);
+      token = await notificationAuthToken(address, signMessageAsync);
+      return apiPostWithHeaders<T>(path, body, {authorization: `Bearer ${token}`});
+    }
+  }
+
   useEffect(() => {
     if (!preferences) return;
-    setForm({
-      email: preferences.email ?? "",
+    setForm((current) => ({
+      email: emailChallenge || emailDraftDirty ? current.email : preferences.email ?? "",
       whatsapp: preferences.whatsapp ?? "",
       telegram: preferences.telegram ?? "",
       channels: {...preferences.channels, whatsapp: whatsAppAvailable ? preferences.channels.whatsapp : false},
       events: preferences.events
-    });
-  }, [preferences]);
+    }));
+  }, [preferences, emailChallenge, emailDraftDirty]);
 
   async function save() {
     if (!address) {
@@ -89,12 +136,16 @@ export default function NotificationsPage() {
     setSaving(true);
     const toastId = toast.loading("Saving notification settings...");
     try {
-      await apiPost("/api/notifications/preferences", {
+      await notificationPost("/api/notifications/preferences", {
         operatorAddress: address,
-        email: form.email,
+        email: preferences?.email ?? "",
         whatsapp: whatsAppAvailable ? form.whatsapp : "",
         telegram: form.telegram,
-        channels: {...form.channels, whatsapp: whatsAppAvailable ? form.channels.whatsapp : false},
+        channels: {
+          ...form.channels,
+          email: Boolean(preferences?.emailVerifiedAt) && form.channels.email,
+          whatsapp: whatsAppAvailable ? form.channels.whatsapp : false
+        },
         events: form.events
       });
       await snapshot.refetch();
@@ -106,6 +157,102 @@ export default function NotificationsPage() {
     }
   }
 
+  async function requestEmailCode() {
+    if (!address) {
+      toast.error("Connect your wallet before verifying an email address.");
+      return;
+    }
+    const email = form.email.trim().toLowerCase();
+    if (!email) {
+      toast.error("Enter an email address.");
+      return;
+    }
+    if (email === preferences?.email && preferences.emailVerifiedAt) {
+      toast.success("This email address is already verified.");
+      return;
+    }
+
+    setRequestingEmailCode(true);
+    const toastId = toast.loading("Sending verification code...");
+    try {
+      const result = await notificationPost<EmailChallenge>("/api/notifications/email/request", {
+        operatorAddress: address,
+        email
+      });
+      setForm((current) => ({...current, email: result.email}));
+      setEmailDraftDirty(true);
+      setEmailChallenge(result);
+      setEmailCode("");
+      toast.success("Verification code sent. Check your inbox.", {id: toastId});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Verification code could not be sent", {id: toastId});
+    } finally {
+      setRequestingEmailCode(false);
+    }
+  }
+
+  async function verifyEmailCode() {
+    if (!address || !emailChallenge) return;
+    setVerifyingEmailCode(true);
+    const toastId = toast.loading("Verifying email...");
+    try {
+      const result = await notificationPost<{
+        verified: boolean;
+        email: string;
+        emailVerifiedAt: string;
+        channels: Preferences["channels"];
+      }>("/api/notifications/email/verify", {
+        operatorAddress: address,
+        email: emailChallenge.email,
+        code: emailCode
+      });
+      setForm((current) => ({
+        ...current,
+        email: result.email,
+        channels: {...current.channels, email: result.channels.email}
+      }));
+      await snapshot.refetch();
+      setEmailChallenge(null);
+      setEmailCode("");
+      setEmailDraftDirty(false);
+      toast.success("Email verified and linked to this wallet.", {id: toastId});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Email verification failed", {id: toastId});
+    } finally {
+      setVerifyingEmailCode(false);
+    }
+  }
+
+  function cancelEmailVerification() {
+    setEmailChallenge(null);
+    setEmailCode("");
+    setEmailDraftDirty(false);
+    setForm((current) => ({...current, email: preferences?.email ?? ""}));
+  }
+
+  async function disconnectEmail() {
+    if (!address) return;
+    const toastId = toast.loading("Disconnecting email...");
+    try {
+      await notificationPost("/api/notifications/preferences", {
+        operatorAddress: address,
+        email: "",
+        whatsapp: whatsAppAvailable ? form.whatsapp : "",
+        telegram: form.telegram,
+        channels: {...form.channels, email: false, whatsapp: whatsAppAvailable ? form.channels.whatsapp : false},
+        events: form.events
+      });
+      setEmailChallenge(null);
+      setEmailCode("");
+      setEmailDraftDirty(false);
+      setForm((current) => ({...current, email: "", channels: {...current.channels, email: false}}));
+      await snapshot.refetch();
+      toast.success("Email disconnected.", {id: toastId});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Email could not be disconnected", {id: toastId});
+    }
+  }
+
   async function startTelegramLink() {
     if (!address) {
       toast.error("Connect your wallet before linking Telegram.");
@@ -114,7 +261,7 @@ export default function NotificationsPage() {
     setLinkingTelegram(true);
     const toastId = toast.loading("Creating Telegram link...");
     try {
-      const result = await apiPost<{startUrl: string; code: string; expiresAt: string}>("/api/notifications/telegram/link", {
+      const result = await notificationPost<{startUrl: string; code: string; expiresAt: string}>("/api/notifications/telegram/link", {
         operatorAddress: address
       });
       setTelegramLink(result);
@@ -132,7 +279,7 @@ export default function NotificationsPage() {
     setConfirmingTelegram(true);
     const toastId = toast.loading("Checking Telegram connection...");
     try {
-      const result = await apiPost<{connected: boolean; telegram: string | null}>("/api/notifications/telegram/confirm", {
+      const result = await notificationPost<{connected: boolean; telegram: string | null}>("/api/notifications/telegram/confirm", {
         operatorAddress: address,
         code: telegramLink.code
       });
@@ -157,7 +304,7 @@ export default function NotificationsPage() {
     setForm((current) => ({...current, telegram: "", channels: {...current.channels, telegram: false}}));
     const toastId = toast.loading("Disconnecting Telegram...");
     try {
-      await apiPost("/api/notifications/preferences", {
+      await notificationPost("/api/notifications/preferences", {
         operatorAddress: address,
         email: form.email,
         whatsapp: whatsAppAvailable ? form.whatsapp : "",
@@ -208,13 +355,23 @@ export default function NotificationsPage() {
 
           <div className="mt-5 space-y-5 border-t border-white/[0.08] pt-5">
             <div className="grid gap-3 md:grid-cols-3">
-              <ContactField
-                icon={<Mail size={17} />}
-                label="Email"
+              <EmailVerificationField
                 value={form.email}
-                placeholder="you@example.com"
-                help="One email address can be linked to one Nexora operator wallet."
-                onChange={(email) => setForm((current) => ({...current, email}))}
+                verifiedEmail={preferences?.email ?? null}
+                verifiedAt={preferences?.emailVerifiedAt ?? null}
+                pending={emailChallenge}
+                code={emailCode}
+                requesting={requestingEmailCode}
+                verifying={verifyingEmailCode}
+                onChange={(email) => {
+                  setEmailDraftDirty(true);
+                  setForm((current) => ({...current, email}));
+                }}
+                onCodeChange={setEmailCode}
+                onRequest={requestEmailCode}
+                onVerify={verifyEmailCode}
+                onCancel={cancelEmailVerification}
+                onDisconnect={disconnectEmail}
               />
               {whatsAppAvailable ? (
                 <ContactField
@@ -370,6 +527,115 @@ export default function NotificationsPage() {
         </section>
       </div>
 
+    </div>
+  );
+}
+
+function EmailVerificationField({
+  value,
+  verifiedEmail,
+  verifiedAt,
+  pending,
+  code,
+  requesting,
+  verifying,
+  onChange,
+  onCodeChange,
+  onRequest,
+  onVerify,
+  onCancel,
+  onDisconnect
+}: {
+  value: string;
+  verifiedEmail: string | null;
+  verifiedAt: string | null;
+  pending: EmailChallenge | null;
+  code: string;
+  requesting: boolean;
+  verifying: boolean;
+  onChange: (value: string) => void;
+  onCodeChange: (value: string) => void;
+  onRequest: () => void;
+  onVerify: () => void;
+  onCancel: () => void;
+  onDisconnect: () => void;
+}) {
+  const normalizedValue = value.trim().toLowerCase();
+  const isVerified = Boolean(verifiedEmail && verifiedAt && normalizedValue === verifiedEmail.toLowerCase());
+  const replacingVerifiedEmail = Boolean(verifiedEmail && verifiedAt && normalizedValue !== verifiedEmail.toLowerCase());
+
+  return (
+    <div className="block">
+      <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-300"><Mail size={17} />Email</span>
+      <div className="rounded-lg border border-white/[0.08] bg-white/[0.035] p-3">
+        <div className="flex items-center gap-2">
+          <input
+            className="field min-w-0 flex-1"
+            type="email"
+            autoComplete="email"
+            value={value}
+            placeholder="you@example.com"
+            disabled={Boolean(pending)}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          {isVerified ? (
+            <button type="button" className="icon-button shrink-0" onClick={onDisconnect} aria-label="Disconnect email">
+              <Unlink size={16} />
+            </button>
+          ) : pending ? null : (
+            <button type="button" className="secondary-button shrink-0" onClick={onRequest} disabled={requesting || !normalizedValue}>
+              {requesting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+              Send code
+            </button>
+          )}
+        </div>
+
+        {isVerified ? (
+          <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-mint">
+            <BadgeCheck size={14} />
+            Verified for this operator wallet
+          </p>
+        ) : null}
+
+        {replacingVerifiedEmail && !pending ? (
+          <p className="mt-2 text-xs leading-relaxed text-amber">
+            {verifiedEmail} remains active until the replacement address is verified.
+          </p>
+        ) : null}
+
+        {pending ? (
+          <div className="mt-3 rounded-lg border border-orchid/20 bg-orchid/[0.06] p-3">
+            <p className="text-xs leading-relaxed text-slate-300">
+              Enter the six-digit code sent to <span className="font-semibold text-white">{pending.email}</span>. It expires at {formatTimestamp(pending.expiresAt)}.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <input
+                className="field min-w-32 flex-1 tracking-[0.28em]"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={code}
+                placeholder="000000"
+                onChange={(event) => onCodeChange(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && code.length === 6 && !verifying) onVerify();
+                }}
+              />
+              <button type="button" className="secondary-button" onClick={onVerify} disabled={verifying || code.length !== 6}>
+                {verifying ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                Verify
+              </button>
+              <button type="button" className="secondary-button" onClick={onCancel} disabled={verifying}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <span className="mt-2 block text-xs leading-relaxed text-slate-500">
+          Nexora sends alerts only after OTP verification. One email address can be linked to one operator wallet.
+        </span>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,17 @@
+import {createHmac, randomInt} from "node:crypto";
 import {config} from "./config.js";
-import {completeTelegramNotificationLink, preferencesForOperator, readStore, recordNotificationDeliveries, type NotificationDeliveryRecord, type NotificationPreferencesRecord, type NotificationRecord} from "./store.js";
+import {
+  beginEmailNotificationVerification,
+  cancelEmailNotificationVerification,
+  completeEmailNotificationVerification,
+  completeTelegramNotificationLink,
+  preferencesForOperator,
+  readStore,
+  recordNotificationDeliveries,
+  type NotificationDeliveryRecord,
+  type NotificationPreferencesRecord,
+  type NotificationRecord
+} from "./store.js";
 
 type DeliveryEvent = "agentActions" | "paymentReceipts" | "policyAlerts" | "escrowUpdates";
 
@@ -11,6 +23,10 @@ type DispatchInput = {
 };
 
 type DeliveryDraft = Omit<NotificationDeliveryRecord, "id" | "createdAt">;
+
+const EMAIL_VERIFICATION_TTL_MS = 10 * 60 * 1_000;
+const EMAIL_VERIFICATION_RESEND_INTERVAL_MS = 60 * 1_000;
+const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
 
 export async function dispatchNotification(input: DispatchInput) {
   if (!input.notification.operatorAddress) return [];
@@ -52,7 +68,9 @@ function enabledTargets(preferences: NotificationPreferencesRecord, channels?: P
   const emailEnabled = channels?.email ?? true;
   const whatsappEnabled = channels?.whatsapp ?? true;
   const telegramEnabled = channels?.telegram ?? true;
-  if (emailEnabled && preferences.channels.email && preferences.email) targets.push({channel: "email", target: preferences.email});
+  if (emailEnabled && preferences.channels.email && preferences.email && preferences.emailVerifiedAt) {
+    targets.push({channel: "email", target: preferences.email});
+  }
   if (whatsappEnabled && config.notifications.whatsapp.enabled && preferences.channels.whatsapp && preferences.whatsapp) targets.push({channel: "whatsapp", target: preferences.whatsapp});
   if (telegramEnabled && preferences.channels.telegram && preferences.telegram) targets.push({channel: "telegram", target: preferences.telegram});
   return targets;
@@ -98,6 +116,75 @@ async function sendEmail(to: string, message: {subject: string; text: string}) {
   });
   if (!response.ok) throw new Error(`email provider returned ${response.status}: ${await providerErrorDescription(response)}`);
   return {sent: true, provider: config.notifications.email.provider};
+}
+
+export async function requestEmailNotificationVerification(input: {
+  operatorAddress: string;
+  email: string;
+}) {
+  const email = input.email.trim().toLowerCase();
+  const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
+  const codeHash = emailVerificationCodeHash(input.operatorAddress, email, code);
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS).toISOString();
+  const challenge = await beginEmailNotificationVerification({
+    operatorAddress: input.operatorAddress,
+    email,
+    codeHash,
+    expiresAt,
+    minResendIntervalMs: EMAIL_VERIFICATION_RESEND_INTERVAL_MS,
+    maxAttempts: EMAIL_VERIFICATION_MAX_ATTEMPTS
+  });
+
+  try {
+    const result = await sendEmail(email, {
+      subject: "Verify your Nexora notification email",
+      text: [
+        "Verify this email address for Nexora notifications.",
+        "",
+        `Verification code: ${code}`,
+        "",
+        "This code expires in 10 minutes and can be used only for the wallet that requested it.",
+        `Wallet: ${shortWallet(input.operatorAddress)}`,
+        "",
+        "If you did not request this code, you can ignore this email."
+      ].join("\n")
+    });
+    if (!result.sent) throw new Error(result.reason ?? "email provider did not accept the verification message");
+  } catch (error) {
+    await cancelEmailNotificationVerification({
+      operatorAddress: input.operatorAddress,
+      email,
+      codeHash
+    }).catch(() => undefined);
+    throw error;
+  }
+
+  return {
+    email: challenge.email,
+    expiresAt: challenge.expiresAt,
+    resendAt: challenge.resendAt,
+    maxAttempts: challenge.maxAttempts
+  };
+}
+
+export async function verifyEmailNotificationCode(input: {
+  operatorAddress: string;
+  email: string;
+  code: string;
+}) {
+  const email = input.email.trim().toLowerCase();
+  const code = input.code.trim();
+  if (!/^\d{6}$/.test(code)) {
+    throw Object.assign(new Error("Enter the six-digit verification code."), {
+      status: 400,
+      code: "email_verification_invalid"
+    });
+  }
+  return completeEmailNotificationVerification({
+    operatorAddress: input.operatorAddress,
+    email,
+    codeHash: emailVerificationCodeHash(input.operatorAddress, email, code)
+  });
 }
 
 async function sendWhatsApp(to: string, text: string) {
@@ -183,6 +270,16 @@ function appUrl(path: string) {
 
 function whatsappAddress(value: string) {
   return value.startsWith("whatsapp:") ? value : `whatsapp:${value}`;
+}
+
+function emailVerificationCodeHash(operatorAddress: string, email: string, code: string) {
+  return createHmac("sha256", config.security.authSecret)
+    .update(`${operatorAddress.toLowerCase()}\u0000${email.toLowerCase()}\u0000${code}`)
+    .digest("hex");
+}
+
+function shortWallet(address: string) {
+  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
 }
 
 export async function telegramBotStartUrl(code: string) {
