@@ -6,8 +6,8 @@ export default function EarnPage() {
     <div className="space-y-5">
       <PageHeader
         kicker="Nexora Save / Earn"
-        title="Save USDC while Nexora routes to the best Arc vault"
-        description="Deposits enter the Nexora Save/Earn vault, then the router allocates through approved Arc strategy adapters. Your position stays visible in USDC — deposited amount, current value, estimated earnings, and withdrawable balance."
+        title="One deposit, continuously optimized across approved Arc vaults"
+        description="Choose Conservative, Balanced, or Growth and deposit USDC once. Nexora routes the profile pool into its active underlying Arc vault, reevaluates approved routes every 24 hours, and can migrate the pool when a better risk-adjusted route passes its controls."
       />
       <SaveEarnPanel />
     </div>

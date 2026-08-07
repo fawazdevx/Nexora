@@ -1,39 +1,35 @@
-import {fetchDefiLlamaUsdcYields} from "../providers/defillama.js";
+import {earnOptimizerProfilesStatus} from "./optimizer.js";
 
 export async function listEarnOpportunities() {
-  const xylonetVault = process.env.XYLONET_VAULT_ADDRESS ?? "0x240Eb85458CD41361bd8C3773253a1D78054f747";
-  const marketData = await fetchDefiLlamaUsdcYields({limit: 6, minTvlUsd: 500_000}).catch((error) => [{
-    id: "defillama_unavailable",
-    title: "DeFiLlama USDC yield intelligence",
-    payoutAsset: "USDC" as const,
-    automationEnabled: false,
-    risk: "medium" as const,
-    provider: "defillama",
-    status: "unavailable" as const,
-    contractAddress: null,
-    error: error instanceof Error ? error.message : "DeFiLlama unavailable"
-  }]);
-
-  return [
-    {
-      id: "xylonet_best_yield",
-      title: "Nexora router: XyloNet USDC strategy",
+  const profiles = await earnOptimizerProfilesStatus();
+  return profiles.flatMap((optimizer) => optimizer.strategies.map((strategy) => ({
+      id: `strategy:${optimizer.profile}:${strategy.strategyId}`,
+      title: `${optimizer.profileLabel}: ${strategy.protocol} USDC strategy`,
       payoutAsset: "USDC",
-      automationEnabled: Boolean(xylonetVault),
-      risk: "medium",
-      provider: "xylonet",
-      status: "available",
-      contractAddress: xylonetVault
-    },
-    {
-      id: "x402_service_execution",
-      title: "Paid x402 service execution",
-      payoutAsset: "USDC",
-      automationEnabled: true,
-      risk: "low",
-      provider: "nexora",
-      status: "available"
-    },
-    ...marketData
-  ];
+      automationEnabled: optimizer.enabled,
+      risk: strategy.riskScoreBps === null
+        ? "unreviewed"
+        : strategy.riskScoreBps <= 3_500
+          ? "lower"
+          : strategy.riskScoreBps <= 6_500
+            ? "moderate"
+            : "elevated",
+      provider: strategy.protocol.toLowerCase(),
+      status: strategy.current ? "active" : strategy.active ? "approved" : "disabled",
+      contractAddress: strategy.underlyingVault ?? strategy.adapter,
+      strategyId: strategy.strategyId,
+      profile: optimizer.profile,
+      current: strategy.current,
+      expectedApyBps: strategy.expectedApyBps,
+      totalAssetsUsdc: strategy.totalAssetsUsdc,
+      underlyingVaultAssetsUsdc: strategy.underlyingVaultAssetsUsdc,
+      assetsPerShare: strategy.assetsPerShare,
+      riskScoreBps: strategy.riskScoreBps,
+      riskConfigured: strategy.riskConfigured,
+      liquidityScoreBps: strategy.liquidityScoreBps,
+      optimizerScore: strategy.optimizerScore,
+      eligibleForAutomaticRouting: strategy.eligibleForAutomaticRouting,
+      telemetryStatus: strategy.telemetryStatus,
+      checkedAt: optimizer.checkedAt
+    })));
 }

@@ -163,10 +163,48 @@ export const config = {
     x402Ledger: process.env.X402_LEDGER_ADDRESS ?? "",
     reputation: process.env.REPUTATION_ADDRESS ?? "",
     yieldRouter: process.env.YIELD_ROUTER_ADDRESS ?? "",
+    conservativeYieldRouter: process.env.CONSERVATIVE_YIELD_ROUTER_ADDRESS ?? "",
+    growthYieldRouter: process.env.GROWTH_YIELD_ROUTER_ADDRESS ?? "",
     saveEarnVault: process.env.SAVE_EARN_VAULT_ADDRESS ?? "",
     nexoraEscrow: process.env.NEXORA_ESCROW_ADDRESS ?? "",
     treasury: process.env.TREASURY_ADDRESS ?? "",
     marketplacePublisher: process.env.NEXORA_MARKETPLACE_PUBLISHER_ADDRESS ?? process.env.OWNER_ADDRESS ?? ""
+  },
+  earnOptimizer: {
+    enabled: (process.env.SAVE_EARN_OPTIMIZER_ENABLED ?? "true").toLowerCase() !== "false",
+    executionEnabled: (process.env.SAVE_EARN_OPTIMIZER_EXECUTION_ENABLED ?? "false").toLowerCase() === "true",
+    intervalHours: 24,
+    pollIntervalMs: normalizeBoundedInteger(
+      process.env.SAVE_EARN_OPTIMIZER_POLL_INTERVAL_MS,
+      60_000,
+      10_000,
+      86_400_000
+    ),
+    minImprovementBps: normalizeBoundedInteger(
+      process.env.SAVE_EARN_OPTIMIZER_MIN_IMPROVEMENT_BPS,
+      50,
+      0,
+      10_000
+    ),
+    conservativeMinImprovementBps: normalizeBoundedInteger(
+      process.env.SAVE_EARN_CONSERVATIVE_MIN_IMPROVEMENT_BPS,
+      100,
+      0,
+      10_000
+    ),
+    growthMinImprovementBps: normalizeBoundedInteger(
+      process.env.SAVE_EARN_GROWTH_MIN_IMPROVEMENT_BPS,
+      25,
+      0,
+      10_000
+    ),
+    maxMigrationLossBps: normalizeBoundedInteger(
+      process.env.SAVE_EARN_OPTIMIZER_MAX_MIGRATION_LOSS_BPS,
+      25,
+      0,
+      1_000
+    ),
+    privateKey: process.env.SAVE_EARN_OPTIMIZER_PRIVATE_KEY ?? ""
   },
   facilitator: {
     signingMode: process.env.FACILITATOR_SIGNING_MODE ?? "wallet",

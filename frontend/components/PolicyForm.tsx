@@ -2,9 +2,10 @@ import {useEffect, useMemo, useState} from "react";
 import {AlertTriangle, CalendarClock, Clock, Copy, Database, Gauge, Loader2, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Timer, Users, Wallet, X} from "lucide-react";
 import toast from "react-hot-toast";
 import {useAccount} from "wagmi";
-import {chainLabel, contractAddressesForChain, isNexoraPolicyChain, writeAgentPolicy} from "@/lib/contracts";
+import {chainLabel, contractAddressesForChain, isNexoraPolicyChain, waitForAgentPolicyRegistration, writeAgentPolicy} from "@/lib/contracts";
 import {apiPost, type AppSnapshot} from "@/lib/api";
 import {isBotChainId, shortAddress} from "@/lib/arc";
+import {completePolicySave} from "@/lib/policy-save";
 import {AgentPicker} from "@/components/AgentPicker";
 import {AgentAvatar} from "@/components/AgentAvatar";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
@@ -257,6 +258,10 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       toast.error(isBotPolicy ? "Connect the BOT EOA that will sign payments." : "Create or select an agent wallet before saving a policy.");
       return;
     }
+    if (!selectedChainId) {
+      toast.error("Select a supported network before saving this policy.");
+      return;
+    }
     if (selectedChainWallet?.address && !policyChainReady) {
       toast.error(isBotPolicy
         ? "BOT policy contracts are not configured in this frontend yet. Add the deployed policy registry address and restart the app."
@@ -295,52 +300,66 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             policyRegistry: chainContracts.policyRegistry
           })
         : selectedAgent;
-      const registration = !isBotPolicy && selectedChainWallet?.address
-        ? await apiPost<{
-            status: "already_registered" | "registered" | "pending";
-            registered: boolean;
-            transactionId: string | null;
-            txHash: string | null;
-          }>(`/api/agents/${encodeURIComponent(policyAgent.id)}/policies/register`, {
-            operatorAddress: address,
+      const txHash = await completePolicySave({
+        register: () => !isBotPolicy && selectedChainWallet?.address
+          ? apiPost(`/api/agents/${encodeURIComponent(policyAgent.id)}/policies/register`, {
+              operatorAddress: address,
+              chainId: selectedChainId,
+              policyRegistry: chainContracts.policyRegistry,
+              dailyLimitUsdc: Number(dailyLimit),
+              transactionCapUsdc: Number(transactionCap),
+              contractAllowlist: contractItems,
+              recipientAllowlist: recipientItems,
+              policyV2: v2
+            })
+          : Promise.resolve(null),
+        waitForRegistration: async () => {
+          if (!selectedChainWallet?.address) return;
+          await waitForAgentPolicyRegistration({
             chainId: selectedChainId,
-            policyRegistry: chainContracts.policyRegistry,
-            dailyLimitUsdc: Number(dailyLimit),
-            transactionCapUsdc: Number(transactionCap),
-            contractAllowlist: contractItems,
-            recipientAllowlist: recipientItems,
-            policyV2: v2
-          })
-        : null;
-      if (registration?.status === "pending") {
-        await snapshot.refetch();
-        toast.success("Circle submitted the agent wallet registration. Wait for confirmation, then save the policy again.", {id: toastId});
-        return;
-      }
-      const txHash = selectedChainWallet?.address
-        ? await writeAgentPolicy({
             agentWallet: selectedChainWallet.address,
-            operatorAddress: isBotPolicy ? address : policyAgent.operatorAddress,
-            arcName: policyAgent.arcName,
-            dailyLimitUsdc: dailyLimit,
-            transactionCapUsdc: transactionCap,
-            contractAllowlist: contractItems,
-            recipientAllowlist: recipientItems,
-            policyV2: v2,
-            active: true,
-            skipBasicPolicy: registration?.registered === true
-          })
-        : null;
-
-      await apiPost(`/api/agents/${encodeURIComponent(policyAgent.id)}/policies`, {
-        operatorAddress: address,
-        dailyLimitUsdc: Number(dailyLimit),
-        transactionCapUsdc: Number(transactionCap),
-        contractAllowlist: contractItems,
-        recipientAllowlist: recipientItems,
-        chainId: selectedChainId,
-        policyV2: v2,
-        txHash
+            operatorAddress: address
+          });
+        },
+        writeOnchain: ({skipBasicPolicy}) => selectedChainWallet?.address
+          ? writeAgentPolicy({
+              agentWallet: selectedChainWallet.address,
+              operatorAddress: isBotPolicy ? address : policyAgent.operatorAddress,
+              arcName: policyAgent.arcName,
+              dailyLimitUsdc: dailyLimit,
+              transactionCapUsdc: transactionCap,
+              contractAllowlist: contractItems,
+              recipientAllowlist: recipientItems,
+              policyV2: v2,
+              active: true,
+              skipBasicPolicy,
+              onProgress(progress) {
+                const message = progress.stage === "basic"
+                  ? `Saving spending limits on ${chainLabel(selectedChainId)}…`
+                  : progress.stage === "advanced"
+                    ? `Saving advanced policy on ${chainLabel(selectedChainId)}…`
+                    : `Saving service rule ${progress.current ?? 1} of ${progress.total ?? 1}…`;
+                toast.loading(message, {id: toastId});
+              }
+            })
+          : Promise.resolve(null),
+        persist: (savedTxHash) => apiPost(`/api/agents/${encodeURIComponent(policyAgent.id)}/policies`, {
+          operatorAddress: address,
+          dailyLimitUsdc: Number(dailyLimit),
+          transactionCapUsdc: Number(transactionCap),
+          contractAllowlist: contractItems,
+          recipientAllowlist: recipientItems,
+          chainId: selectedChainId,
+          policyV2: v2,
+          txHash: savedTxHash
+        }),
+        onStage(stage) {
+          if (stage === "waiting_registration") {
+            toast.loading(`Circle submitted the agent registration. Waiting for ${chainLabel(selectedChainId)} confirmation…`, {id: toastId});
+          } else if (stage === "persisting") {
+            toast.loading("Synchronizing the completed policy with Nexora…", {id: toastId});
+          }
+        }
       });
 
       await snapshot.refetch();

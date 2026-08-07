@@ -5,6 +5,7 @@ import {addMissingAgentChainWallets, createAgentWallet, ensureCircleAgentPolicyR
 import {approveCircleAgentPaymentIntent, circleAgentMarketplaceReadiness, circleAgentPaymentIntentAuthorization, completeCircleAgentPaymentIntentFromReceipt, createCircleAgentPaymentIntent, executeCircleAgentPaymentIntent, inspectCircleAgentService, payCircleAgentService, preflightCircleAgentPayment, rejectCircleAgentPaymentIntent, searchCircleAgentServices} from "./circle/agent-marketplace.js";
 import {circleGatewayDiscoveryDocument, circleGatewaySellerCatalog, executeCircleGatewaySellerRequest} from "./circle/gateway-seller.js";
 import {listEarnOpportunities} from "./earn/opportunities.js";
+import {earnOptimizerProfilesStatus, evaluateAllEarnOptimizers} from "./earn/optimizer.js";
 import {activatePlan, canonicalMarketplaceCatalog, discoveryDocument, executeBuiltInService, executeMarketplaceService, featureService, getService, listServices, platformPlans, publishService, publishVerifiedService, publishVerifiedServiceRoutes, reconcileCanonicalMarketplaceRoutes, requirePlatformPlan, subscribePlan} from "./marketplace/services.js";
 import {operatorProfile} from "./identity/operators.js";
 import {integrationReadiness} from "./readiness.js";
@@ -975,28 +976,16 @@ export async function handleAppRequest(req: AppRequest): Promise<AppResponse> {
       return ok({opportunities: await listEarnOpportunities()});
     }
 
-    if (req.method === "POST" && path.startsWith("/api/earn/opportunities/") && path.endsWith("/activate")) {
-      const id = path.split("/")[4] ?? "";
-      const opportunity = (await listEarnOpportunities()).find((item) => item.id === id);
-      if (!opportunity) return response(404, {error: "opportunity_not_found"});
-      const activation = await updateStore((store) => {
-        const record = {
-          id: crypto.randomUUID(),
-          opportunityId: id,
-          operatorAddress: assertTokenAddress(auth, requiredAddress(body.operatorAddress, "operatorAddress"), "operatorAddress"),
-          status: opportunity.automationEnabled ? ("queued" as const) : ("requires_configuration" as const),
-          createdAt: new Date().toISOString()
-        };
-        store.earnActivations.push(record);
-        pushNotification(store, {
-          operatorAddress: record.operatorAddress,
-          title: "Save/Earn route requested",
-          detail: `${opportunity.title} activation queued`,
-          kind: "earn"
-        });
-        return record;
-      });
-      return ok({...activation, queue: "agent-actions"});
+    if (req.method === "GET" && path === "/api/earn/optimizer") {
+      return ok({profiles: await earnOptimizerProfilesStatus()});
+    }
+
+    if (req.method === "POST" && path === "/api/admin/earn/optimizer/evaluate") {
+      assertSharedSecret(header(req, "x-admin-secret"), config.security.adminSecret, "admin");
+      return ok(await evaluateAllEarnOptimizers({
+        execute: body.execute === true,
+        force: body.force === true
+      }));
     }
 
     if ((req.method === "GET" || req.method === "HEAD") && path === "/api/webhooks/circle") {

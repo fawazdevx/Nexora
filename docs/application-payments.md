@@ -16,7 +16,7 @@ It is useful to think of Nexora as an onchain payment and control layer, not a c
 | Cross-chain USDC | Circle Gateway | Reconcile deposits and destination delivery |
 | Platform purchase | Marketplace or settlement contract | Maintain orders, inventory, and entitlements |
 | Work milestone | Nexora Escrow | Define evidence, deadlines, disputes, and refunds |
-| Idle treasury | Save/Earn optimizer | Select permitted risk parameters and withdrawal rules |
+| Idle treasury | Save/Earn profile pools | Choose Conservative, Balanced, or Growth; USDC routes into the profile's active underlying Arc vault and is reevaluated every 24 hours |
 | Audit trail | Nexora receipts and notifications | Retain business records and reconcile exceptions |
 
 ## Common application flows

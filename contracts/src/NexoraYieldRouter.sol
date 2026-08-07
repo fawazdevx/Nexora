@@ -20,11 +20,28 @@ contract NexoraYieldRouter is NexoraUpgradeable {
     uint256 public nextStrategyId;
 
     mapping(uint256 => Strategy) public strategies;
+    uint64 public lastRebalancedAt;
+    uint64 public minRebalanceInterval;
+    uint16 public maxRebalanceLossBps;
+    mapping(uint256 => uint16) public strategyRiskScoreBps;
+    mapping(uint256 => bool) public strategyRiskConfigured;
+    uint16 public maximumStrategyRiskBps;
+    bool public profileRiskControlsConfigured;
 
     event VaultSet(address indexed vault);
     event AiOperatorSet(address indexed aiOperator);
     event StrategyAdded(uint256 indexed strategyId, address indexed adapter, string protocol, uint16 expectedApyBps);
     event StrategyActivated(uint256 indexed strategyId, string protocol, uint16 expectedApyBps);
+    event StrategyStatusUpdated(uint256 indexed strategyId, bool active);
+    event RebalanceControlsUpdated(uint64 minRebalanceInterval, uint16 maxRebalanceLossBps);
+    event StrategyRiskUpdated(uint256 indexed strategyId, uint16 riskScoreBps);
+    event ProfileRiskLimitUpdated(uint16 maximumStrategyRiskBps);
+    event StrategyRebalanced(
+        uint256 indexed previousStrategyId,
+        uint256 indexed nextStrategyId,
+        uint256 sourceAssets,
+        uint256 assetsRouted
+    );
     event DepositedToStrategy(uint256 indexed strategyId, uint256 amount);
     event WithdrawnFromStrategy(uint256 indexed strategyId, address indexed recipient, uint256 requested, uint256 withdrawn);
 
@@ -33,6 +50,11 @@ contract NexoraYieldRouter is NexoraUpgradeable {
     error InvalidStrategy();
     error TransferFailed();
     error InsufficientLiquidity();
+    error RebalanceTooSoon();
+    error RebalanceLossExceeded();
+    error StrategyHasAssets();
+    error StrategyAlreadyActive();
+    error StrategyRiskNotAllowed();
 
     modifier onlyVault() {
         if (msg.sender != vault) revert NotVault();
@@ -65,6 +87,28 @@ contract NexoraYieldRouter is NexoraUpgradeable {
         emit AiOperatorSet(aiOperator_);
     }
 
+    function setRebalanceControls(uint64 minRebalanceInterval_, uint16 maxRebalanceLossBps_) external onlyOwner {
+        require(maxRebalanceLossBps_ <= 1_000, "LOSS_TOO_HIGH");
+        minRebalanceInterval = minRebalanceInterval_;
+        maxRebalanceLossBps = maxRebalanceLossBps_;
+        emit RebalanceControlsUpdated(minRebalanceInterval_, maxRebalanceLossBps_);
+    }
+
+    function setStrategyRiskScore(uint256 strategyId, uint16 riskScoreBps) external onlyOwner {
+        if (strategies[strategyId].adapter == address(0)) revert InvalidStrategy();
+        require(riskScoreBps <= 10_000, "RISK_TOO_HIGH");
+        strategyRiskScoreBps[strategyId] = riskScoreBps;
+        strategyRiskConfigured[strategyId] = true;
+        emit StrategyRiskUpdated(strategyId, riskScoreBps);
+    }
+
+    function setProfileRiskLimit(uint16 maximumStrategyRiskBps_) external onlyOwner {
+        require(maximumStrategyRiskBps_ <= 10_000, "RISK_TOO_HIGH");
+        maximumStrategyRiskBps = maximumStrategyRiskBps_;
+        profileRiskControlsConfigured = true;
+        emit ProfileRiskLimitUpdated(maximumStrategyRiskBps_);
+    }
+
     function addStrategy(address adapter, string calldata protocol, uint16 expectedApyBps)
         external
         onlyOwner
@@ -86,11 +130,79 @@ contract NexoraYieldRouter is NexoraUpgradeable {
     function activateStrategy(uint256 strategyId) external onlyAiOperatorOrOwner {
         Strategy memory strategy = strategies[strategyId];
         if (!strategy.active) revert InvalidStrategy();
+        if (strategyId == activeStrategyId) revert StrategyAlreadyActive();
+        if (activeStrategyId != 0 && IYieldStrategy(strategies[activeStrategyId].adapter).totalAssets() != 0) {
+            revert StrategyHasAssets();
+        }
         activeStrategyId = strategyId;
         emit StrategyActivated(strategyId, strategy.protocol, strategy.expectedApyBps);
     }
 
-    function depositBest(uint256 amount) external onlyVault nonReentrant {
+    function setStrategyActive(uint256 strategyId, bool active) external onlyOwner {
+        Strategy storage strategy = strategies[strategyId];
+        if (strategy.adapter == address(0)) revert InvalidStrategy();
+        if (!active && strategyId == activeStrategyId && IYieldStrategy(strategy.adapter).totalAssets() != 0) {
+            revert StrategyHasAssets();
+        }
+        strategy.active = active;
+        emit StrategyStatusUpdated(strategyId, active);
+    }
+
+    function rebalanceTo(uint256 strategyId, uint256 minAssetsOut)
+        external
+        onlyAiOperatorOrOwner
+        nonReentrant
+        whenNotPaused
+        returns (uint256 assetsRouted)
+    {
+        Strategy memory nextStrategy = strategies[strategyId];
+        if (!nextStrategy.active) revert InvalidStrategy();
+        if (
+            !profileRiskControlsConfigured
+                || !strategyRiskConfigured[strategyId]
+                || strategyRiskScoreBps[strategyId] > maximumStrategyRiskBps
+        ) revert StrategyRiskNotAllowed();
+        uint256 previousStrategyId = activeStrategyId;
+        if (strategyId == previousStrategyId) revert StrategyAlreadyActive();
+        if (
+            lastRebalancedAt != 0
+                && minRebalanceInterval != 0
+                && block.timestamp < uint256(lastRebalancedAt) + uint256(minRebalanceInterval)
+        ) revert RebalanceTooSoon();
+
+        uint256 sourceAssets;
+        if (previousStrategyId != 0) {
+            Strategy memory previousStrategy = strategies[previousStrategyId];
+            if (previousStrategy.active) {
+                sourceAssets = IYieldStrategy(previousStrategy.adapter).totalAssets();
+                if (sourceAssets != 0) {
+                    uint256 balanceBefore = usdc.balanceOf(address(this));
+                    IYieldStrategy(previousStrategy.adapter).withdraw(sourceAssets, address(this));
+                    uint256 received = usdc.balanceOf(address(this)) - balanceBefore;
+                    if (received < minAssetsOut) revert RebalanceLossExceeded();
+                    if (
+                        received < sourceAssets
+                            && (sourceAssets - received) * 10_000
+                                > sourceAssets * uint256(maxRebalanceLossBps)
+                    ) revert RebalanceLossExceeded();
+                }
+            }
+        }
+
+        assetsRouted = usdc.balanceOf(address(this));
+        activeStrategyId = strategyId;
+        if (assetsRouted != 0) {
+            usdc.approve(nextStrategy.adapter, 0);
+            usdc.approve(nextStrategy.adapter, assetsRouted);
+            IYieldStrategy(nextStrategy.adapter).deposit(assetsRouted);
+        }
+        lastRebalancedAt = uint64(block.timestamp);
+
+        emit StrategyActivated(strategyId, nextStrategy.protocol, nextStrategy.expectedApyBps);
+        emit StrategyRebalanced(previousStrategyId, strategyId, sourceAssets, assetsRouted);
+    }
+
+    function depositBest(uint256 amount) external onlyVault nonReentrant whenNotPaused {
         if (amount == 0) return;
 
         Strategy memory strategy = strategies[activeStrategyId];
@@ -106,7 +218,7 @@ contract NexoraYieldRouter is NexoraUpgradeable {
         emit DepositedToStrategy(activeStrategyId, amount);
     }
 
-    function withdrawTo(uint256 amount, address recipient) external onlyVault nonReentrant returns (uint256 withdrawn) {
+    function withdrawTo(uint256 amount, address recipient) external onlyVault nonReentrant whenNotPaused returns (uint256 withdrawn) {
         require(recipient != address(0), "ZERO_RECIPIENT");
         uint256 idleBalance = usdc.balanceOf(address(this));
         uint256 fromIdle = amount <= idleBalance ? amount : idleBalance;

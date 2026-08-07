@@ -314,6 +314,28 @@ export type EarnActivationRecord = {
   createdAt: string;
 };
 
+export type EarnOptimizerRunRecord = {
+  id: string;
+  profile: "conservative" | "balanced" | "growth";
+  chainId: number;
+  status: "stay" | "rebalance_recommended" | "rebalanced" | "skipped" | "failed";
+  activeStrategyId: number | null;
+  selectedStrategyId: number | null;
+  activeProtocol: string | null;
+  selectedProtocol: string | null;
+  reason: string;
+  strategyCount: number;
+  activeApyBps: number | null;
+  selectedApyBps: number | null;
+  strategyTelemetry: Array<{
+    strategyId: number;
+    assetsPerShare: number | null;
+    observedAt: string;
+  }>;
+  txHash: string | null;
+  createdAt: string;
+};
+
 export type SubscriptionRecord = {
   id: string;
   operatorAddress: string;
@@ -499,6 +521,7 @@ export type StoreShape = {
   automationRecipes: AgentAutomationRecipeRecord[];
   automationRuns: AgentAutomationRunRecord[];
   earnActivations: EarnActivationRecord[];
+  earnOptimizerRuns: EarnOptimizerRunRecord[];
   subscriptions: SubscriptionRecord[];
   escrows: EscrowRecord[];
   escrowReminderRuns: EscrowReminderRunRecord[];
@@ -891,11 +914,11 @@ export async function appSnapshot(operatorAddress?: string) {
   const platformSettledPayments = store.payments.filter((payment) => payment.status === "settled");
   const settledPayments = payments.filter((payment) => payment.status === "settled");
   const marketplaceSales = settledPayments.length;
-  const completedTasks = store.earnActivations.filter((activation) => !operator || activation.operatorAddress.toLowerCase() === operator).length;
   const ecosystemContributions = servicesWithTrust.filter((service) => !operator || service.publisherAddress.toLowerCase() === operator).length;
   const successfulPayments = settledPayments.length;
   const indexedStats = summarizeIndexedEvents(store.indexedEvents);
   const indexedAvailable = indexedStats.indexedEvents > 0;
+  const completedTasks = indexedAvailable ? indexedStats.saveEarnDeposits : 0;
 
   return {
     agents,
@@ -923,7 +946,7 @@ export async function appSnapshot(operatorAddress?: string) {
     stats: {
       agentWallets: operator ? agents.length : store.agents.length,
       usdcSettled: indexedAvailable ? indexedStats.marketplaceGrossUsdc : (operator ? settledPayments : platformSettledPayments).reduce((sum, payment) => sum + payment.amountUsdc, 0),
-      earnRoutes: indexedAvailable ? indexedStats.saveEarnDeposits : store.earnActivations.length,
+      earnRoutes: indexedAvailable ? indexedStats.saveEarnDeposits : 0,
       policySaves: indexedStats.policySaves > 0
         ? indexedStats.policySaves
         : (operator ? agents : store.agents).reduce((sum, agent) => sum + Math.max(agent.policy.deployments?.length ?? 0, agent.policy.txHash ? 1 : 0), 0),
@@ -1563,6 +1586,7 @@ function emptyStore(): StoreShape {
     automationRecipes: [],
     automationRuns: [],
     earnActivations: [],
+    earnOptimizerRuns: [],
     subscriptions: [],
     escrows: [],
     escrowReminderRuns: [],
@@ -1589,6 +1613,9 @@ function normalizeStore(value: unknown): StoreShape {
   store.approvalRequests = Array.isArray(store.approvalRequests) ? store.approvalRequests.map(normalizeApprovalRequest) : [];
   store.automationRecipes = Array.isArray(store.automationRecipes) ? store.automationRecipes.map(normalizeAutomationRecipe) : [];
   store.automationRuns = Array.isArray(store.automationRuns) ? store.automationRuns.map(normalizeAutomationRun) : [];
+  store.earnOptimizerRuns = Array.isArray(store.earnOptimizerRuns)
+    ? store.earnOptimizerRuns.map(normalizeEarnOptimizerRun)
+    : [];
   store.services = store.services.map((service) => ({
     ...service,
     manifest: service.manifest ?? defaultManifestForService(service.name, service.endpointHash),
@@ -1623,6 +1650,39 @@ function normalizeStore(value: unknown): StoreShape {
   }));
   store.escrows = Array.isArray(store.escrows) ? store.escrows.map(normalizeEscrow) : [];
   return store;
+}
+
+function normalizeEarnOptimizerRun(value: EarnOptimizerRunRecord): EarnOptimizerRunRecord {
+  const statuses = new Set<EarnOptimizerRunRecord["status"]>([
+    "stay",
+    "rebalance_recommended",
+    "rebalanced",
+    "skipped",
+    "failed"
+  ]);
+  return {
+    id: String(value.id ?? crypto.randomUUID()),
+    profile: value.profile === "conservative" || value.profile === "growth" ? value.profile : "balanced",
+    chainId: Number.isSafeInteger(Number(value.chainId)) ? Number(value.chainId) : config.arc.chainId,
+    status: statuses.has(value.status) ? value.status : "failed",
+    activeStrategyId: value.activeStrategyId === null ? null : Number(value.activeStrategyId),
+    selectedStrategyId: value.selectedStrategyId === null ? null : Number(value.selectedStrategyId),
+    activeProtocol: value.activeProtocol ?? null,
+    selectedProtocol: value.selectedProtocol ?? null,
+    reason: String(value.reason ?? ""),
+    strategyCount: Math.max(0, Number(value.strategyCount || 0)),
+    activeApyBps: value.activeApyBps === null ? null : Number(value.activeApyBps),
+    selectedApyBps: value.selectedApyBps === null ? null : Number(value.selectedApyBps),
+    strategyTelemetry: Array.isArray(value.strategyTelemetry)
+      ? value.strategyTelemetry.map((item) => ({
+          strategyId: Number(item.strategyId),
+          assetsPerShare: item.assetsPerShare === null ? null : Number(item.assetsPerShare),
+          observedAt: item.observedAt ?? value.createdAt ?? new Date().toISOString()
+        }))
+      : [],
+    txHash: value.txHash ?? null,
+    createdAt: value.createdAt ?? new Date().toISOString()
+  };
 }
 
 function normalizePaymentRecord(payment: PaymentRecord): PaymentRecord {

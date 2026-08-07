@@ -3,6 +3,9 @@ pragma solidity ^0.8.24;
 
 import {NexoraProxy} from "../src/proxy/NexoraProxy.sol";
 import {NexoraPolicyRegistry} from "../src/NexoraPolicyRegistry.sol";
+import {NexoraYieldRouter} from "../src/NexoraYieldRouter.sol";
+import {NexoraSaveEarnVault} from "../src/NexoraSaveEarnVault.sol";
+import {IERC20} from "../src/interfaces/IERC20.sol";
 
 contract NexoraPolicyRegistryV2 is NexoraPolicyRegistry {
     function version() external pure returns (uint256) {
@@ -81,6 +84,99 @@ contract LegacyPolicyRegistry {
         weeklySpend[agent][3] = 22e6;
         monthlySpend[agent][2] = 33e6;
         lastSpendAt[agent] = 123_456;
+    }
+
+    function upgradeTo(address newImplementation) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            sstore(slot, newImplementation)
+        }
+    }
+}
+
+contract LegacyYieldRouter {
+    struct Strategy {
+        address adapter;
+        string protocol;
+        uint16 expectedApyBps;
+        bool active;
+    }
+
+    bytes32 internal constant IMPLEMENTATION_SLOT = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
+
+    address public owner;
+    bool private _initialized;
+    IERC20 public usdc;
+    address public vault;
+    address public aiOperator;
+    uint256 public activeStrategyId;
+    uint256 public nextStrategyId;
+    mapping(uint256 => Strategy) public strategies;
+
+    constructor() {
+        _initialized = true;
+    }
+
+    function initialize(address owner_, address usdc_, address vault_, address aiOperator_) external {
+        require(!_initialized, "INITIALIZED");
+        _initialized = true;
+        owner = owner_;
+        usdc = IERC20(usdc_);
+        vault = vault_;
+        aiOperator = aiOperator_;
+        nextStrategyId = 2;
+        activeStrategyId = 1;
+        strategies[1] = Strategy(address(0x5151), "Legacy XyloNet", 420, true);
+    }
+
+    function upgradeTo(address newImplementation) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        bytes32 slot = IMPLEMENTATION_SLOT;
+        assembly {
+            sstore(slot, newImplementation)
+        }
+    }
+}
+
+contract LegacySaveEarnVault {
+    bytes32 internal constant IMPLEMENTATION_SLOT = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
+
+    address public owner;
+    bool private _initialized;
+    IERC20 public usdc;
+    NexoraYieldRouter public yieldRouter;
+    address public treasury;
+    uint16 public withdrawalFeeBps;
+    uint256 public totalShares;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => uint256) public principalOf;
+
+    constructor() {
+        _initialized = true;
+    }
+
+    function initialize(
+        address owner_,
+        address usdc_,
+        address yieldRouter_,
+        address treasury_,
+        uint16 withdrawalFeeBps_
+    ) external {
+        require(!_initialized, "INITIALIZED");
+        _initialized = true;
+        owner = owner_;
+        usdc = IERC20(usdc_);
+        yieldRouter = NexoraYieldRouter(yieldRouter_);
+        treasury = treasury_;
+        withdrawalFeeBps = withdrawalFeeBps_;
+    }
+
+    function seedPosition(address user, uint256 shares, uint256 principal) external {
+        require(msg.sender == owner, "NOT_OWNER");
+        balanceOf[user] = shares;
+        principalOf[user] = principal;
+        totalShares += shares;
     }
 
     function upgradeTo(address newImplementation) external {
@@ -276,6 +372,70 @@ contract UpgradeableSmokeTest {
         assert(registry.lastSpendAt(agent) == 123_456);
         assert(registry.pendingOwner() == address(0));
         assert(!registry.paused());
+    }
+
+    function testYieldRouterStorageSurvivesOptimizerUpgrade() external {
+        address usdc = address(0x3600);
+        address vault = address(0xA11CE);
+        address aiOperator = address(0xB0B);
+        LegacyYieldRouter legacyImplementation = new LegacyYieldRouter();
+        NexoraProxy proxy = new NexoraProxy(
+            address(legacyImplementation),
+            abi.encodeCall(LegacyYieldRouter.initialize, (address(this), usdc, vault, aiOperator))
+        );
+        LegacyYieldRouter legacy = LegacyYieldRouter(address(proxy));
+
+        NexoraYieldRouter nextImplementation = new NexoraYieldRouter();
+        legacy.upgradeTo(address(nextImplementation));
+        NexoraYieldRouter router = NexoraYieldRouter(address(proxy));
+
+        assert(router.owner() == address(this));
+        assert(address(router.usdc()) == usdc);
+        assert(router.vault() == vault);
+        assert(router.aiOperator() == aiOperator);
+        assert(router.activeStrategyId() == 1);
+        assert(router.nextStrategyId() == 2);
+        (address adapter, string memory protocol, uint16 expectedApyBps, bool active) = router.strategies(1);
+        assert(adapter == address(0x5151));
+        assert(keccak256(bytes(protocol)) == keccak256(bytes("Legacy XyloNet")));
+        assert(expectedApyBps == 420);
+        assert(active);
+        assert(router.lastRebalancedAt() == 0);
+        assert(router.minRebalanceInterval() == 0);
+        assert(router.maxRebalanceLossBps() == 0);
+    }
+
+    function testSaveEarnBalancesBecomeBalancedProfileAfterUpgrade() external {
+        address user = address(0xCAFE);
+        address usdc = address(0x3600);
+        address router = address(0xA11CE);
+        address treasury = address(0xBEEF);
+        LegacySaveEarnVault legacyImplementation = new LegacySaveEarnVault();
+        NexoraProxy proxy = new NexoraProxy(
+            address(legacyImplementation),
+            abi.encodeCall(
+                LegacySaveEarnVault.initialize,
+                (address(this), usdc, router, treasury, uint16(100))
+            )
+        );
+        LegacySaveEarnVault legacy = LegacySaveEarnVault(address(proxy));
+        legacy.seedPosition(user, 500e6, 480e6);
+
+        NexoraSaveEarnVault nextImplementation = new NexoraSaveEarnVault();
+        legacy.upgradeTo(address(nextImplementation));
+        NexoraSaveEarnVault vault = NexoraSaveEarnVault(address(proxy));
+
+        assert(vault.owner() == address(this));
+        assert(address(vault.usdc()) == usdc);
+        assert(address(vault.yieldRouter()) == router);
+        assert(vault.treasury() == treasury);
+        assert(vault.withdrawalFeeBps() == 100);
+        assert(vault.totalShares() == 500e6);
+        assert(vault.balanceOf(user) == 500e6);
+        assert(vault.principalOf(user) == 480e6);
+        assert(vault.sharesOfProfile(vault.BALANCED_PROFILE(), user) == 500e6);
+        assert(vault.principalOfProfile(vault.BALANCED_PROFILE(), user) == 480e6);
+        assert(vault.totalSharesForProfile(vault.BALANCED_PROFILE()) == 500e6);
     }
 }
 

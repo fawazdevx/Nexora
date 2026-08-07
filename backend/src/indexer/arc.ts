@@ -19,12 +19,15 @@ const escrowAbi = parseAbi([
 
 const saveEarnAbi = parseAbi([
   "event Deposited(address indexed user,uint256 assets,uint256 shares)",
-  "event Withdrawn(address indexed user,uint256 assets,uint256 fee,uint256 shares)"
+  "event Withdrawn(address indexed user,uint256 assets,uint256 fee,uint256 shares)",
+  "event ProfileDeposited(bytes32 indexed profileId,address indexed user,uint256 assets,uint256 shares)",
+  "event ProfileWithdrawn(bytes32 indexed profileId,address indexed user,uint256 assets,uint256 fee,uint256 shares)"
 ]);
 
 const yieldRouterAbi = parseAbi([
   "event StrategyAdded(uint256 indexed strategyId,address indexed adapter,string protocol,uint16 expectedApyBps)",
   "event StrategyActivated(uint256 indexed strategyId,string protocol,uint16 expectedApyBps)",
+  "event StrategyRebalanced(uint256 indexed previousStrategyId,uint256 indexed nextStrategyId,uint256 sourceAssets,uint256 assetsRouted)",
   "event DepositedToStrategy(uint256 indexed strategyId,uint256 amount)",
   "event WithdrawnFromStrategy(uint256 indexed strategyId,address indexed recipient,uint256 requested,uint256 withdrawn)"
 ]);
@@ -235,7 +238,7 @@ function normalizeLog(contract: IndexedContract, log: {
   if (contract.key === "yieldRouter") {
     return {
       ...base,
-      amountUsdc: usdc(args.amount ?? args.withdrawn),
+      amountUsdc: usdc(args.amount ?? args.withdrawn ?? args.assetsRouted),
       actor: stringArg(args.recipient)
     };
   }

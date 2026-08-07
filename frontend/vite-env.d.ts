@@ -55,7 +55,6 @@ interface ImportMetaEnv {
   readonly VITE_REPUTATION_ADDRESS?: string;
   readonly VITE_SAVE_EARN_VAULT_ADDRESS?: string;
   readonly VITE_SAVE_EARN_DEPLOY_BLOCK?: string;
-  readonly VITE_SAVE_EARN_APR?: string;
   readonly VITE_USDC_ADDRESS?: string;
   readonly VITE_NEXORA_ESCROW_ADDRESS?: string;
   readonly VITE_TREASURY_ADDRESS?: string;

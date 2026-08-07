@@ -6,12 +6,12 @@ The package also exposes Circle Agent Stack helpers for creating Nexora-controll
 
 > Network types describe protocol compatibility. A route is live only when its chain contracts, token, RPC, facilitator, and application configuration are deployed and verified.
 
-> npm v0.3 is the current published release. This source tree is v0.4.0 and prepares BOT Chain mainnet, Meridian Marketplace attribution, and mainnet constants. Publish v0.4.0 before using `@0.4` in an installation command.
+> npm v0.4.0 is the current published release. It adds expanded chain requirements, BOT Chain mainnet types, Meridian Marketplace attribution, and mainnet constants while preserving existing Arc, Base, and Arbitrum middleware usage.
 
 ## Install
 
 ```bash
-npm install @nexorafi/x402@0.3
+npm install @nexorafi/x402@0.4.0
 ```
 
 The package is ESM and publishes TypeScript declarations.
@@ -266,7 +266,7 @@ It does not create a complete custody ledger, refund system, payout engine, or e
 
 ## Migration from v0.3 to v0.4
 
-1. Publish and install `@nexorafi/x402@0.4`.
+1. Install `@nexorafi/x402@0.4.0`.
 2. Keep existing Arc, Base, and Arbitrum middleware unchanged.
 3. Set `network: "bot-chain"` for BOT mainnet and retain `bot-chain-testnet` for chain `968`.
 4. Add `creditedRecipient` for Meridian Marketplace seller attribution, and configure the Marketplace fee in Meridian Command Centre.

@@ -4,6 +4,7 @@ import {config} from "./config.js";
 import {corsHeaders, handleAppRequest} from "./router.js";
 import {assertBodySize} from "./security.js";
 import {reconcilePendingMeridianAccounting} from "./x402/meridian-facilitator.js";
+import {evaluateAllEarnOptimizers} from "./earn/optimizer.js";
 
 async function handler(req: IncomingMessage, res: ServerResponse) {
   const body = await readJson(req);
@@ -28,7 +29,28 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   server.listen(config.port, () => {
     console.log(`Nexora API listening on :${config.port}`);
     startBotchainAccountingReconciliation();
+    startSaveEarnOptimizer();
   });
+}
+
+function startSaveEarnOptimizer() {
+  if (!config.earnOptimizer.enabled) return;
+  let running = false;
+  const evaluate = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await evaluateAllEarnOptimizers({execute: config.earnOptimizer.executionEnabled});
+    } catch {
+      // The secret-protected admin endpoint remains available for diagnostics
+      // and serverless schedulers.
+    } finally {
+      running = false;
+    }
+  };
+  void evaluate();
+  const timer = setInterval(() => void evaluate(), config.earnOptimizer.pollIntervalMs);
+  timer.unref();
 }
 
 function startBotchainAccountingReconciliation() {

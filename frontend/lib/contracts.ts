@@ -4,6 +4,7 @@ import {Pool, Route} from "@synthra-swap/sdk/v3";
 import {SwapRouter as SynthraUniversalSwapRouter, Trade as SynthraUniversalTrade, UniswapTrade} from "@synthra-swap/sdk/universal-router";
 import {arcTestnet, arbitrumOneWagmiChain, arbitrumSepoliaWagmiChain, baseSepoliaWagmiChain, botChainMainnetWagmiChain, botChainTestnetWagmiChain, isBotChainId, supportedChains} from "@/lib/arc";
 import {apiPost} from "@/lib/api";
+import {assertSuccessfulTransactionReceipt} from "@/lib/transaction-status";
 
 export const policyRegistryAbi = [
   {
@@ -439,10 +440,30 @@ export const nexoraEscrowAbi = [
 export const saveEarnVaultAbi = [
   {
     type: "function",
+    name: "depositForProfile",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "profileId", type: "bytes32"},
+      {name: "assets", type: "uint256"}
+    ],
+    outputs: [{name: "shares", type: "uint256"}]
+  },
+  {
+    type: "function",
     name: "deposit",
     stateMutability: "nonpayable",
     inputs: [{name: "assets", type: "uint256"}],
     outputs: [{name: "shares", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "withdrawFromProfile",
+    stateMutability: "nonpayable",
+    inputs: [
+      {name: "profileId", type: "bytes32"},
+      {name: "shares", type: "uint256"}
+    ],
+    outputs: [{name: "assetsAfterFee", type: "uint256"}]
   },
   {
     type: "function",
@@ -453,10 +474,34 @@ export const saveEarnVaultAbi = [
   },
   {
     type: "function",
+    name: "sharesOfProfile",
+    stateMutability: "view",
+    inputs: [
+      {name: "profileId", type: "bytes32"},
+      {name: "user", type: "address"}
+    ],
+    outputs: [{name: "shares", type: "uint256"}]
+  },
+  {
+    type: "function",
     name: "balanceOf",
     stateMutability: "view",
     inputs: [{name: "account", type: "address"}],
     outputs: [{name: "shares", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "previewWithdrawForProfile",
+    stateMutability: "view",
+    inputs: [
+      {name: "profileId", type: "bytes32"},
+      {name: "user", type: "address"},
+      {name: "shares", type: "uint256"}
+    ],
+    outputs: [
+      {name: "assets", type: "uint256"},
+      {name: "fee", type: "uint256"}
+    ]
   },
   {
     type: "function",
@@ -466,6 +511,16 @@ export const saveEarnVaultAbi = [
     outputs: [
       {name: "assets", type: "uint256"},
       {name: "fee", type: "uint256"}
+    ]
+  },
+  {
+    type: "event",
+    name: "ProfileDeposited",
+    inputs: [
+      {name: "profileId", type: "bytes32", indexed: true},
+      {name: "user", type: "address", indexed: true},
+      {name: "assets", type: "uint256", indexed: false},
+      {name: "shares", type: "uint256", indexed: false}
     ]
   },
   {
@@ -482,11 +537,29 @@ export const saveEarnVaultAbi = [
     ]
   },
   {
+    type: "event",
+    name: "ProfileWithdrawn",
+    inputs: [
+      {name: "profileId", type: "bytes32", indexed: true},
+      {name: "user", type: "address", indexed: true},
+      {name: "assets", type: "uint256", indexed: false},
+      {name: "fee", type: "uint256", indexed: false},
+      {name: "shares", type: "uint256", indexed: false}
+    ]
+  },
+  {
     type: "function",
     name: "previewDeposit",
     stateMutability: "view",
     inputs: [{name: "assets", type: "uint256"}],
     outputs: [{name: "shares", type: "uint256"}]
+  },
+  {
+    type: "function",
+    name: "totalAssetsForProfile",
+    stateMutability: "view",
+    inputs: [{name: "profileId", type: "bytes32"}],
+    outputs: [{name: "assets", type: "uint256"}]
   },
   {
     type: "event",
@@ -496,6 +569,13 @@ export const saveEarnVaultAbi = [
       {name: "assets", type: "uint256", indexed: false},
       {name: "shares", type: "uint256", indexed: false}
     ]
+  },
+  {
+    type: "function",
+    name: "totalSharesForProfile",
+    stateMutability: "view",
+    inputs: [{name: "profileId", type: "bytes32"}],
+    outputs: [{name: "shares", type: "uint256"}]
   },
   {
     type: "event",
@@ -522,6 +602,14 @@ export const saveEarnVaultAbi = [
     outputs: [{name: "shares", type: "uint256"}]
   }
 ] as const;
+
+export type SaveEarnProfile = "conservative" | "balanced" | "growth";
+
+const saveEarnProfileIds: Record<SaveEarnProfile, `0x${string}`> = {
+  conservative: keccak256(stringToHex("CONSERVATIVE")),
+  balanced: keccak256(stringToHex("BALANCED")),
+  growth: keccak256(stringToHex("GROWTH"))
+};
 
 export const xylonet = {
   router: "0x73742278c31a76dBb0D2587d03ef92E6E2141023",
@@ -1175,9 +1263,7 @@ async function ensurePermit2Allowance(input: {
 
 async function waitForSuccessfulReceipt(chainId: number, hash: Hash, label: string) {
   const receipt = await (await publicClient(chainId)).waitForTransactionReceipt({hash});
-  if (receipt.status !== "success") {
-    throw new Error(`${label} transaction reverted.`);
-  }
+  assertSuccessfulTransactionReceipt(receipt, label);
   return receipt;
 }
 
@@ -1224,6 +1310,11 @@ export async function writeAgentPolicy(input: {
     writeServiceAllowlist?: boolean;
   };
   skipBasicPolicy?: boolean;
+  onProgress?: (progress: {
+    stage: "basic" | "advanced" | "service";
+    current?: number;
+    total?: number;
+  }) => void;
 }): Promise<Hash> {
   const {client, chainId, contracts} = await walletClient();
   const address = requireAddress(contracts.policyRegistry, "Policy registry address");
@@ -1233,6 +1324,7 @@ export async function writeAgentPolicy(input: {
   const recipientAllowlist = (input.recipientAllowlist ?? []) as Address[];
   let policyHash: Hash | null = null;
   if (!input.skipBasicPolicy) {
+    input.onProgress?.({stage: "basic"});
     policyHash = await client.writeContract({
       address,
       abi: policyRegistryAbi,
@@ -1250,12 +1342,14 @@ export async function writeAgentPolicy(input: {
         recipientAllowlist
       ]
     });
-    await reader.waitForTransactionReceipt({hash: policyHash});
+    const receipt = await reader.waitForTransactionReceipt({hash: policyHash});
+    assertSuccessfulTransactionReceipt(receipt, "Basic policy");
   }
 
   if (input.policyV2) {
     const serviceAllowlist = (input.policyV2.serviceAllowlist ?? []).map(serviceIdHash);
     const previousServiceAllowlist = (input.policyV2.previousServiceAllowlist ?? []).map(serviceIdHash);
+    input.onProgress?.({stage: "advanced"});
     const v2Hash = await client.writeContract({
       address,
       abi: policyRegistryAbi,
@@ -1271,36 +1365,81 @@ export async function writeAgentPolicy(input: {
         Boolean(input.policyV2.requireOnchainPolicy)
       ]
     });
-    await reader.waitForTransactionReceipt({hash: v2Hash});
+    const receipt = await reader.waitForTransactionReceipt({hash: v2Hash});
+    assertSuccessfulTransactionReceipt(receipt, "Advanced policy");
     policyHash = v2Hash;
 
     if (input.policyV2.writeServiceAllowlist !== false) {
       const current = new Set(serviceAllowlist);
       const staleServiceIds = previousServiceAllowlist.filter((serviceId) => !current.has(serviceId));
-      for (const serviceId of staleServiceIds) {
+      const serviceUpdates = [
+        ...staleServiceIds.map((serviceId) => ({serviceId, allowed: false})),
+        ...serviceAllowlist.map((serviceId) => ({serviceId, allowed: true}))
+      ];
+      for (const [index, update] of serviceUpdates.entries()) {
+        input.onProgress?.({stage: "service", current: index + 1, total: serviceUpdates.length});
         const serviceHash = await client.writeContract({
           address,
           abi: policyRegistryAbi,
           functionName: "setAllowedService",
-          args: [input.agentWallet as Address, serviceId, false]
+          args: [input.agentWallet as Address, update.serviceId, update.allowed]
         });
-        await reader.waitForTransactionReceipt({hash: serviceHash});
-      }
-
-      for (const serviceId of serviceAllowlist) {
-        const serviceHash = await client.writeContract({
-          address,
-          abi: policyRegistryAbi,
-          functionName: "setAllowedService",
-          args: [input.agentWallet as Address, serviceId, true]
-        });
-        await reader.waitForTransactionReceipt({hash: serviceHash});
+        const serviceReceipt = await reader.waitForTransactionReceipt({hash: serviceHash});
+        assertSuccessfulTransactionReceipt(serviceReceipt, `Service policy ${index + 1} of ${serviceUpdates.length}`);
+        policyHash = serviceHash;
       }
     }
   }
 
   if (!policyHash) throw new Error("No on-chain policy transaction was prepared");
   return policyHash;
+}
+
+export async function waitForAgentPolicyRegistration(input: {
+  chainId: number;
+  agentWallet: string;
+  operatorAddress: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}) {
+  const connected = await connectedChainId();
+  if (connected !== input.chainId) {
+    throw new Error(`Switch to ${chainLabel(input.chainId)} to finish saving this policy.`);
+  }
+  const contracts = contractAddressesForChain(input.chainId);
+  const address = requireAddress(contracts.policyRegistry, "Policy registry address");
+  const reader = await publicClient(input.chainId);
+  const timeoutMs = Math.max(10_000, input.timeoutMs ?? 90_000);
+  const pollIntervalMs = Math.max(500, input.pollIntervalMs ?? 2_000);
+  const deadline = Date.now() + timeoutMs;
+  let lastRpcError: Error | null = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const [registeredOperator, , active] = await reader.readContract({
+        address,
+        abi: policyRegistryAbi,
+        functionName: "agentProfiles",
+        args: [input.agentWallet as Address]
+      });
+      lastRpcError = null;
+      if (active) {
+        if (registeredOperator.toLowerCase() !== input.operatorAddress.toLowerCase()) {
+          throw new Error(`This agent wallet is registered to a different operator on ${chainLabel(input.chainId)}.`);
+        }
+        return;
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("registered to a different operator")) throw error;
+      lastRpcError = error instanceof Error ? error : new Error("Policy registry read failed");
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  const rpcDetail = lastRpcError ? ` Last RPC error: ${lastRpcError.message}` : "";
+  throw new Error(
+    `Circle submitted the agent registration, but ${chainLabel(input.chainId)} has not confirmed it yet. Your policy values remain in the form; click Save again after confirmation.${rpcDetail}`
+  );
 }
 
 function serviceIdHash(value: string): `0x${string}` {
@@ -1589,11 +1728,18 @@ export async function releaseOnchainEscrow(escrowId: string) {
   });
 }
 
-export async function depositSaveEarn(amountUsdc: string): Promise<{approveHash: Hash; depositHash: Hash}> {
-  const {client, contracts} = await walletClient();
+export async function depositSaveEarn(
+  amountUsdc: string,
+  profile: SaveEarnProfile = "balanced"
+): Promise<{approveHash: Hash; depositHash: Hash}> {
+  const {client, chainId, contracts} = await walletClient();
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Switch to Arc Testnet before saving USDC.");
+  }
   const usdc = requireAddress(contracts.usdc, "USDC address");
   const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
   const amount = parseUnits(amountUsdc || "0", 6);
+  if (amount <= 0n) throw new Error("Save amount must be greater than zero.");
 
   const approveHash = await client.writeContract({
     address: usdc,
@@ -1601,13 +1747,15 @@ export async function depositSaveEarn(amountUsdc: string): Promise<{approveHash:
     functionName: "approve",
     args: [vault, amount]
   });
+  await waitForSuccessfulReceipt(chainId, approveHash, "Save/Earn approval");
 
   const depositHash = await client.writeContract({
     address: vault,
     abi: saveEarnVaultAbi,
-    functionName: "deposit",
-    args: [amount]
+    functionName: profile === "balanced" ? "deposit" : "depositForProfile",
+    args: profile === "balanced" ? [amount] : [saveEarnProfileIds[profile], amount]
   });
+  await waitForSuccessfulReceipt(chainId, depositHash, "Save/Earn deposit");
 
   return {approveHash, depositHash};
 }
@@ -1773,52 +1921,89 @@ export async function fundAgentWalletUsdc(input: {agentAddress: string; amountUs
   return {txHash, chainId};
 }
 
-export async function withdrawSaveEarn(amountUsdc: string): Promise<Hash> {
-  const {client, contracts} = await walletClient();
+export async function withdrawSaveEarn(amountUsdc: string, profile: SaveEarnProfile = "balanced"): Promise<Hash> {
+  const {client, chainId, contracts} = await walletClient();
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Switch to Arc Testnet before withdrawing USDC.");
+  }
   const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
-
-  return client.writeContract({
+  const txHash = await client.writeContract({
     address: vault,
     abi: saveEarnVaultAbi,
-    functionName: "withdraw",
-    args: [await sharesForWithdrawalAmount(amountUsdc)]
+    functionName: profile === "balanced" ? "withdraw" : "withdrawFromProfile",
+    args: profile === "balanced"
+      ? [await sharesForWithdrawalAmount(amountUsdc, profile)]
+      : [saveEarnProfileIds[profile], await sharesForWithdrawalAmount(amountUsdc, profile)]
   });
+  await waitForSuccessfulReceipt(chainId, txHash, "Save/Earn withdrawal");
+  return txHash;
 }
 
-export async function readSaveEarnPosition(account: string) {
-  const chainId = await connectedChainId().catch(() => arcTestnet.id);
+export async function readSaveEarnPosition(
+  account: string,
+  requestedChainId = arcTestnet.id,
+  profile: SaveEarnProfile = "balanced"
+) {
+  const chainId = requestedChainId;
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Save/Earn positions are currently available on Arc Testnet.");
+  }
   const contracts = contractAddressesForChain(chainId);
   const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
   const client = await publicClient(chainId);
   const fromBlock = BigInt(Number(contracts.saveEarnDeployBlock ?? 42_490_737));
-  const [shares, totalShares, totalAssets] = await Promise.all([
-    client.readContract({
-      address: vault,
-      abi: saveEarnVaultAbi,
-      functionName: "balanceOf",
-      args: [account as Address]
-    }),
-    client.readContract({
-      address: vault,
-      abi: saveEarnVaultAbi,
-      functionName: "totalShares"
-    }),
-    client.readContract({
-      address: vault,
-      abi: saveEarnVaultAbi,
-      functionName: "totalAssets"
-    })
-  ]);
+  const profileId = saveEarnProfileIds[profile];
+  const [shares, totalShares, totalAssets] = profile === "balanced"
+    ? await Promise.all([
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "balanceOf",
+          args: [account as Address]
+        }),
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalShares"
+        }),
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalAssets"
+        })
+      ])
+    : await Promise.all([
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "sharesOfProfile",
+          args: [profileId, account as Address]
+        }),
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalSharesForProfile",
+          args: [profileId]
+        }),
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalAssetsForProfile",
+          args: [profileId]
+        })
+      ]);
   const [assets, fee] = shares > 0n
     ? await client.readContract({
         address: vault,
         abi: saveEarnVaultAbi,
-        functionName: "previewWithdrawFor",
-        args: [account as Address, shares]
+        functionName: profile === "balanced" ? "previewWithdrawFor" : "previewWithdrawForProfile",
+        args: profile === "balanced"
+          ? [account as Address, shares]
+          : [profileId, account as Address, shares]
       })
     : [0n, 0n];
 
-  const eventTotals = await readSaveEarnEventTotals(account, vault, fromBlock).catch(() => null);
+  const eventTotals = await readSaveEarnEventTotals(account, vault, fromBlock, chainId, profile).catch(() => null);
   const netDepositedRaw = eventTotals
     ? eventTotals.deposited > eventTotals.withdrawn
       ? eventTotals.deposited - eventTotals.withdrawn
@@ -1867,8 +2052,37 @@ export async function readAgentChainBalances(account: string, chainId: number) {
   };
 }
 
-async function readSaveEarnEventTotals(account: string, vault: Address, fromBlock: bigint) {
-  const client = await publicClient();
+async function readSaveEarnEventTotals(
+  account: string,
+  vault: Address,
+  fromBlock: bigint,
+  chainId = arcTestnet.id,
+  profile: SaveEarnProfile = "balanced"
+) {
+  const client = await publicClient(chainId);
+  if (profile !== "balanced") {
+    const profileId = saveEarnProfileIds[profile];
+    const [depositLogs, withdrawLogs] = await Promise.all([
+      client.getContractEvents({
+        address: vault,
+        abi: saveEarnVaultAbi,
+        eventName: "ProfileDeposited",
+        args: {profileId, user: account as Address},
+        fromBlock
+      }),
+      client.getContractEvents({
+        address: vault,
+        abi: saveEarnVaultAbi,
+        eventName: "ProfileWithdrawn",
+        args: {profileId, user: account as Address},
+        fromBlock
+      })
+    ]);
+    return {
+      deposited: depositLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n), 0n),
+      withdrawn: withdrawLogs.reduce((sum, log) => sum + (log.args.assets ?? 0n) + (log.args.fee ?? 0n), 0n)
+    };
+  }
   const [depositLogs, withdrawLogs] = await Promise.all([
     client.getContractEvents({
       address: vault,
@@ -1892,24 +2106,43 @@ async function readSaveEarnEventTotals(account: string, vault: Address, fromBloc
   };
 }
 
-async function sharesForWithdrawalAmount(amountUsdc: string) {
+async function sharesForWithdrawalAmount(amountUsdc: string, profile: SaveEarnProfile = "balanced") {
   const chainId = await connectedChainId().catch(() => arcTestnet.id);
+  if (chainId !== arcTestnet.id) {
+    throw new Error("Switch to Arc Testnet before withdrawing USDC.");
+  }
   const contracts = contractAddressesForChain(chainId);
   const vault = requireAddress(contracts.saveEarnVault, "Save/Earn vault address");
   const client = await publicClient(chainId);
   const assets = parseUnits(amountUsdc || "0", 6);
-  const [totalShares, totalAssets] = await Promise.all([
-    client.readContract({
-      address: vault,
-      abi: saveEarnVaultAbi,
-      functionName: "totalShares"
-    }),
-    client.readContract({
-      address: vault,
-      abi: saveEarnVaultAbi,
-      functionName: "totalAssets"
-    })
-  ]);
+  const profileId = saveEarnProfileIds[profile];
+  const [totalShares, totalAssets] = profile === "balanced"
+    ? await Promise.all([
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalShares"
+        }),
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalAssets"
+        })
+      ])
+    : await Promise.all([
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalSharesForProfile",
+          args: [profileId]
+        }),
+        client.readContract({
+          address: vault,
+          abi: saveEarnVaultAbi,
+          functionName: "totalAssetsForProfile",
+          args: [profileId]
+        })
+      ]);
 
   if (assets === 0n || totalAssets === 0n || totalShares === 0n) return assets;
   return (assets * totalShares + totalAssets - 1n) / totalAssets;
