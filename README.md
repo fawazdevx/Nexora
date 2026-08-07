@@ -8,16 +8,20 @@
 
         Arc-first controls and payment infrastructure for autonomous agents.
         Public product and integration details belong here.
-        Secrets, private operations, and internal deployment notes do not.
+
 -->
 
 <div align="center">
 
-<img
-  src="frontend/public/nexora-banner.png"
-  alt="Nexora, the financial control layer for autonomous AI agents"
-  width="100%"
-/>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/hero-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/hero-light.svg">
+  <img
+    src=".github/assets/hero-dark.svg"
+    alt="Nexora payment flow: agent request, policy check, Circle wallet, Arc settlement, and receipt"
+    width="100%"
+  />
+</picture>
 
 <br/>
 
@@ -49,8 +53,6 @@ Nexora plays a Stripe-like role for agent-facing SaaS and onchain applications: 
 
 Arc is the primary environment. Nexora uses USDC for agent payments and Arc transaction fees, so an agent can operate with one accounting asset instead of maintaining a separate gas-token balance.
 
-> [!CAUTION]
-> Nexora is unaudited testnet software. It is not ready to hold production funds or process high-value mainnet activity.
 
 ---
 
@@ -359,63 +361,17 @@ The backend does not record success until it receives valid settlement evidence.
 
 ## ⛩ Architecture
 
-```mermaid
-flowchart TB
-    subgraph Users["Operators, developers, and agents"]
-        OP["Operator console"]
-        SDK["Nexora SDK"]
-        AG["Autonomous agent"]
-    end
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/architecture-light.svg">
+  <img
+    src=".github/assets/architecture-dark.svg"
+    alt="Animated Nexora architecture showing requests moving through policy controls, Circle infrastructure, Arc contracts, and indexed evidence"
+    width="100%"
+  />
+</picture>
 
-    subgraph App["Application layer"]
-        FE["React + Vite frontend"]
-        API["TypeScript API"]
-        PE["Policy and approval engine"]
-        NT["Notifications and automation"]
-        RC["Receipts and reconciliation"]
-    end
-
-    subgraph Circle["Circle infrastructure"]
-        CW["Developer-Controlled Wallets"]
-        GW["Gateway and Nanopayments"]
-        USDC["USDC"]
-        AM["Agent Marketplace interfaces"]
-    end
-
-    subgraph Arc["Arc Testnet · 5042002"]
-        PR["Policy Registry"]
-        XL["x402 Marketplace ledger"]
-        ES["Escrow"]
-        SV["Save/Earn vault"]
-        YR["Yield Routers"]
-        RP["Reputation"]
-        MM["Memo contract"]
-    end
-
-    subgraph Data["Data layer"]
-        PG["PostgreSQL"]
-        IX["Viem event indexer"]
-        AN["Analytics"]
-    end
-
-    OP --> FE
-    SDK --> API
-    AG --> API
-    FE --> API
-    API --> PE
-    API --> CW
-    API --> GW
-    API --> AM
-    PE --> PR
-    CW --> USDC
-    API --> XL & ES & SV & MM
-    SV --> YR
-    XL --> RP
-    PR & XL & ES & SV & YR --> IX
-    API --> PG
-    API --> NT & RC
-    IX --> AN
-```
+<sub>The moving packets identify request, wallet-execution, settlement, and indexing paths. The diagrams use self-contained SVG animation with no JavaScript or external runtime.</sub>
 
 ### Source of truth
 
@@ -677,17 +633,6 @@ The tests cover:
 - PostgreSQL intent and agent locks
 - Restricted CORS configuration
 - Secret-protected admin, webhook, and indexer endpoints
-
-### Known limitations
-
-- No independent smart-contract audit has been completed.
-- An application penetration test remains required.
-- The default repository authentication mode favors local and testnet development.
-- Authentication nonces use process memory unless replaced for production.
-- The indexer does not yet implement deep-reorg rollback.
-- Automated compliance and KYT screening are not integrated.
-- Circle Gateway payments use backend policy enforcement rather than the Arc Policy Registry.
-- Automatic Save/Earn migration should remain disabled until multiple reviewed strategies exist.
 
 Report suspected vulnerabilities privately to the repository owner. Do not publish exploit details in a public issue.
 
