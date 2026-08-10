@@ -39,7 +39,15 @@ type SimulationResult = {
   requestHash: string;
 };
 
-export function PolicySimulationPanel() {
+export function PolicySimulationPanel({
+  variant = "full",
+  lockedAgentId,
+  onSelectAgent
+}: {
+  variant?: "full" | "embedded";
+  lockedAgentId?: string;
+  onSelectAgent?: (id: string) => void;
+} = {}) {
   const {address, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
   const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
@@ -48,9 +56,10 @@ export function PolicySimulationPanel() {
   const pendingRequests = requests.filter((request) => request.status === "pending");
   const recentRequests = [...requests]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
-    .slice(0, 8);
+    .slice(0, variant === "embedded" ? 6 : 8)
+    .filter((request) => !lockedAgentId || request.agentId === lockedAgentId);
 
-  const [agentId, setAgentId] = useState("");
+  const [agentId, setAgentId] = useState(lockedAgentId ?? "");
   const [serviceId, setServiceId] = useState("");
   const [units, setUnits] = useState("1");
   const [note, setNote] = useState("");
@@ -59,23 +68,36 @@ export function PolicySimulationPanel() {
   const [decidingId, setDecidingId] = useState("");
   const [result, setResult] = useState<SimulationResult | null>(null);
 
-  const selectedAgent = agents.find((agent) => agent.id === agentId);
-  const selectedService = services.find((service) => service.id === serviceId);
-  const estimatedAmount = selectedService ? Number(selectedService.pricePerUnitUsdc || 0) * Number(units || 0) : 0;
+  useEffect(() => {
+    if (lockedAgentId) {
+      setAgentId(lockedAgentId);
+      setResult(null);
+    }
+  }, [lockedAgentId]);
 
   useEffect(() => {
+    if (lockedAgentId) return;
     if (!agentId && agents[0]) setAgentId(agents[0].id);
-  }, [agents, agentId]);
+  }, [agents, agentId, lockedAgentId]);
 
   useEffect(() => {
     if (!serviceId && services[0]) setServiceId(services[0].id);
   }, [services, serviceId]);
 
+  const selectedAgent = agents.find((agent) => agent.id === agentId);
+  const selectedService = services.find((service) => service.id === serviceId);
+  const estimatedAmount = selectedService ? Number(selectedService.pricePerUnitUsdc || 0) * Number(units || 0) : 0;
   const serviceOptions = useMemo(() => services.slice().sort((a, b) => a.name.localeCompare(b.name)), [services]);
+
+  function changeAgent(id: string) {
+    setAgentId(id);
+    setResult(null);
+    onSelectAgent?.(id);
+  }
 
   async function simulate() {
     if (!isConnected || !address) {
-      toast.error("Connect your wallet before simulating a policy.");
+      toast.error("Connect your wallet before testing a policy.");
       return;
     }
     if (!agentId || !serviceId) {
@@ -91,9 +113,9 @@ export function PolicySimulationPanel() {
         units: Number(units || 1)
       });
       setResult(data);
-      toast.success(data.allowed ? "Policy simulation passed" : "Policy simulation blocked");
+      toast.success(data.allowed ? "Policy test passed" : "Policy test blocked");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Policy simulation failed");
+      toast.error(error instanceof Error ? error.message : "Policy test failed");
     } finally {
       setSimulating(false);
     }
@@ -109,7 +131,7 @@ export function PolicySimulationPanel() {
       return;
     }
     setRequesting(true);
-    const toastId = toast.loading("Creating approval request...");
+    const toastId = toast.loading("Creating approval request…");
     try {
       await apiPost<ApprovalRequest>("/api/agent-approvals", {
         operatorAddress: address,
@@ -134,7 +156,7 @@ export function PolicySimulationPanel() {
       return;
     }
     setDecidingId(`${request.id}:${decision}`);
-    const toastId = toast.loading(decision === "approve" ? "Approving request..." : "Rejecting request...");
+    const toastId = toast.loading(decision === "approve" ? "Approving request…" : "Rejecting request…");
     try {
       await apiPost<ApprovalRequest>(`/api/agent-approvals/${encodeURIComponent(request.id)}/${decision}`, {
         operatorAddress: address
@@ -148,92 +170,150 @@ export function PolicySimulationPanel() {
     }
   }
 
-  return (
-    <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
-      <div className="panel">
+  const testPanel = (
+    <div className={variant === "embedded" ? "space-y-4" : "panel"}>
+      {variant === "full" ? (
         <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="section-kicker flex items-center gap-2"><Play size={14} /> Policy simulation</p>
             <h2 className="mt-2 text-2xl font-semibold text-white">Test an agent payment before it happens</h2>
-            <p className="muted-copy mt-2 max-w-2xl">Run the same policy checks used by x402 authorization: spend caps, cooldowns, allowlists, expiry, and service limits.</p>
+            <p className="muted-copy mt-2 max-w-2xl">
+              Run the same policy checks used at authorization: spend caps, cooldowns, allowlists, expiry, and service limits.
+            </p>
           </div>
           <span className="status-pill">{pendingRequests.length} pending</span>
         </div>
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-white">Test this policy</p>
+            <p className="mt-1 text-xs leading-5 text-slate-400">
+              Simulate a payment against the selected agent before real spend.
+            </p>
+          </div>
+          <span className="status-pill">{pendingRequests.filter((item) => !lockedAgentId || item.agentId === lockedAgentId).length} pending</span>
+        </div>
+      )}
 
-        <div className="flex flex-wrap gap-4">
+      <div className="flex flex-wrap gap-4">
+        {variant === "full" || !lockedAgentId ? (
           <div className="grid min-w-[240px] flex-1 gap-2 text-sm text-slate-300">
             Agent
-            <AgentPicker agents={agents} value={selectedAgent} onChange={setAgentId} />
+            <AgentPicker agents={agents} value={selectedAgent} onChange={changeAgent} />
           </div>
-          <label className="grid min-w-[200px] flex-1 gap-2 text-sm text-slate-300">
-            Service
-            <select className="field w-full min-w-0" value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
-              {serviceOptions.length === 0 ? <option value="">No services available</option> : null}
-              {serviceOptions.map((service) => (
-                <option key={service.id} value={service.id}>{service.name} · ${service.pricePerUnitUsdc}/unit</option>
-              ))}
-            </select>
-          </label>
-          <label className="grid w-24 shrink-0 gap-2 text-sm text-slate-300">
-            Units
-            <input className="field w-full" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value.replace(/[^\d]/g, "") || "1")} />
-          </label>
-        </div>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <MiniMetric label="Estimated spend" value={`$${formatUsdc(estimatedAmount)}`} />
-          <MiniMetric label="Daily limit" value={selectedAgent ? `$${formatUsdc(selectedAgent.policy.dailyLimitUsdc)}` : "-"} />
-          <MiniMetric label="Tx cap" value={selectedAgent ? `$${formatUsdc(selectedAgent.policy.transactionCapUsdc)}` : "-"} />
-        </div>
-
-        <label className="mt-4 grid gap-2 text-sm text-slate-300">
-          Request note
-          <input className="field" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional reason for this approval" />
-        </label>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <button type="button" className="secondary-button" onClick={simulate} disabled={!isConnected || simulating || agents.length === 0 || services.length === 0}>
-            {simulating ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-            Simulate
-          </button>
-          <button type="button" className="action-button" onClick={createRequest} disabled={!isConnected || requesting || agents.length === 0 || services.length === 0}>
-            {requesting ? <Loader2 size={16} className="animate-spin" /> : <ClipboardCheck size={16} />}
-            Add to approval queue
-          </button>
-        </div>
-
-        {result ? <SimulationResultCard result={result} /> : null}
-      </div>
-
-      <div className="panel">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <p className="section-kicker flex items-center gap-2"><Clock size={14} /> Approval queue</p>
-            <h2 className="mt-2 text-xl font-semibold text-white">Agent payment requests</h2>
-          </div>
-          <button type="button" className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void snapshot.refetch()}>
-            Refresh
-          </button>
-        </div>
-
-        {snapshot.isLoading ? (
-          <div className="space-y-2">{[0, 1, 2].map((item) => <div key={item} className="shimmer h-24 rounded-xl" />)}</div>
-        ) : recentRequests.length === 0 ? (
-          <EmptyState icon={<ShieldCheck size={24} />} title="No approval requests" copy="Create a simulated payment request to review it here before an agent spends USDC." className="border-0 bg-transparent p-0 shadow-none" />
-        ) : (
-          <div className="space-y-3">
-            {recentRequests.map((request) => (
-              <ApprovalRequestCard
-                key={request.id}
-                request={request}
-                decidingId={decidingId}
-                onApprove={() => void decide(request, "approve")}
-                onReject={() => void decide(request, "reject")}
-              />
+        ) : null}
+        <label className="grid min-w-[200px] flex-1 gap-2 text-sm text-slate-300">
+          Service
+          <select className="field w-full min-w-0 bg-slate-950 text-white" value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
+            {serviceOptions.length === 0 ? <option value="">No services available</option> : null}
+            {serviceOptions.map((service) => (
+              <option key={service.id} value={service.id}>{service.name} · ${service.pricePerUnitUsdc}/unit</option>
             ))}
-          </div>
-        )}
+          </select>
+        </label>
+        <label className="grid w-24 shrink-0 gap-2 text-sm text-slate-300">
+          Units
+          <input
+            className="field w-full"
+            inputMode="numeric"
+            value={units}
+            onChange={(event) => setUnits(event.target.value.replace(/[^\d]/g, "") || "1")}
+          />
+        </label>
       </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <MiniMetric label="Estimated spend" value={`$${formatUsdc(estimatedAmount)}`} />
+        <MiniMetric label="Daily limit" value={selectedAgent ? `$${formatUsdc(selectedAgent.policy.dailyLimitUsdc)}` : "—"} />
+        <MiniMetric label="Tx cap" value={selectedAgent ? `$${formatUsdc(selectedAgent.policy.transactionCapUsdc)}` : "—"} />
+      </div>
+
+      <label className="mt-4 grid gap-2 text-sm text-slate-300">
+        Request note
+        <input className="field" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional reason for this approval" />
+      </label>
+
+      <div className="mt-5 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => void simulate()}
+          disabled={!isConnected || simulating || agents.length === 0 || services.length === 0}
+        >
+          {simulating ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+          Test payment
+        </button>
+        <button
+          type="button"
+          className="action-button"
+          onClick={() => void createRequest()}
+          disabled={!isConnected || requesting || agents.length === 0 || services.length === 0}
+        >
+          {requesting ? <Loader2 size={16} className="animate-spin" /> : <ClipboardCheck size={16} />}
+          Queue for approval
+        </button>
+      </div>
+
+      {result ? <SimulationResultCard result={result} /> : null}
+    </div>
+  );
+
+  const queuePanel = (
+    <div className={variant === "embedded" ? "space-y-4 border-t border-white/[0.08] pt-4" : "panel"}>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <div>
+          <p className={`${variant === "embedded" ? "text-sm font-bold text-white" : "section-kicker flex items-center gap-2"}`}>
+            {variant === "embedded" ? "Approval queue" : <><Clock size={14} /> Approval queue</>}
+          </p>
+          {variant === "full" ? <h2 className="mt-2 text-xl font-semibold text-white">Agent payment requests</h2> : (
+            <p className="mt-1 text-xs text-slate-400">
+              {lockedAgentId ? "Pending and recent requests for this agent." : "Recent agent payment requests."}
+            </p>
+          )}
+        </div>
+        <button type="button" className="secondary-button min-h-10 px-3 py-2 text-sm" onClick={() => void snapshot.refetch()}>
+          Refresh
+        </button>
+      </div>
+
+      {snapshot.isLoading ? (
+        <div className="space-y-2">{[0, 1, 2].map((item) => <div key={item} className="shimmer h-24 rounded-xl" />)}</div>
+      ) : recentRequests.length === 0 ? (
+        <EmptyState
+          icon={<ShieldCheck size={24} />}
+          title="No approval requests"
+          copy="Test a payment and queue it here before an agent spends USDC."
+          className="border-0 bg-transparent p-0 shadow-none py-6"
+        />
+      ) : (
+        <div className="space-y-3">
+          {recentRequests.map((request) => (
+            <ApprovalRequestCard
+              key={request.id}
+              request={request}
+              decidingId={decidingId}
+              onApprove={() => void decide(request, "approve")}
+              onReject={() => void decide(request, "reject")}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  if (variant === "embedded") {
+    return (
+      <div className="space-y-5">
+        {testPanel}
+        {queuePanel}
+      </div>
+    );
+  }
+
+  return (
+    <section className="grid gap-4 xl:grid-cols-[1fr_420px]">
+      {testPanel}
+      {queuePanel}
     </section>
   );
 }
@@ -245,14 +325,22 @@ function SimulationResultCard({result}: {result: SimulationResult}) {
       <div className="flex items-start gap-3">
         <Icon size={20} className={result.allowed ? "mt-0.5 shrink-0 text-mint" : "mt-0.5 shrink-0 text-amber"} />
         <div className="min-w-0">
-          <p className={`font-semibold ${result.allowed ? "text-mint" : "text-amber"}`}>{result.allowed ? "Payment would pass policy" : "Payment would be blocked"}</p>
-          <p className="mt-1 text-sm leading-6 text-slate-300">{result.reason ?? `${result.service.name} can spend ${formatUsdc(result.amountUsdc)} USDC for ${result.units} unit${result.units === 1 ? "" : "s"}.`}</p>
+          <p className={`font-semibold ${result.allowed ? "text-mint" : "text-amber"}`}>
+            {result.allowed ? "Payment would pass policy" : "Payment would be blocked"}
+          </p>
+          <p className="mt-1 text-sm leading-6 text-slate-300">
+            {result.reason ?? `${result.service.name} can spend ${formatUsdc(result.amountUsdc)} USDC for ${result.units} unit${result.units === 1 ? "" : "s"}.`}
+          </p>
         </div>
       </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-3">
         <MiniMetric label="Daily spent" value={`$${formatUsdc(result.dailySpentUsdc)}`} />
         <MiniMetric label="Weekly spent" value={`$${formatUsdc(result.weeklySpentUsdc)}`} />
         <MiniMetric label="Monthly spent" value={`$${formatUsdc(result.monthlySpentUsdc)}`} />
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <MiniMetric label="Remaining daily" value={`$${formatUsdc(result.remainingDailyUsdc)}`} />
+        <MiniMetric label="Request hash" value={shortAddress(result.requestHash)} />
       </div>
     </div>
   );
@@ -278,7 +366,9 @@ function ApprovalRequestCard({
           <AgentAvatar seed={request.agentWallet ?? request.agentId} label={request.serviceName} size={34} />
           <div className="min-w-0">
             <p className="truncate text-base font-semibold text-white">{request.serviceName}</p>
-            <p className="mt-0.5 text-[13px] text-slate-400">{timeAgo(request.createdAt)} · {request.units} unit{request.units === 1 ? "" : "s"}</p>
+            <p className="mt-0.5 text-[13px] text-slate-400">
+              {timeAgo(request.createdAt)} · {request.units} unit{request.units === 1 ? "" : "s"}
+            </p>
           </div>
         </div>
         <RequestStatus status={request.status} blocked={blocked} />
@@ -334,7 +424,7 @@ function MiniMetric({label, value}: {label: string; value: string}) {
   return (
     <div className="surface px-3 py-2.5">
       <p className="text-xs uppercase tracking-wider text-slate-400">{label}</p>
-      <p className="mt-1 text-base font-semibold text-white">{value}</p>
+      <p className="mt-1 truncate text-base font-semibold text-white">{value}</p>
     </div>
   );
 }

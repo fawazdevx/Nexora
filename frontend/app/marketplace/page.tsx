@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from "react";
-import {Activity, ArrowUpRight, BadgeCheck, Banknote, BarChart3, BriefcaseBusiness, CalendarCheck, CheckCircle2, ExternalLink, FileSearch, GitFork, Globe, Layers, Landmark, LineChart, MessageSquareText, Plus, ReceiptText, Route, Search, ShieldCheck, Sparkles, Star, Store, TrendingUp, Wallet, Loader2, X, type LucideIcon} from "lucide-react";
+import {Activity, ArrowUpRight, BadgeCheck, Banknote, BarChart3, BriefcaseBusiness, CalendarCheck, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FileSearch, GitFork, Globe, Layers, Landmark, LineChart, MessageSquareText, Plus, ReceiptText, Route, Search, ShieldCheck, Sparkles, Star, Store, TrendingUp, Wallet, Loader2, X, type LucideIcon} from "lucide-react";
 import {useAccount} from "wagmi";
 import toast from "react-hot-toast";
 import {PageHeader} from "@/components/PageHeader";
@@ -12,11 +12,12 @@ import {navigateTo} from "@/lib/router";
 import {arcTestnet, marketplaceSettlementChains, shortAddress, supportedChains, switchToChain} from "@/lib/arc";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {publishX402Services, settleX402Request, type NexoraStructuredMemo} from "@/lib/contracts";
-import {MARKETPLACE_CATEGORY_DESCRIPTIONS, executionArgs, formatCategory, formatKind, sampleInputForService, serviceCategory, serviceInputLabel, serviceInputPlaceholder, serviceReadiness, type MarketplaceCategoryKey} from "@/lib/marketplace";
+import {MARKETPLACE_CATEGORY_DESCRIPTIONS, executionArgs, formatCategory, formatKind, sampleArgsForService, sampleInputForService, serviceCategory, serviceInputLabel, serviceInputPlaceholder, serviceReadiness, type MarketplaceCategoryKey} from "@/lib/marketplace";
 import {agentWalletChainIds, preferredAgentChainId, savePreferredAgentChainId} from "@/lib/agent-chain-preferences";
 
 type Service = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["services"][number];
 type Agent = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["agents"][number];
+type Payment = NonNullable<ReturnType<typeof useAppSnapshot>["data"]>["payments"][number];
 type ServiceGroup = {key: string; service: Service; routes: Service[]};
 type CanonicalCatalog = {
   publisherAddress: string | null;
@@ -55,6 +56,8 @@ type PublicMarketplaceCatalog = {
 };
 type SortKey = "featured" | "priceAsc" | "priceDesc" | "name";
 type PrivacyScope = "public" | "selective" | "private";
+type DetailTab = "overview" | "request" | "payment" | "trust";
+type RouteMode = "gateway" | "ledger";
 
 const PRIVACY_OPTIONS: Array<{value: PrivacyScope; label: string; copy: string}> = [
   {value: "selective", label: "Selective", copy: "Budget, policy, and intent only"},
@@ -109,7 +112,7 @@ function txToast(title: string, hash: string, chainId: number) {
 
 export default function MarketplacePage() {
   const {address, chain, isConnected} = useAccount();
-  const [serviceInputs, setServiceInputs] = useState<Record<string, string>>({});
+  const [serviceFormValues, setServiceFormValues] = useState<Record<string, Record<string, unknown>>>({});
   const [serviceResults, setServiceResults] = useState<Record<string, unknown>>({});
   const [resultDialog, setResultDialog] = useState<{service: Service; result: unknown} | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -128,17 +131,26 @@ export default function MarketplacePage() {
   const [routeImportHash, setRouteImportHash] = useState("");
   const [routeImportChainId, setRouteImportChainId] = useState(arcTestnet.id);
   const [importingRoute, setImportingRoute] = useState(false);
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<DetailTab>("overview");
+  const [publisherOpen, setPublisherOpen] = useState(false);
+  const [routeModeOverride, setRouteModeOverride] = useState<Record<string, RouteMode>>({});
   const snapshot = useAppSnapshot();
   const agents = (snapshot.data?.agents ?? []).filter((agent) => agent.walletKind !== "external_eoa");
   const services = snapshot.data?.services ?? [];
   const directoryServices = useMemo(
-    () => marketplaceDirectoryServices(services, gatewayCatalog),
-    [services, gatewayCatalog]
+    () => marketplaceDirectoryServices(services, gatewayCatalog, canonicalCatalog),
+    [services, gatewayCatalog, canonicalCatalog]
   );
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
+  const gatewayEndpointHashes = useMemo(
+    () => new Set((gatewayCatalog?.services ?? []).map((service) => service.endpointHash.trim().toLowerCase())),
+    [gatewayCatalog]
+  );
   const serviceGroups = useMemo(
-    () => groupMarketplaceServices(directoryServices, canonicalCatalog?.publisherAddress),
-    [directoryServices, canonicalCatalog?.publisherAddress]
+    () => groupMarketplaceServices(directoryServices, canonicalCatalog?.publisherAddress, gatewayEndpointHashes),
+    [directoryServices, canonicalCatalog?.publisherAddress, gatewayEndpointHashes]
   );
   const isCanonicalPublisher = Boolean(
     address
@@ -210,7 +222,7 @@ export default function MarketplacePage() {
       && gatewayCatalog.networkDetails.some((network) => network.chainId === chain.id)
       && gatewayCatalog.services.some((service) => service.endpointHash === group.service.endpointHash))
   ))).length;
-  const featuredServices = serviceGroups.filter((group) => group.service.featured).length;
+  const featuredServices = serviceGroups.filter((group) => group.service.featured);
   const categoryCounts = useMemo(() => {
     const counts = Object.fromEntries(CATEGORIES.map((category) => [category.key, 0])) as Record<MarketplaceCategoryKey, number>;
     counts.all = serviceGroups.length;
@@ -242,6 +254,54 @@ export default function MarketplacePage() {
     });
     return sorted;
   }, [serviceGroups, query, categoryFilter, kindFilter, sort, settlementChainId, canonicalCatalog?.publisherAddress]);
+
+  const recentPurchases = useMemo(() => {
+    return [...(snapshot.data?.payments ?? [])]
+      .filter((payment) => payment.status === "settled" && payment.serviceName)
+      .sort((a, b) => Date.parse(b.settledAt ?? b.createdAt) - Date.parse(a.settledAt ?? a.createdAt))
+      .slice(0, 5);
+  }, [snapshot.data?.payments]);
+
+  const selectedGroup = visibleServices.find((group) => group.key === selectedGroupKey)
+    ?? serviceGroups.find((group) => group.key === selectedGroupKey)
+    ?? null;
+
+  function resolveGroupRoutes(group: ServiceGroup) {
+    const route = routeForChain(group, settlementChainId, canonicalCatalog?.publisherAddress);
+    const displayService = route ?? group.service;
+    const gatewayAvailable = Boolean(
+      gatewayCatalog?.ready
+      && gatewayCatalog.networkDetails.some((network) => network.chainId === settlementChainId)
+      && gatewayCatalog.services.some((service) => service.endpointHash === displayService.endpointHash)
+    );
+    const availableChainIds = [
+      ...group.routes.map((item) => item.settlementChainId).filter((value): value is number => typeof value === "number"),
+      ...(gatewayCatalog?.ready && gatewayCatalog.services.some((service) => service.endpointHash === displayService.endpointHash)
+        ? gatewayCatalog.networkDetails.map((network) => network.chainId)
+        : [])
+    ];
+    const defaultMode: RouteMode = gatewayAvailable && settlementChainId !== arcTestnet.id ? "gateway" : route ? "ledger" : gatewayAvailable ? "gateway" : "ledger";
+    const mode = routeModeOverride[group.key] ?? defaultMode;
+    const useGateway = mode === "gateway" ? gatewayAvailable : false;
+    const useLedger = mode === "ledger" ? Boolean(route) : false;
+    const effectiveGateway = useGateway || (!useLedger && gatewayAvailable);
+    const settlementRoute = effectiveGateway ? null : route;
+    return {route, displayService, gatewayAvailable, availableChainIds, settlementRoute, preferGateway: effectiveGateway, defaultMode};
+  }
+
+  function selectService(group: ServiceGroup) {
+    setSelectedGroupKey(group.key);
+    setDetailTab("overview");
+    const {displayService} = resolveGroupRoutes(group);
+    setServiceFormValues((current) => ({
+      ...current,
+      [group.key]: current[group.key] ?? sampleArgsForService(displayService)
+    }));
+  }
+
+  function formValuesFor(groupKey: string, service: Service) {
+    return serviceFormValues[groupKey] ?? sampleArgsForService(service);
+  }
 
   async function publishOwnedMissingRoutes() {
     if (!address || !canonicalCatalog || !isCanonicalPublisher || publishingMissingRoutes || ownedMissingRouteCount === 0) return;
@@ -348,9 +408,10 @@ export default function MarketplacePage() {
       return;
     }
     setBusyId(serviceKey);
-    const toastId = toast.loading(`Authorizing x402 payment for ${service.name}…`);
+    const toastId = toast.loading(`Checking policy for ${service.name}…`);
     try {
       const requestHash = `0x${crypto.randomUUID().replaceAll("-", "").padEnd(64, "0")}` as `0x${string}`;
+      toast.loading(`Authorizing payment for ${service.name}…`, {id: toastId});
       const result = await apiPost<{authorizationId: string; status: string; settlement: {amountUsdc: number; memo?: NexoraStructuredMemo | null}}>("/api/x402/authorize", {
         serviceId: service.id,
         payer: address,
@@ -362,7 +423,7 @@ export default function MarketplacePage() {
       let txHash: string | null = null;
       let memoSettlement: Awaited<ReturnType<typeof settleX402Request>> | null = null;
       if (!canUseCircleAgentSettlement) {
-        toast.loading(`Approve ${result.settlement.amountUsdc} USDC and confirm settlement…`, {id: toastId});
+        toast.loading(`Settling ${result.settlement.amountUsdc} USDC…`, {id: toastId});
         memoSettlement = await settleX402Request({
           chainServiceId: service.chainServiceId,
           requestHash,
@@ -374,7 +435,7 @@ export default function MarketplacePage() {
         txHash = memoSettlement.settleHash;
       } else if (canUseCircleAgentSettlement) {
         const target = supportedChains.find((item) => item.id === routeChainId);
-        toast.loading(`Agent wallet settling ${service.name} on ${target?.name ?? "the service network"}…`, {id: toastId});
+        toast.loading(`Agent wallet settling on ${target?.name ?? "network"}…`, {id: toastId});
       }
       const settlement = await settleAgentPayment({
         authorizationId: result.authorizationId,
@@ -387,14 +448,14 @@ export default function MarketplacePage() {
       }, service.name, toastId);
       if (settlement.status === "pending_settlement") {
         void snapshot.refetch().catch(() => undefined);
-        toast.success(`Agent settlement is pending on Circle. Execute ${service.name} after the network transaction confirms.`, {id: toastId});
+        toast.success(`Settlement is pending on Circle. Execute ${service.name} after confirmation.`, {id: toastId});
         return;
       }
-      toast.loading(`Executing ${service.name}…`, {id: toastId});
+      toast.loading(`Delivering ${service.name}…`, {id: toastId});
       const execution = await apiPost<{result: unknown}>(`/api/marketplace/services/${service.id}/execute`, {
         payer: address,
         authorizationId: result.authorizationId,
-        args: executionArgs(service, serviceInputs[serviceKey] ?? "")
+        args: executionArgs(service, formValuesFor(serviceKey, service))
       });
       setServiceResults((current) => ({...current, [serviceKey]: execution.result}));
       setResultDialog({service, result: execution.result});
@@ -429,14 +490,14 @@ export default function MarketplacePage() {
       return;
     }
     setBusyId(serviceKey);
-    const toastId = toast.loading(`Agent paying ${service.name} through Circle Gateway…`);
+    const toastId = toast.loading(`Settling ${service.name} through Circle Gateway…`);
     try {
-      const execution = await apiPost<{result: unknown; receipt: {txHash?: string | null}}>(`/api/circle/nanopayments/buy/${encodeURIComponent(service.endpointHash)}`, {
+      const execution = await apiPost<{result: unknown; receipt: {txHash?: string | null; id?: string}}>(`/api/circle/nanopayments/buy/${encodeURIComponent(service.endpointHash)}`, {
         operatorAddress: address,
         agentId: selectedAgent.id,
         walletAddress: chainWallet.address,
         chain: circlePaymentChain(settlementChainId),
-        data: executionArgs(service, serviceInputs[serviceKey] ?? ""),
+        data: executionArgs(service, formValuesFor(serviceKey, service)),
         confirmed: true
       });
       setServiceResults((current) => ({...current, [serviceKey]: execution.result}));
@@ -486,284 +547,432 @@ export default function MarketplacePage() {
     }
   }
 
+  function runPurchase(group: ServiceGroup) {
+    const resolved = resolveGroupRoutes(group);
+    if (resolved.preferGateway) {
+      void purchaseGatewayService(resolved.displayService, group.key);
+      return;
+    }
+    if (resolved.settlementRoute) {
+      void purchase(resolved.settlementRoute, group.key);
+      return;
+    }
+    if (resolved.gatewayAvailable) {
+      void purchaseGatewayService(resolved.displayService, group.key);
+    }
+  }
+
+  function buyAgain(payment: Payment) {
+    const match = serviceGroups.find((group) =>
+      group.service.name === payment.serviceName
+      || group.routes.some((route) => route.name === payment.serviceName)
+    );
+    if (match) selectService(match);
+    else toast.error("That service is not in the current catalog.");
+  }
+
+  const selectedResolved = selectedGroup ? resolveGroupRoutes(selectedGroup) : null;
+  const purchaseDisabledReason = !selectedGroup || !selectedResolved
+    ? "Select a service"
+    : !isConnected
+      ? "Connect wallet"
+      : !selectedAgent
+        ? "Select an agent"
+        : !selectedResolved.settlementRoute && !selectedResolved.gatewayAvailable
+          ? "Route unavailable on this network"
+          : Boolean(busyId)
+            ? "Purchase in progress"
+            : null;
+  const showFeaturedServices = featuredServices.length > 0 && categoryFilter === "all" && !query;
+  const visibleServiceCards = showFeaturedServices
+    ? visibleServices.filter((group) => !featuredServices.some((featured) => featured.key === group.key))
+    : visibleServices;
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in pb-28 xl:pb-6">
       <PageHeader
-        kicker="x402 marketplace"
-        title="APIs and agent services priced in USDC"
-        description="Discover monetized tools that agents can purchase per request under operator-defined policy limits."
+        kicker="Marketplace"
+        title="Paid APIs agents can buy in USDC"
+        description="Discover monetized tools, configure the request, and settle under operator policy. Built for agent-facing SaaS and onchain applications."
         action={<a href="/marketplace/new" onClick={(event) => navigate(event, "/marketplace/new")} className="action-button"><Plus size={17} /> Publish API</a>}
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <StatMetric variant="panel" icon={Store} label="Services" value={serviceGroups.length} loading={snapshot.isLoading} />
-        <StatMetric variant="panel" icon={CheckCircle2} label="3-chain ready" value={multichainServices} loading={snapshot.isLoading} />
+        <StatMetric variant="panel" icon={CheckCircle2} label="Multi-network" value={multichainServices} loading={snapshot.isLoading} />
         <StatMetric variant="panel" icon={ShieldCheck} label="Settled volume" value={settledVolume} prefix="$" decimals={2} loading={snapshot.isLoading} accent />
       </div>
 
-      {isCanonicalPublisher ? (
-        <section className="panel space-y-4 border-mint/20">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="section-kicker">Canonical publisher routes</p>
-              <h2 className="mt-2 text-xl font-semibold text-white">Keep Nexora’s six services synchronized across configured networks</h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-                {ownedMissingRouteCount > 0
-                  ? `${ownedMissingRouteCount} verified route${ownedMissingRouteCount === 1 ? " is" : "s are"} still missing. Each network is published in one wallet transaction, then Nexora verifies the route.`
-                  : "Every configured network has a verified route for the canonical catalog."}
-              </p>
+      <p className="text-sm text-slate-400">
+        Paid agent APIs with structured inputs, policy-aware settlement, and receipts after purchase.
+      </p>
+
+      {/* Compact checkout context */}
+      <section className="panel grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center !py-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-[200px]">
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Agent</p>
+            <AgentPicker agents={agents} value={selectedAgent ?? undefined} onChange={selectAgent} />
+          </div>
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Network</p>
+            <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/[0.1] bg-white/[0.03] p-1">
+              {marketplaceSettlementChains.map((target) => {
+                const available = selectedAgentWalletChains.includes(target.id);
+                const active = settlementChainId === target.id;
+                return (
+                  <button
+                    key={target.id}
+                    type="button"
+                    onClick={() => selectSettlementChain(target.id)}
+                    disabled={!available}
+                    title={available ? `Use ${target.name}` : `Create the ${target.name} agent wallet first`}
+                    className={`min-h-9 rounded-md px-2 text-xs font-semibold transition ${
+                      active
+                        ? "bg-mint/15 text-mint"
+                        : available
+                          ? "text-slate-300 hover:bg-white/[0.06] hover:text-white"
+                          : "cursor-not-allowed text-slate-600"
+                    }`}
+                  >
+                    {shortMarketplaceChainLabel(target.id)}
+                  </button>
+                );
+              })}
             </div>
-            {ownedMissingRouteCount > 0 ? (
-              <button type="button" className="action-button" onClick={() => void publishOwnedMissingRoutes()} disabled={publishingMissingRoutes}>
-                {publishingMissingRoutes ? <Loader2 size={16} className="animate-spin" /> : <Route size={16} />}
-                {publishingMissingRoutes ? "Publishing routes…" : "Publish missing routes"}
-              </button>
-            ) : null}
           </div>
-
-          <div className="surface grid gap-3 p-4 lg:grid-cols-[190px_minmax(0,1fr)_auto] lg:items-end">
-            <label className="grid gap-2 text-xs font-semibold text-slate-300">
-              Settlement network
-              <select value={routeImportChainId} onChange={(event) => setRouteImportChainId(Number(event.target.value))} className="field bg-slate-950 text-sm text-white">
-                {configuredCanonicalChains.map((target) => <option key={target.chainId} value={target.chainId}>{target.label}</option>)}
-              </select>
-            </label>
-            <label className="grid gap-2 text-xs font-semibold text-slate-300">
-              Publication transaction hash
-              <input value={routeImportHash} onChange={(event) => setRouteImportHash(event.target.value)} className="field font-mono text-xs" placeholder="0x…" />
-            </label>
-            <button type="button" className="secondary-button" onClick={() => void importPublicationReceipt()} disabled={importingRoute || configuredCanonicalChains.length === 0}>
-              {importingRoute ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
-              Verify and import
-            </button>
-          </div>
-          <p className="text-xs leading-5 text-slate-500">Use the import control after publishing to add the transaction to Nexora’s hosted records. You can submit the same verified hash again.</p>
-        </section>
-      ) : null}
-
-      <section className="panel grid gap-4 lg:grid-cols-[1fr_0.8fr]">
-        <div>
-          <p className="section-kicker">Agent service directory</p>
-          <h2 className="mt-2 text-2xl font-semibold text-white">Purchase-ready tools with USDC settlement on Arc, Base, and Arbitrum</h2>
-          <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
-            <TrustFact icon={ReceiptText} label="Receipts" value="Ledger verified" />
-            <TrustFact icon={ShieldCheck} label="Policy" value="Agent guarded" />
-            <TrustFact icon={Sparkles} label="Featured" value={`${featuredServices} curated`} />
-          </div>
-        </div>
-        <div className="surface p-4">
-          <p className="text-sm font-semibold text-white">Marketplace quality gates</p>
-          <div className="mt-3 grid gap-2">
-            {["Standard x402 seller endpoint", "Structured input and output schema", "Receipt link after settlement", "Publisher address visible"].map((item) => (
-              <div key={item} className="flex items-center gap-2 text-sm text-slate-300">
-                <CheckCircle2 size={15} className="text-mint" />
-                {item}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {snapshot.error ? <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta shadow-[0_0_20px_rgba(236,72,153,0.15)]">{snapshot.error instanceof Error ? snapshot.error.message : "Marketplace data is unavailable."}</p> : null}
-
-      <div className="panel grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-        <div>
-          <div className="flex items-center gap-2.5 text-sm font-bold text-white">
-            <ShieldCheck size={18} className="text-mint drop-shadow-[0_0_12px_rgba(110,231,183,0.5)]" />
-            Agent and settlement network
-          </div>
-          <p className="mt-1 text-xs leading-5 text-slate-400">The saved agent-wallet network selects each service route. Changing it here does not switch the connected wallet.</p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-[auto_auto] sm:items-center">
-          <AgentPicker agents={agents} value={selectedAgent ?? undefined} onChange={selectAgent} />
-          <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/[0.1] bg-white/[0.03] p-1">
-            {marketplaceSettlementChains.map((target) => {
-              const available = selectedAgentWalletChains.includes(target.id);
-              const active = settlementChainId === target.id;
-              return (
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Memo privacy</p>
+            <div className="flex flex-wrap gap-1 rounded-lg border border-white/[0.1] bg-white/[0.03] p-1">
+              {PRIVACY_OPTIONS.map((option) => (
                 <button
-                  key={target.id}
+                  key={option.value}
                   type="button"
-                  onClick={() => selectSettlementChain(target.id)}
-                  disabled={!available}
-                  title={available ? `Use ${target.name} for Marketplace settlement` : `Create or backfill the ${target.name} agent wallet first`}
-                  className={`min-h-9 rounded-md px-2 text-xs font-semibold transition ${
-                    active
-                      ? "bg-mint/15 text-mint"
-                      : available
-                        ? "text-slate-300 hover:bg-white/[0.06] hover:text-white"
-                        : "cursor-not-allowed text-slate-600"
+                  onClick={() => setPrivacyScope(option.value)}
+                  title={option.copy}
+                  className={`rounded-md px-2.5 py-2 text-xs font-semibold transition ${
+                    privacyScope === option.value ? "bg-mint/15 text-mint" : "text-slate-400 hover:text-white"
                   }`}
                 >
-                  {shortMarketplaceChainLabel(target.id)}
+                  {option.label}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
         </div>
+        <div className="text-xs leading-5 text-slate-500 lg:max-w-xs lg:text-right">
+          Agent network selects the service route. It does not switch your connected wallet.
+        </div>
         {selectedAgent && selectedAgentWalletChains.length < marketplaceSettlementChains.length ? (
-          <p className="text-xs text-amber lg:col-span-2">This agent is missing one or more chain wallets. Use the Agents page backfill action before selecting those Marketplace routes.</p>
-        ) : null}
-        {selectedAgentChainWallet?.address && !selectedAgentPolicyReady ? (
-          <p className="text-xs leading-5 text-amber lg:col-span-2">
-            This agent has no onchain policy receipt recorded on {marketplaceChainLabel(settlementChainId)}. Ledger settlement requires that receipt; Circle Gateway purchases still use the agent's saved Nexora policy.{" "}
-            <a href="/settings/policies" onClick={(event) => navigate(event, "/settings/policies")} className="font-semibold underline underline-offset-2">Open Agent Policies</a>
-            {" "}to enable the ledger route too.
+          <p className="text-xs text-amber lg:col-span-2">
+            This agent is missing chain wallets.{" "}
+            <a href="/agents" onClick={(event) => navigate(event, "/agents")} className="font-semibold underline underline-offset-2">Open Agents</a>
+            {" "}to backfill before selecting those routes.
           </p>
         ) : null}
-        {selectedAgentChainWallet?.address && selectedAgentNeedsNativeGas ? (
-          <p className="text-xs leading-5 text-cyan lg:col-span-2">
-            Ledger settlement from this EOA needs native testnet ETH on {marketplaceChainLabel(settlementChainId)}. Circle Gateway Nanopayments do not require the agent to hold native gas.
-          </p>
-        ) : null}
-      </div>
+      </section>
 
-      <div className="panel flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-bold text-white">Memo privacy</p>
-          <p className="mt-1 text-xs text-slate-400">Choose what purchase context is written into public memo data.</p>
+      {/* Search + categories */}
+      <section className="panel space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.04] px-3">
+            <Search size={16} className="shrink-0 text-slate-500" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search services…"
+              className="w-full bg-transparent py-2.5 text-sm text-white outline-none placeholder:text-slate-500"
+            />
+          </div>
+          <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)} className="field max-w-[180px] bg-slate-950 text-sm text-white">
+            <option value="featured">Featured first</option>
+            <option value="priceAsc">Price: low to high</option>
+            <option value="priceDesc">Price: high to low</option>
+            <option value="name">Name: A–Z</option>
+          </select>
         </div>
-        <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-3">
-          {PRIVACY_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setPrivacyScope(option.value)}
-              className={`rounded-lg border px-3 py-2 text-left text-sm transition ${privacyScope === option.value ? "border-mint/40 bg-mint/10 text-white" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-mint/30"}`}
-            >
-              <span className="block font-semibold">{option.label}</span>
-              <span className="mt-1 block text-xs text-slate-500">{option.copy}</span>
-            </button>
-          ))}
-        </div>
-      </div>
 
-      {/* Search + filter + sort */}
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-        {CATEGORIES.map((category) => {
-          const Icon = category.icon;
-          const active = categoryFilter === category.key;
-          return (
-            <button
-              key={category.key}
-              type="button"
-              onClick={() => setCategoryFilter(category.key)}
-              className={`min-h-[86px] rounded-xl border px-3 py-3 text-left transition ${active ? "border-mint/40 bg-mint/10 text-white shadow-[0_0_24px_rgba(110,231,183,0.08)]" : "border-white/[0.1] bg-white/[0.04] text-slate-300 hover:border-mint/30 hover:text-white"}`}
-            >
-              <span className="flex items-center justify-between gap-3">
-                <span className="flex min-w-0 items-center gap-2 text-sm font-bold">
-                  <Icon size={15} className={active ? "text-mint" : "text-slate-400"} />
-                  {category.label}
-                </span>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${active ? "bg-mint/15 text-mint" : "bg-white/[0.06] text-slate-400"}`}>{categoryCounts[category.key] ?? 0}</span>
-              </span>
-              <span className="mt-2 block text-xs leading-5 text-slate-500">{MARKETPLACE_CATEGORY_DESCRIPTIONS[category.key]}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.04] px-3">
-          <Search size={16} className="shrink-0 text-slate-500" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search services…"
-            className="w-full bg-transparent py-2.5 text-sm text-white outline-none placeholder:text-slate-500"
-          />
-        </div>
-        <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)} className="field max-w-[180px] bg-slate-950 text-sm text-white">
-          <option value="featured">Featured first</option>
-          <option value="priceAsc">Price: low to high</option>
-          <option value="priceDesc">Price: high to low</option>
-          <option value="name">Name: A–Z</option>
-        </select>
-      </div>
-      {kinds.length > 1 ? (
         <div className="flex flex-wrap gap-2">
-          <FilterChip label="All" active={kindFilter === "all"} onClick={() => setKindFilter("all")} />
-          {kinds.map((kind) => (
-            <FilterChip key={kind} label={formatKind(kind)} active={kindFilter === kind} onClick={() => setKindFilter(kind)} />
-          ))}
-        </div>
-      ) : null}
-
-      {snapshot.isLoading ? (
-        <div className="grid gap-5 lg:grid-cols-2">
-          {[0, 1].map((index) => (
-            <div key={index} className="panel space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="shimmer h-12 w-12 rounded-xl" />
-                <div className="flex-1 space-y-2">
-                  <div className="shimmer h-4 w-40 rounded" />
-                  <div className="shimmer h-3 w-24 rounded" />
-                </div>
-              </div>
-              <div className="shimmer h-16 w-full rounded-xl" />
-              <div className="shimmer h-11 w-full rounded-xl" />
-            </div>
-          ))}
-        </div>
-      ) : serviceGroups.length === 0 ? (
-        !isConnected ? (
-          <EmptyState icon={<Wallet size={26} />} title="Connect your wallet" copy="Connect a wallet to browse and purchase x402 services, or publish your own." />
-        ) : (
-          <EmptyState
-            icon={<Store size={26} />}
-            title="No APIs published yet"
-            copy="Be the first to publish an x402 service priced per request in USDC."
-            action={<a href="/marketplace/new" onClick={(event) => navigate(event, "/marketplace/new")} className="action-button"><Plus size={16} /> Publish API</a>}
-          />
-        )
-      ) : visibleServices.length === 0 ? (
-        <EmptyState icon={<Search size={26} />} title="No matches" copy="No services match your search or filter. Try a different term or clear the filter." />
-      ) : (
-        <div className="grid gap-5 lg:grid-cols-2">
-          {visibleServices.map((group) => {
-            const route = routeForChain(group, settlementChainId, canonicalCatalog?.publisherAddress);
-            const displayService = route ?? group.service;
-            const gatewayAvailable = Boolean(
-              gatewayCatalog?.ready
-              && gatewayCatalog.networkDetails.some((network) => network.chainId === settlementChainId)
-              && gatewayCatalog.services.some((service) => service.endpointHash === displayService.endpointHash)
-            );
-            const preferGateway = gatewayAvailable && settlementChainId !== arcTestnet.id;
-            const settlementRoute = preferGateway ? null : route;
+          {CATEGORIES.map((category) => {
+            const Icon = category.icon;
+            const active = categoryFilter === category.key;
             return (
-              <ServiceCard
-                key={group.key}
-                service={displayService}
-                route={settlementRoute}
-                gatewayAvailable={gatewayAvailable}
-                availableChainIds={[
-                  ...group.routes.map((item) => item.settlementChainId).filter((value): value is number => typeof value === "number"),
-                  ...(gatewayCatalog?.ready && gatewayCatalog.services.some((service) => service.endpointHash === displayService.endpointHash)
-                    ? gatewayCatalog.networkDetails.map((network) => network.chainId)
-                    : [])
-                ]}
-                selectedChainId={settlementChainId}
-                busy={busyId === group.key}
-                disabled={!isConnected || !selectedAgent || (!settlementRoute && !gatewayAvailable) || Boolean(busyId)}
-                input={serviceInputs[group.key] ?? ""}
-                onInput={(value) => setServiceInputs((current) => ({...current, [group.key]: value}))}
-                onSample={() => setServiceInputs((current) => ({...current, [group.key]: sampleInputForService(displayService)}))}
-                onPurchase={() => preferGateway
-                  ? void purchaseGatewayService(displayService, group.key)
-                  : settlementRoute
-                    ? void purchase(settlementRoute, group.key)
-                    : gatewayAvailable
-                    ? void purchaseGatewayService(displayService, group.key)
-                    : undefined}
-                result={serviceResults[group.key]}
-                onViewResult={() => {
-                  const result = serviceResults[group.key];
-                  if (result) setResultDialog({service: displayService, result});
-                }}
-              />
+              <button
+                key={category.key}
+                type="button"
+                onClick={() => setCategoryFilter(category.key)}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                  active
+                    ? "border-mint/35 bg-mint/15 text-mint"
+                    : "border-white/[0.1] bg-white/[0.03] text-slate-400 hover:text-white"
+                }`}
+              >
+                <Icon size={13} />
+                {category.label}
+                <span className={active ? "text-mint/80" : "text-slate-500"}>{categoryCounts[category.key] ?? 0}</span>
+              </button>
             );
           })}
         </div>
-      )}
+        <p className="text-xs text-slate-500">{MARKETPLACE_CATEGORY_DESCRIPTIONS[categoryFilter]}</p>
+
+        {kinds.length > 1 ? (
+          <div className="flex flex-wrap gap-2">
+            <FilterChip label="All kinds" active={kindFilter === "all"} onClick={() => setKindFilter("all")} />
+            {kinds.map((kind) => (
+              <FilterChip key={kind} label={formatKind(kind)} active={kindFilter === kind} onClick={() => setKindFilter(kind)} />
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      {recentPurchases.length > 0 ? (
+        <section className="panel !py-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-sm font-bold text-white">Recent purchases</p>
+            <button type="button" className="text-xs font-semibold text-mint hover:text-white" onClick={() => navigateTo("/payments")}>
+              View receipts
+            </button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {recentPurchases.map((payment) => (
+              <button
+                key={payment.id}
+                type="button"
+                onClick={() => buyAgain(payment)}
+                className="surface shrink-0 px-3 py-2 text-left transition hover:border-mint/30"
+              >
+                <p className="max-w-[160px] truncate text-sm font-semibold text-white">{payment.serviceName}</p>
+                <p className="mt-1 text-xs text-mint">${Number(payment.amountUsdc || 0).toFixed(2)}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {snapshot.error ? (
+        <p className="rounded-xl border border-magenta/35 bg-gradient-to-br from-magenta/15 to-magenta/10 p-4 text-sm font-semibold text-magenta">
+          {snapshot.error instanceof Error ? snapshot.error.message : "Marketplace data is unavailable."}
+        </p>
+      ) : null}
+
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0 space-y-5">
+          {showFeaturedServices ? (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Sparkles size={16} className="text-amber" />
+                <h2 className="text-sm font-bold text-white">Featured for service</h2>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {featuredServices.slice(0, 6).map((group) => {
+                  const resolved = resolveGroupRoutes(group);
+                  return (
+                    <BrowseServiceCard
+                      key={`featured-${group.key}`}
+                      service={resolved.displayService}
+                      availableChainIds={resolved.availableChainIds}
+                      selectedChainId={settlementChainId}
+                      gatewayAvailable={resolved.gatewayAvailable}
+                      hasLedger={Boolean(resolved.route)}
+                      selected={selectedGroupKey === group.key}
+                      compact
+                      onSelect={() => selectService(group)}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          {snapshot.isLoading ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {[0, 1, 2, 3, 4, 5].map((index) => (
+                <div key={index} className="panel space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="shimmer h-12 w-12 rounded-xl" />
+                    <div className="flex-1 space-y-2">
+                      <div className="shimmer h-4 w-40 rounded" />
+                      <div className="shimmer h-3 w-24 rounded" />
+                    </div>
+                  </div>
+                  <div className="shimmer h-12 w-full rounded-xl" />
+                </div>
+              ))}
+            </div>
+          ) : serviceGroups.length === 0 ? (
+            !isConnected ? (
+              <EmptyState icon={<Wallet size={26} />} title="Connect your wallet" copy="Connect a wallet to browse and purchase x402 services, or publish your own." />
+            ) : (
+              <EmptyState
+                icon={<Store size={26} />}
+                title="No APIs published yet"
+                copy="Be the first to publish an x402 service priced per request in USDC."
+                action={<a href="/marketplace/new" onClick={(event) => navigate(event, "/marketplace/new")} className="action-button"><Plus size={16} /> Publish API</a>}
+              />
+            )
+          ) : visibleServices.length === 0 ? (
+            <EmptyState
+              icon={<Search size={26} />}
+              title="No matches"
+              copy="No services match your search or filter."
+              action={
+                <button
+                  type="button"
+                  className="secondary-button text-xs"
+                  onClick={() => {
+                    setQuery("");
+                    setCategoryFilter("all");
+                    setKindFilter("all");
+                  }}
+                >
+                  Clear filters
+                </button>
+              }
+            />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {visibleServiceCards.map((group) => {
+                const resolved = resolveGroupRoutes(group);
+                return (
+                  <BrowseServiceCard
+                    key={group.key}
+                    service={resolved.displayService}
+                    availableChainIds={resolved.availableChainIds}
+                    selectedChainId={settlementChainId}
+                    gatewayAvailable={resolved.gatewayAvailable}
+                    hasLedger={Boolean(resolved.route)}
+                    selected={selectedGroupKey === group.key}
+                    onSelect={() => selectService(group)}
+                  />
+                );
+              })}
+            </div>
+          )}
+
+        </div>
+
+        <aside className="xl:sticky xl:top-6 space-y-4">
+          <CheckoutPanel
+            group={selectedGroup}
+            resolved={selectedResolved}
+            selectedAgent={selectedAgent}
+            settlementChainId={settlementChainId}
+            privacyScope={privacyScope}
+            policyReady={selectedAgentPolicyReady}
+            needsGas={selectedAgentNeedsNativeGas}
+            walletReady={Boolean(selectedAgentChainWallet?.address)}
+            isConnected={isConnected}
+            busy={Boolean(busyId && selectedGroup && busyId === selectedGroup.key)}
+            disabledReason={purchaseDisabledReason}
+            onConfigure={() => {
+              if (!selectedGroup) return;
+              setDetailTab("request");
+              setDetailDialogOpen(true);
+            }}
+            onBuy={() => {
+              if (selectedGroup) runPurchase(selectedGroup);
+            }}
+          />
+        </aside>
+      </div>
+
+      {selectedGroup && selectedResolved ? (
+        <ServiceDetailDialog
+          open={detailDialogOpen}
+          group={selectedGroup}
+          service={selectedResolved.displayService}
+          route={selectedResolved.route}
+          gatewayAvailable={selectedResolved.gatewayAvailable}
+          preferGateway={selectedResolved.preferGateway}
+          selectedChainId={settlementChainId}
+          tab={detailTab}
+          onTab={setDetailTab}
+          formValues={formValuesFor(selectedGroup.key, selectedResolved.displayService)}
+          onFormValues={(values) => setServiceFormValues((current) => ({...current, [selectedGroup.key]: values}))}
+          onSample={() => setServiceFormValues((current) => ({
+            ...current,
+            [selectedGroup.key]: sampleArgsForService(selectedResolved.displayService)
+          }))}
+          routeMode={selectedResolved.preferGateway ? "gateway" : "ledger"}
+          onRouteMode={(mode) => setRouteModeOverride((current) => ({...current, [selectedGroup.key]: mode}))}
+          bothRoutes={Boolean(selectedResolved.route && selectedResolved.gatewayAvailable)}
+          result={serviceResults[selectedGroup.key]}
+          onViewResult={() => {
+            const result = serviceResults[selectedGroup.key];
+            if (result) setResultDialog({service: selectedResolved.displayService, result});
+          }}
+          onClose={() => setDetailDialogOpen(false)}
+        />
+      ) : null}
+
+      {isCanonicalPublisher ? (
+        <section className="panel space-y-3">
+          <button type="button" onClick={() => setPublisherOpen((value) => !value)} className="flex w-full items-center justify-between gap-3 text-left">
+            <div>
+              <p className="section-kicker">Publisher tools</p>
+              <h2 className="mt-2 text-lg font-semibold text-white">Canonical route management</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                {ownedMissingRouteCount > 0
+                  ? `${ownedMissingRouteCount} verified route${ownedMissingRouteCount === 1 ? "" : "s"} still missing across configured networks.`
+                  : "All configured networks have verified routes for the canonical catalog."}
+              </p>
+            </div>
+            {publisherOpen ? <ChevronDown size={18} className="text-slate-500" /> : <ChevronRight size={18} className="text-slate-500" />}
+          </button>
+          {publisherOpen ? (
+            <div className="space-y-4 border-t border-white/[0.08] pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {ownedMissingRouteCount > 0 ? (
+                  <button type="button" className="action-button" onClick={() => void publishOwnedMissingRoutes()} disabled={publishingMissingRoutes}>
+                    {publishingMissingRoutes ? <Loader2 size={16} className="animate-spin" /> : <Route size={16} />}
+                    {publishingMissingRoutes ? "Publishing routes…" : "Publish missing routes"}
+                  </button>
+                ) : (
+                  <span className="status-pill border-mint/25 bg-mint/10 text-mint">Routes synchronized</span>
+                )}
+              </div>
+              <div className="surface grid gap-3 p-4 lg:grid-cols-[190px_minmax(0,1fr)_auto] lg:items-end">
+                <label className="grid gap-2 text-xs font-semibold text-slate-300">
+                  Settlement network
+                  <select value={routeImportChainId} onChange={(event) => setRouteImportChainId(Number(event.target.value))} className="field bg-slate-950 text-sm text-white">
+                    {configuredCanonicalChains.map((target) => <option key={target.chainId} value={target.chainId}>{target.label}</option>)}
+                  </select>
+                </label>
+                <label className="grid gap-2 text-xs font-semibold text-slate-300">
+                  Publication transaction hash
+                  <input value={routeImportHash} onChange={(event) => setRouteImportHash(event.target.value)} className="field font-mono text-xs" placeholder="0x…" />
+                </label>
+                <button type="button" className="secondary-button" onClick={() => void importPublicationReceipt()} disabled={importingRoute || configuredCanonicalChains.length === 0}>
+                  {importingRoute ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                  Verify and import
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* Mobile sticky buy bar */}
+      {selectedGroup && selectedResolved ? (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.1] bg-slate-950/95 px-4 py-3 backdrop-blur-xl xl:hidden">
+          <div className="mx-auto flex max-w-3xl items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-white">{selectedResolved.displayService.name}</p>
+              <p className="text-xs text-mint">${selectedResolved.displayService.pricePerUnitUsdc} / request</p>
+            </div>
+            <button
+              type="button"
+              className="action-button shrink-0 px-4 py-2 text-sm"
+              disabled={Boolean(purchaseDisabledReason) || Boolean(busyId)}
+              onClick={() => runPurchase(selectedGroup)}
+            >
+              {busyId === selectedGroup.key ? <Loader2 size={16} className="animate-spin" /> : null}
+              Buy
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <ServiceResultDialog dialog={resultDialog} onClose={() => setResultDialog(null)} />
       <NetworkSwitchDialog
@@ -775,18 +984,6 @@ export default function MarketplacePage() {
         }}
         onConfirm={() => void confirmNetworkSwitch()}
       />
-    </div>
-  );
-}
-
-function TrustFact({icon: Icon, label, value}: {icon: LucideIcon; label: string; value: string}) {
-  return (
-    <div className="surface px-3 py-3">
-      <span className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-slate-500">
-        <Icon size={14} className="text-orchid" />
-        {label}
-      </span>
-      <p className="mt-2 text-sm font-semibold text-white">{value}</p>
     </div>
   );
 }
@@ -803,194 +1000,541 @@ function FilterChip({label, active, onClick}: {label: string; active: boolean; o
   );
 }
 
-function ServiceCard({
+function BrowseServiceCard({
+  service,
+  availableChainIds,
+  selectedChainId,
+  gatewayAvailable,
+  hasLedger,
+  selected,
+  compact,
+  onSelect
+}: {
+  service: Service;
+  availableChainIds: number[];
+  selectedChainId: number;
+  gatewayAvailable: boolean;
+  hasLedger: boolean;
+  selected: boolean;
+  compact?: boolean;
+  onSelect: () => void;
+}) {
+  const Icon = kindIcon(service.manifest.kind);
+  const category = serviceCategory(service);
+  const trust = service.trust;
+  const ready = hasLedger || gatewayAvailable;
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`panel w-full text-left transition hover:border-mint/30 ${selected ? "border-mint/40 ring-1 ring-mint/20" : ""} ${compact ? "!p-4" : ""}`}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.1] bg-gradient-to-br from-plasma/15 to-plasma/5 text-orchid">
+          <Icon size={20} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h3 className="truncate text-base font-bold text-white">{service.name}</h3>
+                {service.featured ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber/30 bg-amber/10 px-2 py-0.5 text-[10px] font-bold text-amber">
+                    <Star size={10} /> Featured
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">{service.manifest.description}</p>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="text-base font-bold text-mint">${service.pricePerUnitUsdc}</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-500">/ req</p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <span className="status-pill">{formatCategory(category)}</span>
+            <span className="status-pill">{formatKind(service.manifest.kind)}</span>
+            {hasLedger ? <span className="status-pill border-mint/25 bg-mint/10 text-mint">On-chain ledger</span> : null}
+            {gatewayAvailable ? <span className="status-pill border-cyan/25 bg-cyan/10 text-cyan">Circle Gateway</span> : null}
+            {!ready ? <span className="status-pill border-amber/25 bg-amber/10 text-amber">Not on this network</span> : null}
+            {trust ? <TrustBadge score={trust.score} tier={trust.tier} /> : null}
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-1">
+            {marketplaceSettlementChains.map((target) => {
+              const available = availableChainIds.includes(target.id);
+              const active = target.id === selectedChainId;
+              return (
+                <span
+                  key={target.id}
+                  className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${
+                    active
+                      ? available ? "border-mint/30 bg-mint/10 text-mint" : "border-amber/30 bg-amber/10 text-amber"
+                      : available ? "border-white/[0.08] text-slate-400" : "border-white/[0.05] text-slate-600"
+                  }`}
+                >
+                  {shortMarketplaceChainLabel(target.id)}
+                </span>
+              );
+            })}
+          </div>
+
+          <p className="mt-3 text-xs font-semibold text-orchid">View service →</p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ServiceDetailDialog({
+  open,
+  ...props
+}: Parameters<typeof ServiceDetailPanel>[0] & {open: boolean}) {
+  const {onClose} = props;
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+      <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} aria-label="Close service detail" />
+      <div className="relative z-10 max-h-[88vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-white/[0.12] bg-slate-950 shadow-2xl shadow-black/40">
+        <ServiceDetailPanel {...props} modal />
+      </div>
+    </div>
+  );
+}
+
+function ServiceDetailPanel({
+  group,
   service,
   route,
   gatewayAvailable,
-  availableChainIds,
+  preferGateway,
   selectedChainId,
-  busy,
-  disabled,
-  input,
-  onInput,
+  tab,
+  onTab,
+  formValues,
+  onFormValues,
   onSample,
-  onPurchase,
+  routeMode,
+  onRouteMode,
+  bothRoutes,
   result,
-  onViewResult
+  onViewResult,
+  onClose,
+  modal = false
 }: {
+  group: ServiceGroup;
   service: Service;
   route: Service | null;
   gatewayAvailable: boolean;
-  availableChainIds: number[];
+  preferGateway: boolean;
   selectedChainId: number;
-  busy: boolean;
-  disabled: boolean;
-  input: string;
-  onInput: (value: string) => void;
+  tab: DetailTab;
+  onTab: (tab: DetailTab) => void;
+  formValues: Record<string, unknown>;
+  onFormValues: (values: Record<string, unknown>) => void;
   onSample: () => void;
-  onPurchase: () => void;
+  routeMode: RouteMode;
+  onRouteMode: (mode: RouteMode) => void;
+  bothRoutes: boolean;
   result: unknown;
   onViewResult: () => void;
+  onClose: () => void;
+  modal?: boolean;
 }) {
   const Icon = kindIcon(service.manifest.kind);
-  const inputLabel = serviceInputLabel(service);
-  const category = serviceCategory(service);
-  const readiness = serviceReadiness(service);
   const trust = service.trust;
-  const multilineInput = service.manifest.kind === "agent_transaction_preflight";
-  const sampleEnabled = service.manifest.kind !== "agent_transaction_preflight";
-  const selectedChainName = marketplaceChainLabel(selectedChainId);
   const explorer = marketplaceSettlementChains.find((item) => item.id === (route?.settlementChainId ?? service.settlementChainId))
     ?.blockExplorers.default.url
     ?? arcTestnet.explorerUrl;
-  return (
-    <article className="group panel relative overflow-hidden transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
-      <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-plasma/[0.06] blur-3xl transition-all duration-500 group-hover:bg-plasma/[0.12]" />
 
-      <div className="relative flex items-start justify-between gap-4">
+  return (
+    <section className={`${modal ? "space-y-5 p-5 sm:p-6" : "panel space-y-5 scroll-mt-6"}`} id="service-detail">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/[0.1] bg-gradient-to-br from-plasma/15 to-plasma/5 text-orchid">
             <Icon size={22} />
           </span>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="truncate text-lg font-bold text-white">{service.name}</h3>
-              {service.featured ? (
-                <span className="flex items-center gap-1 rounded-full border border-amber/30 bg-amber/10 px-2 py-0.5 text-[11px] font-bold text-amber">
-                  <Star size={11} />
-                  Featured
-                </span>
+            <p className="section-kicker">Service detail</p>
+            <h2 className="mt-2 truncate text-2xl font-semibold text-white">{service.name}</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">{service.manifest.description}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="status-pill border-mint/25 bg-mint/10 text-mint">${service.pricePerUnitUsdc} / request</span>
+              <span className="status-pill">{formatCategory(serviceCategory(service))}</span>
+              <span className="status-pill">{formatKind(service.manifest.kind)}</span>
+              {preferGateway ? (
+                <span className="status-pill border-cyan/25 bg-cyan/10 text-cyan">Circle Gateway</span>
+              ) : route ? (
+                <span className="status-pill border-mint/25 bg-mint/10 text-mint">On-chain ledger</span>
               ) : null}
-              {route?.chainServiceId || gatewayAvailable ? (
-                <span className="flex items-center gap-1 rounded-full border border-mint/25 bg-mint/10 px-2 py-0.5 text-[11px] font-bold text-mint">
-                  <CheckCircle2 size={11} />
-                  {route?.chainServiceId ? `${shortMarketplaceChainLabel(selectedChainId)} ledger` : "Gateway x402"}
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 rounded-full border border-amber/25 bg-amber/10 px-2 py-0.5 text-[11px] font-bold text-amber">
-                  <X size={11} />
-                  Route unavailable
-                </span>
-              )}
-              {trust ? <TrustBadge score={trust.score} tier={trust.tier} /> : null}
             </div>
-            <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-400">
-              <AgentAvatar seed={service.publisherAddress} size={16} />
-              {shortAddress(service.publisherAddress)}
-              <a href={`${explorer.replace(/\/$/, "")}/address/${service.publisherAddress}`} target="_blank" rel="noreferrer" className="text-slate-500 transition hover:text-orchid" aria-label="View publisher on explorer">
-                <ExternalLink size={12} />
-              </a>
-            </p>
           </div>
         </div>
-        <div className="shrink-0 rounded-xl border border-mint/25 bg-mint/10 px-3 py-1.5 text-right">
-          <p className="text-lg font-bold text-mint">${service.pricePerUnitUsdc}</p>
-          <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">/ request</p>
+        <div className="flex gap-2">
+          {route ? (
+            <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(route.id)}`)} className="secondary-button px-3 py-2 text-xs">
+              <ArrowUpRight size={14} /> Public page
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} className="secondary-button px-3 py-2 text-xs" aria-label="Close detail">
+            <X size={14} />
+          </button>
         </div>
       </div>
 
-      <div className="relative mt-4 grid grid-cols-3 gap-1 rounded-lg border border-white/[0.1] bg-white/[0.03] p-1">
-        {marketplaceSettlementChains.map((target) => {
-          const available = availableChainIds.includes(target.id);
-          const active = target.id === selectedChainId;
-          return (
-            <div
-              key={target.id}
-              title={available ? `${target.name} USDC route is available` : `${target.name} route has not been published`}
-              className={`flex min-h-9 items-center justify-center gap-1 rounded-md px-2 text-xs font-semibold ${
-                active
-                  ? available ? "bg-mint/15 text-mint" : "bg-amber/10 text-amber"
-                  : available ? "text-slate-300" : "text-slate-600"
-              }`}
-            >
-              {available ? <CheckCircle2 size={12} /> : <X size={12} />}
-              {shortMarketplaceChainLabel(target.id)}
+      <div className="flex flex-wrap gap-2 border-b border-white/[0.08] pb-1">
+        {([
+          ["overview", "Overview"],
+          ["request", "Request"],
+          ["payment", "Payment"],
+          ["trust", "Trust"]
+        ] as Array<[DetailTab, string]>).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onTab(key)}
+            className={`rounded-t-lg px-3 py-2 text-sm font-semibold transition ${
+              tab === key ? "bg-white/[0.06] text-white" : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "overview" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <MiniFact label="Publisher" value={shortAddress(service.publisherAddress)} mono />
+          <MiniFact label="Version" value={`v${service.manifest.version}`} />
+          <MiniFact label="Settlement" value={preferGateway ? `${marketplaceChainLabel(selectedChainId)} · Circle Gateway` : route ? `${marketplaceChainLabel(selectedChainId)} · Ledger verified` : "Route required"} />
+          <MiniFact label="Status" value={route ? serviceReadiness(service).label : gatewayAvailable ? "Gateway ready" : "Route required"} />
+          <div className="surface px-3 py-2 sm:col-span-2">
+            <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-500">Outputs</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {service.manifest.outputSchema.map((item) => <span key={item} className="status-pill">{item}</span>)}
             </div>
+          </div>
+          <a href={`${explorer.replace(/\/$/, "")}/address/${service.publisherAddress}`} target="_blank" rel="noreferrer" className="secondary-button w-fit text-xs">
+            <ExternalLink size={14} /> Publisher on explorer
+          </a>
+        </div>
+      ) : null}
+
+      {tab === "request" ? (
+        <SchemaRequestForm
+          service={service}
+          values={formValues}
+          onChange={onFormValues}
+          onSample={onSample}
+        />
+      ) : null}
+
+      {tab === "payment" ? (
+        <div className="space-y-4">
+          {bothRoutes ? (
+            <div>
+              <p className="mb-2 text-sm font-semibold text-white">Settlement route</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => onRouteMode("gateway")}
+                  className={`rounded-xl border p-3 text-left transition ${routeMode === "gateway" ? "border-cyan/40 bg-cyan/10" : "border-white/[0.1] bg-white/[0.03]"}`}
+                >
+                  <p className="text-sm font-bold text-white">Circle Gateway</p>
+                  <p className="mt-1 text-xs text-slate-400">Fast settlement via Gateway nanopayments. Policy checked by Nexora.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRouteMode("ledger")}
+                  className={`rounded-xl border p-3 text-left transition ${routeMode === "ledger" ? "border-mint/40 bg-mint/10" : "border-white/[0.1] bg-white/[0.03]"}`}
+                >
+                  <p className="text-sm font-bold text-white">On-chain ledger</p>
+                  <p className="mt-1 text-xs text-slate-400">Ledger receipt and memo on the selected settlement network.</p>
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <p className="text-sm text-slate-400">
+            Memo privacy and agent network are controlled in the top bar. Review the sticky checkout panel before buying.
+          </p>
+          {result ? (
+            <div className="surface flex flex-wrap items-center justify-between gap-3 p-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] text-orchid">Latest result</p>
+                <p className="mt-1 text-sm font-semibold text-white">{resultTitle(result)}</p>
+              </div>
+              <button type="button" onClick={onViewResult} className="secondary-button px-3 py-2 text-xs">View result</button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {tab === "trust" ? (
+        <div className="space-y-4">
+          {trust ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <TrustBadge score={trust.score} tier={trust.tier} />
+                <span className="text-sm text-slate-400">Score {trust.score}/100</span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <TrustMetric label="Settled" value={`${trust.settledPayments}`} />
+                <TrustMetric label="Buyers" value={`${trust.uniqueBuyers}`} />
+                <TrustMetric label="Volume" value={`$${trust.totalVolumeUsdc.toFixed(2)}`} />
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-400">New listing — trust metrics appear after settled purchases.</p>
+          )}
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <AgentAvatar seed={service.publisherAddress} size={20} />
+            <span className="font-mono">{shortAddress(service.publisherAddress)}</span>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function SchemaRequestForm({
+  service,
+  values,
+  onChange,
+  onSample
+}: {
+  service: Service;
+  values: Record<string, unknown>;
+  onChange: (values: Record<string, unknown>) => void;
+  onSample: () => void;
+}) {
+  const fields = service.manifest.inputSchema ?? [];
+  if (fields.length === 0) {
+    return (
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-6 text-sm text-slate-400">
+        This service does not require input fields.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-white">Request details</p>
+        <button type="button" onClick={onSample} className="text-xs font-bold text-mint hover:text-white">Use sample</button>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {fields.map((field) => {
+          const type = (field.type ?? "string").toLowerCase();
+          const value = values[field.name];
+          if (type.includes("bool")) {
+            return (
+              <label key={field.name} className="surface flex items-center justify-between gap-3 p-3 text-sm font-semibold text-slate-300 sm:col-span-2">
+                <span>{field.label}{field.required ? <span className="text-magenta"> *</span> : null}</span>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-mint"
+                  checked={Boolean(value)}
+                  onChange={(event) => onChange({...values, [field.name]: event.target.checked})}
+                />
+              </label>
+            );
+          }
+          const multiline = field.name.length > 20 || String(field.placeholder ?? "").length > 80 || service.manifest.kind === "agent_transaction_preflight";
+          return (
+            <label key={field.name} className={`grid gap-2 text-sm font-semibold text-slate-300 ${multiline ? "sm:col-span-2" : ""}`}>
+              <span>{field.label || field.name}{field.required ? <span className="text-magenta"> *</span> : null}</span>
+              {multiline ? (
+                <textarea
+                  className="field min-h-[120px] resize-y font-mono text-xs leading-5"
+                  value={value == null ? "" : String(value)}
+                  placeholder={field.placeholder ?? serviceInputPlaceholder(service)}
+                  onChange={(event) => onChange({...values, [field.name]: event.target.value})}
+                />
+              ) : (
+                <input
+                  className="field"
+                  type={type.includes("number") || type.includes("int") ? "number" : "text"}
+                  value={value == null ? "" : String(value)}
+                  placeholder={field.placeholder ?? serviceInputPlaceholder(service)}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    onChange({
+                      ...values,
+                      [field.name]: type.includes("number") || type.includes("int")
+                        ? (next === "" ? "" : Number(next))
+                        : next
+                    });
+                  }}
+                />
+              )}
+            </label>
           );
         })}
       </div>
-
-      <div className="relative mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
-        <StatusMetric icon={Layers} label="Settlement" value={route?.chainServiceId ? `${selectedChainName} · Ledger #${route.chainServiceId}` : gatewayAvailable ? `${selectedChainName} · Circle Gateway` : `No ${selectedChainName} route`} tone={route || gatewayAvailable ? "mint" : "amber"} />
-        <StatusMetric icon={Activity} label="Status" value={route ? readiness.label : gatewayAvailable ? "x402 ready" : "Route required"} tone={route ? readiness.tone : gatewayAvailable ? "mint" : "amber"} />
-        <StatusMetric icon={ReceiptText} label="Receipt" value={route ? (selectedChainId === arcTestnet.id ? "Memo + ledger" : "Ledger verified") : gatewayAvailable ? "Gateway + Nexora" : "After route publish"} tone={route || gatewayAvailable ? "mint" : "slate"} />
-        <StatusMetric icon={ShieldCheck} label="Trust" value={trust ? `${trust.score}/100` : "New"} tone={trust && trust.score >= 60 ? "mint" : trust && trust.score >= 40 ? "amber" : "slate"} />
-      </div>
-
-      {trust ? (
-        <div className="relative mt-4 grid gap-2 text-sm sm:grid-cols-3">
-          <TrustMetric label="Settled" value={`${trust.settledPayments}`} />
-          <TrustMetric label="Buyers" value={`${trust.uniqueBuyers}`} />
-          <TrustMetric label="Volume" value={`$${trust.totalVolumeUsdc.toFixed(2)}`} />
-        </div>
-      ) : null}
-
-      <div className="relative mt-4 rounded-xl border border-white/[0.1] bg-gradient-to-br from-white/[0.06] to-white/[0.03] p-5 backdrop-blur-sm">
-        <p className="text-sm font-semibold leading-6 text-white">{service.manifest.description}</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <span className="status-pill">{formatCategory(category)}</span>
-          <span className="status-pill">{formatKind(service.manifest.kind)}</span>
-          <span className="status-pill">v{service.manifest.version}</span>
-          {service.manifest.outputSchema.slice(0, 4).map((item) => <span key={item} className="status-pill">{item}</span>)}
-        </div>
-      </div>
-
-      {inputLabel ? (
-        <label className="relative mt-4 grid gap-2.5 text-sm font-semibold text-slate-300">
-          <span className="flex items-center justify-between gap-3">
-            {inputLabel}
-            {sampleEnabled ? (
-              <button type="button" onClick={onSample} className="text-xs font-bold text-mint transition hover:text-white">
-                Use sample
-              </button>
-            ) : null}
-          </span>
-          {multilineInput ? (
-            <textarea
-              className="field min-h-[120px] resize-y font-mono text-xs leading-5"
-              value={input}
-              onChange={(event) => onInput(event.target.value)}
-              placeholder={serviceInputPlaceholder(service)}
-            />
-          ) : (
-            <input
-              className="field"
-              value={input}
-              onChange={(event) => onInput(event.target.value)}
-              placeholder={serviceInputPlaceholder(service)}
-            />
-          )}
-        </label>
-      ) : null}
-
-      <div className="relative mt-4 flex items-center gap-3">
-        <button onClick={onPurchase} className="action-button flex-1" disabled={disabled}>
-          {busy ? <Loader2 size={16} className="animate-spin" /> : null}
-          {busy ? "Processing…" : route || gatewayAvailable ? `Purchase on ${shortMarketplaceChainLabel(selectedChainId)}` : `${shortMarketplaceChainLabel(selectedChainId)} route unavailable`}
-        </button>
-        {route ? (
-          <button type="button" onClick={() => navigateTo(`/marketplace/services/${encodeURIComponent(route.id)}`)} className="secondary-button px-3" aria-label="Public service page">
-            <ArrowUpRight size={16} />
-          </button>
-        ) : null}
-      </div>
-
-      {busy ? (
-        <div className="shimmer mt-4 h-20 w-full rounded-xl" />
-      ) : result ? (
-        <div className="surface mt-4 flex flex-wrap items-center justify-between gap-3 p-3">
-          <div className="min-w-0">
-            <p className="text-xs uppercase tracking-[0.16em] text-orchid">Latest result</p>
-            <p className="mt-1 truncate text-sm font-semibold text-white">{resultTitle(result)}</p>
-          </div>
-          <button type="button" onClick={onViewResult} className="secondary-button px-3 py-2 text-xs">
-            View result
-          </button>
-        </div>
-      ) : null}
-    </article>
+    </div>
   );
 }
+
+function CheckoutPanel({
+  group,
+  resolved,
+  selectedAgent,
+  settlementChainId,
+  privacyScope,
+  policyReady,
+  needsGas,
+  walletReady,
+  isConnected,
+  busy,
+  disabledReason,
+  onConfigure,
+  onBuy
+}: {
+  group: ServiceGroup | null;
+  resolved: ReturnType<typeof Object> | null | {
+    displayService: Service;
+    route: Service | null;
+    gatewayAvailable: boolean;
+    preferGateway: boolean;
+    settlementRoute: Service | null;
+  };
+  selectedAgent: Agent | null;
+  settlementChainId: number;
+  privacyScope: PrivacyScope;
+  policyReady: boolean;
+  needsGas: boolean;
+  walletReady: boolean;
+  isConnected: boolean;
+  busy: boolean;
+  disabledReason: string | null;
+  onConfigure: () => void;
+  onBuy: () => void;
+}) {
+  if (!group || !resolved || !("displayService" in resolved)) {
+    return (
+      <section className="panel space-y-3">
+        <p className="section-kicker">Checkout</p>
+        <h2 className="text-lg font-semibold text-white">Payment review</h2>
+        <div className="rounded-xl border border-dashed border-white/[0.12] px-4 py-10 text-center">
+          <Store size={22} className="mx-auto text-slate-500" />
+          <p className="mt-3 text-sm font-semibold text-white">Select a service</p>
+          <p className="mt-1 text-xs text-slate-400">Browse the catalog, then review price, agent, and route here.</p>
+        </div>
+      </section>
+    );
+  }
+
+  const service = resolved.displayService;
+  const ready = Boolean(resolved.settlementRoute || resolved.gatewayAvailable);
+
+  const checks = [
+    {ok: isConnected, label: "Wallet connected", fix: null as string | null},
+    {ok: Boolean(selectedAgent), label: "Agent selected", fix: "/agents"},
+    {ok: walletReady, label: "Agent wallet on network", fix: "/agents"},
+    {ok: ready, label: "Service route available", fix: null},
+    {
+      ok: resolved.preferGateway || policyReady || !walletReady,
+      label: resolved.preferGateway ? "Gateway policy path" : "On-chain policy recorded",
+      fix: "/settings/policies"
+    },
+    {
+      ok: resolved.preferGateway || !needsGas || !walletReady,
+      label: needsGas && !resolved.preferGateway ? "Native gas for ledger EOA" : "Gas requirement ok",
+      fix: null
+    }
+  ];
+
+  return (
+    <section className="panel space-y-4">
+      <div>
+        <p className="section-kicker">Checkout</p>
+        <h2 className="mt-2 text-lg font-semibold text-white">Payment review</h2>
+      </div>
+
+      <div className="surface p-3">
+        <p className="truncate text-sm font-bold text-white">{service.name}</p>
+        <p className="mt-1 text-xs text-slate-400 line-clamp-2">{service.manifest.description}</p>
+      </div>
+
+      <div className="grid gap-2 text-sm">
+        <ReviewRow label="Amount" value={`$${service.pricePerUnitUsdc}`} emphasize />
+        <ReviewRow label="Network" value={marketplaceChainLabel(settlementChainId)} />
+        <ReviewRow label="Route" value={resolved.preferGateway ? "Circle Gateway" : resolved.route ? "On-chain ledger" : "Unavailable"} />
+        <ReviewRow
+          label="Agent"
+          value={selectedAgent ? (selectedAgent.arcName || shortAddress(selectedAgent.address || selectedAgent.operatorAddress)) : "—"}
+        />
+        <ReviewRow label="Privacy" value={privacyScope} />
+      </div>
+
+      <div className="space-y-1.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Readiness</p>
+        {checks.map((check) => (
+          <div key={check.label} className="flex items-center justify-between gap-2 text-xs">
+            <span className="flex items-center gap-1.5 text-slate-300">
+              {check.ok ? <CheckCircle2 size={13} className="text-mint" /> : <X size={13} className="text-amber" />}
+              {check.label}
+            </span>
+            {!check.ok && check.fix ? (
+              <a href={check.fix} onClick={(event) => navigate(event, check.fix!)} className="font-semibold text-mint underline-offset-2 hover:underline">
+                Fix
+              </a>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      {disabledReason ? <p className="text-xs text-slate-500">{disabledReason}</p> : null}
+
+      <div className="grid gap-2">
+        <button type="button" className="secondary-button w-full text-sm" onClick={onConfigure}>
+          Configure request
+        </button>
+        <button
+          type="button"
+          className="action-button w-full text-sm"
+          disabled={Boolean(disabledReason) || busy}
+          onClick={onBuy}
+        >
+          {busy ? <Loader2 size={16} className="animate-spin" /> : null}
+          {busy ? "Settling payment…" : `Buy · $${service.pricePerUnitUsdc}`}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ReviewRow({label, value, emphasize}: {label: string; value: string; emphasize?: boolean}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-slate-500">{label}</span>
+      <span className={`truncate font-semibold ${emphasize ? "text-mint" : "text-white"}`}>{value}</span>
+    </div>
+  );
+}
+
+function MiniFact({label, value, mono}: {label: string; value: string; mono?: boolean}) {
+  return (
+    <span className="surface px-3 py-2">
+      <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-500">{label}</span>
+      <b className={`mt-1 block truncate text-white ${mono ? "font-mono text-xs" : ""}`}>{value}</b>
+    </span>
+  );
+}
+
 
 function NetworkSwitchDialog({
   pending,
@@ -1424,14 +1968,12 @@ function objectValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function groupMarketplaceServices(services: Service[], preferredPublisher?: string | null): ServiceGroup[] {
+function groupMarketplaceServices(services: Service[], preferredPublisher?: string | null, canonicalEndpointHashes = new Set<string>()): ServiceGroup[] {
   const groups = new Map<string, ServiceGroup>();
   for (const service of services) {
     const endpoint = service.endpointHash.trim().toLowerCase() || service.id;
-    // A publisher owns a logical service. The same endpoint hash from another
-    // publisher is a different listing and must never be merged into, hidden
-    // by, or routed through the canonical Nexora listing.
-    const key = `${service.publisherAddress.trim().toLowerCase()}:${endpoint}`;
+    const publisher = service.publisherAddress.trim().toLowerCase();
+    const key = canonicalEndpointHashes.has(endpoint) ? `canonical:${endpoint}` : `${publisher}:${endpoint}`;
     const existing = groups.get(key);
     if (!existing) {
       groups.set(key, {key, service, routes: [service]});
@@ -1464,20 +2006,30 @@ function gatewayDirectoryServices(catalog: GatewayCatalog | null): Service[] {
   }));
 }
 
-function marketplaceDirectoryServices(services: Service[], catalog: GatewayCatalog | null) {
+function marketplaceDirectoryServices(services: Service[], catalog: GatewayCatalog | null, canonicalCatalog: CanonicalCatalog | null) {
   if (!catalog?.sellerAddress) return services;
   const canonicalPublisher = catalog.sellerAddress.trim().toLowerCase();
+  const ledgerPublisher = canonicalCatalog?.publisherAddress?.trim().toLowerCase() ?? null;
 
   const reservedEndpoints = new Set(
     catalog.services.map((service) => service.endpointHash.trim().toLowerCase())
   );
+  const reservedNames = new Set(
+    catalog.services.map((service) => normalizedServiceName(service.name))
+  );
   const verifiedLedgerRoutes = services.filter((service) => {
     const endpoint = service.endpointHash.trim().toLowerCase();
-    if (!reservedEndpoints.has(endpoint)) return true;
-    return service.publisherAddress.trim().toLowerCase() === canonicalPublisher;
+    const name = normalizedServiceName(service.name);
+    if (!reservedEndpoints.has(endpoint)) return !reservedNames.has(name);
+    const publisher = service.publisherAddress.trim().toLowerCase();
+    return publisher === canonicalPublisher || (ledgerPublisher !== null && publisher === ledgerPublisher);
   });
 
-  return [...verifiedLedgerRoutes, ...gatewayDirectoryServices(catalog)];
+  return [...gatewayDirectoryServices(catalog), ...verifiedLedgerRoutes];
+}
+
+function normalizedServiceName(name: string) {
+  return name.trim().toLowerCase().replace(/\bgrowth\b/g, "").replace(/\s+/g, " ");
 }
 
 function routeForChain(group: ServiceGroup, chainId: number, preferredPublisher?: string | null) {

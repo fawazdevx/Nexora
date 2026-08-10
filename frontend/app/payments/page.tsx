@@ -70,7 +70,7 @@ export default function PaymentsPage() {
             <EmptyState
               icon={<ReceiptText size={26} />}
               title="No payment intents"
-              copy="Use Circle Bridge to inspect a paid service and create a Nexora payment intent."
+              copy="Use Circle Marketplace to inspect a paid service and create a Nexora payment intent."
               className="border-0 bg-transparent p-0 py-8 shadow-none"
             />
           ) : (

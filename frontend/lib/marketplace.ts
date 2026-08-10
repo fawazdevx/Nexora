@@ -80,13 +80,43 @@ export function sampleInputForService(service: MarketplaceService) {
   return service.manifest.inputSchema[0]?.placeholder ?? "";
 }
 
-export function executionArgs(service: {manifest: {kind: string; inputSchema: Array<{name: string}>}}, value: string) {
+export function executionArgs(
+  service: {manifest: {kind: string; inputSchema: Array<{name: string; type?: string; placeholder?: string}>}},
+  value: string | Record<string, unknown>
+) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  const text = typeof value === "string" ? value : "";
   const field = service.manifest.inputSchema[0]?.name;
-  if (field) return {[field]: value};
-  if (service.manifest.kind === "x_account_analyzer") return {handle: value};
-  if (service.manifest.kind === "website_analyzer") return {url: value};
-  if (service.manifest.kind === "github_repo_analyzer") return {repo: value};
+  if (field) return {[field]: text};
+  if (service.manifest.kind === "x_account_analyzer") return {handle: text};
+  if (service.manifest.kind === "website_analyzer") return {url: text};
+  if (service.manifest.kind === "github_repo_analyzer") return {repo: text};
   return {};
+}
+
+/** Build a sample request object from schema + known kind defaults. */
+export function sampleArgsForService(service: MarketplaceService): Record<string, unknown> {
+  const fields = service.manifest.inputSchema ?? [];
+  if (fields.length === 0) {
+    return executionArgs(service, sampleInputForService(service));
+  }
+  if (fields.length === 1) {
+    return executionArgs(service, sampleInputForService(service));
+  }
+  const out: Record<string, unknown> = {};
+  for (const field of fields) {
+    const type = (field.type ?? "string").toLowerCase();
+    if (type.includes("bool")) out[field.name] = false;
+    else if (type.includes("number") || type.includes("int")) out[field.name] = field.placeholder ? Number(field.placeholder) || 0 : 0;
+    else out[field.name] = field.placeholder ?? "";
+  }
+  // Prefer the single-field sample when the primary field is empty.
+  const primary = fields[0]?.name;
+  const sample = sampleInputForService(service);
+  if (primary && sample && !out[primary]) out[primary] = sample;
+  return out;
 }
 
 export function formatKind(value: string) {

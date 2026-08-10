@@ -1,5 +1,19 @@
 import {useEffect, useMemo, useState} from "react";
-import {AlertTriangle, CalendarClock, Clock, Copy, Database, Gauge, Loader2, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Timer, Users, Wallet, X} from "lucide-react";
+import {
+  AlertTriangle,
+  Clock,
+  Copy,
+  Database,
+  Gauge,
+  Loader2,
+  RotateCcw,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Users,
+  Wallet,
+  X
+} from "lucide-react";
 import toast from "react-hot-toast";
 import {useAccount} from "wagmi";
 import {chainLabel, contractAddressesForChain, isNexoraPolicyChain, waitForAgentPolicyRegistration, writeAgentPolicy} from "@/lib/contracts";
@@ -10,16 +24,43 @@ import {AgentPicker} from "@/components/AgentPicker";
 import {AgentAvatar} from "@/components/AgentAvatar";
 import {useAppSnapshot} from "@/hooks/useAppSnapshot";
 import {PlanSubscriptionCard} from "@/components/PlanSubscriptionCard";
+import {PolicySimulationPanel} from "@/components/PolicySimulationPanel";
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
-const POLICY_PRESETS: Array<{key: string; name: string; hint: string; icon: typeof ShieldCheck; daily: string; tx: string; weekly: string; monthly: string; cooldown: string; requireOnchain: boolean}> = [
+const POLICY_PRESETS: Array<{
+  key: string;
+  name: string;
+  hint: string;
+  icon: typeof ShieldCheck;
+  daily: string;
+  tx: string;
+  weekly: string;
+  monthly: string;
+  cooldown: string;
+  requireOnchain: boolean;
+}> = [
   {key: "conservative", name: "Conservative", hint: "$100/day · $10/tx · 1h cooldown", icon: ShieldCheck, daily: "100", tx: "10", weekly: "0", monthly: "0", cooldown: "3600", requireOnchain: true},
   {key: "standard", name: "Standard", hint: "$400/day · $45/tx", icon: Gauge, daily: "400", tx: "45", weekly: "0", monthly: "0", cooldown: "0", requireOnchain: false},
   {key: "high", name: "High volume", hint: "$2k/day · $5k/wk caps", icon: Sparkles, daily: "2000", tx: "200", weekly: "5000", monthly: "15000", cooldown: "0", requireOnchain: false}
 ];
 
-export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: string; onSelectAgent?: (id: string) => void} = {}) {
+type FormSection = "limits" | "access" | "guardrails" | "test";
+type SpendSnapshot = {day: number; week: number; month: number};
+
+export function PolicyForm({
+  selectedAgentId,
+  onSelectAgent,
+  spent,
+  hideAgentPicker = false,
+  embedded = false
+}: {
+  selectedAgentId?: string;
+  onSelectAgent?: (id: string) => void;
+  spent?: SpendSnapshot;
+  hideAgentPicker?: boolean;
+  embedded?: boolean;
+} = {}) {
   const {address, chain, isConnected} = useAccount();
   const snapshot = useAppSnapshot();
   const selectedChainId = chain?.id;
@@ -34,6 +75,10 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   const knownContracts = useMemo(() => new Set(contractOptions.map((item) => item.address.toLowerCase())), [contractOptions]);
   const agents = useMemo(() => snapshot.data?.agents ?? [], [snapshot.data?.agents]);
   const circleAgents = useMemo(() => agents.filter((agent) => agent.walletKind !== "external_eoa"), [agents]);
+  const marketplaceServices = useMemo(
+    () => (snapshot.data?.services ?? []).filter((service) => service.active).slice().sort((a, b) => a.name.localeCompare(b.name)),
+    [snapshot.data?.services]
+  );
   const storedBotAgent = useMemo(() => (
     address
       ? agents.find((agent) => (
@@ -52,7 +97,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   const agentId = selectedAgentId ?? internalId;
   const setAgentId = onSelectAgent ?? setInternalId;
 
-  const [tab, setTab] = useState<"basic" | "advanced">("basic");
+  const [section, setSection] = useState<FormSection>("limits");
   const [dailyLimit, setDailyLimit] = useState("400");
   const [transactionCap, setTransactionCap] = useState("45");
   const [weeklyLimit, setWeeklyLimit] = useState("0");
@@ -66,10 +111,12 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   const [serviceAllowlist, setServiceAllowlist] = useState("");
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [showCopyChooser, setShowCopyChooser] = useState(false);
+  const [copyTargets, setCopyTargets] = useState<string[]>([]);
 
   const selectedAgent = isBotPolicy
     ? storedBotAgent ?? draftBotAgent
-    : circleAgents.find((agent) => agent.id === agentId);
+    : circleAgents.find((agent) => agent.id === agentId) ?? circleAgents.find((agent) => agent.id === selectedAgentId);
   const arcChainId = Number(import.meta.env.VITE_ARC_CHAIN_ID ?? 5042002);
   const selectedChainWallet = selectedAgent?.chainWallets?.find((wallet) => wallet.chainId === selectedChainId)
     ?? (selectedChainId === arcChainId && selectedAgent
@@ -97,6 +144,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   const weeklyBelowDaily = Number(weeklyLimit) > 0 && Number(weeklyLimit) < Number(dailyLimit);
   const monthlyBelowWeekly = Number(monthlyLimit) > 0 && Number(weeklyLimit) > 0 && Number(monthlyLimit) < Number(weeklyLimit);
   const hasPremiumAutomation = Boolean(snapshot.data?.access?.premiumAgentAutomation);
+  const spend = spent ?? {day: 0, week: 0, month: 0};
 
   const advancedActive = [
     Number(weeklyLimit) > 0,
@@ -146,6 +194,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
     setContractAllowlist(selectedAgent.policy.contractAllowlist.join("\n"));
     setRecipientAllowlist(selectedAgent.policy.recipientAllowlist.join("\n"));
     setServiceAllowlist((selectedAgent.policy.v2?.serviceAllowlist ?? []).join("\n"));
+    setShowCopyChooser(false);
   }, [selectedAgent]);
 
   function addContract(addr: string) {
@@ -213,12 +262,15 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   }, [selectedAgent, dailyLimit, transactionCap, weeklyLimit, monthlyLimit, maxUnitsPerRequest, cooldownSeconds, expiresAt, requireOnchainPolicy, contractAllowlist, recipientAllowlist, serviceAllowlist, contractItems.length, recipientItems.length, serviceItems.length]);
 
   const onchainFootgun = requireOnchainPolicy && Boolean(selectedAgent) && !selectedChainWallet?.address;
+  const expired = Boolean(expiresAt && new Date(expiresAt).getTime() <= Date.now());
+  const emptyRecipientWarning = recipientItems.length === 0;
+  const emptyContractWarning = contractItems.length === 0;
 
-  async function copyToOtherAgents() {
+  async function copyToAgents(targetIds: string[]) {
     if (!address || !selectedAgent || isBotPolicy) return;
-    const targets = circleAgents.filter((agent) => agent.id !== selectedAgent.id);
+    const targets = circleAgents.filter((agent) => targetIds.includes(agent.id) && agent.id !== selectedAgent.id);
     if (targets.length === 0) {
-      toast.error("No other agents to copy to.");
+      toast.error("Select at least one other agent.");
       return;
     }
     const v2 = policyV2Payload({weeklyLimit, monthlyLimit, maxUnitsPerRequest, cooldownSeconds, expiresAt, serviceAllowlist: serviceItems, requireOnchainPolicy});
@@ -240,7 +292,8 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
         )
       );
       await snapshot.refetch();
-      toast.success(`Copied policy to ${targets.length} agent${targets.length > 1 ? "s" : ""} (off-chain).`, {id: toastId});
+      toast.success(`Copied policy to ${targets.length} agent${targets.length > 1 ? "s" : ""} (app-level).`, {id: toastId});
+      setShowCopyChooser(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Copy failed", {id: toastId});
     } finally {
@@ -278,10 +331,11 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       requireOnchainPolicy
     })) {
       toast.error("Premium Agent Automation is required for advanced policy controls.");
+      setSection("guardrails");
       return;
     }
     setSaving(true);
-    const toastId = toast.loading(selectedChainWallet?.address ? `Saving policy on ${chainLabel(chain?.id)}…` : "Saving pending policy…");
+    const toastId = toast.loading(selectedChainWallet?.address ? `Saving policy on ${chainLabel(chain?.id)}…` : "Saving app-level policy…");
     try {
       const v2 = policyV2Payload({
         weeklyLimit,
@@ -363,7 +417,7 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
       });
 
       await snapshot.refetch();
-      toast.success(txHash ? `${isBotPolicy ? "BOT EOA" : "Agent"} policy saved on-chain` : "Pending policy saved", {id: toastId});
+      toast.success(txHash ? `${isBotPolicy ? "EOA" : "Agent"} policy saved on-chain` : "App-level policy saved", {id: toastId});
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Policy update failed", {id: toastId});
     } finally {
@@ -382,8 +436,16 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const saveLabel = saving
+    ? "Saving policy…"
+    : selectedAgent?.address
+      ? policyChainReady
+        ? `Save on ${chainLabel(chain?.id)}`
+        : `Not available on ${chainLabel(chain?.id)}`
+      : "Save app-level policy";
+
   return (
-    <div className="mt-6 space-y-5">
+    <div className={`${embedded ? "mt-5" : "mt-6"} space-y-5`}>
       {isConnected && !policyChainReady ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-amber/25 bg-amber/10 p-3.5 text-[13px] leading-5 text-amber">
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
@@ -394,64 +456,180 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
           </span>
         </div>
       ) : null}
+
       {isConnected && isBotPolicy && policyChainReady ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-cyan/25 bg-cyan/10 p-3.5 text-[13px] leading-5 text-cyan">
           <ShieldCheck size={16} className="mt-0.5 shrink-0" />
           <span>
-            BOT mode uses your connected EOA as the policy-controlled wallet. Nexora checks this policy before relaying a signed Permit2 payment to Meridian, then records spend and reputation after settlement.
+            BOT mode uses your connected EOA as the policy-controlled wallet. Nexora checks this policy before relaying a signed Permit2 payment, then records spend after settlement.
           </span>
         </div>
       ) : null}
+
       {/* Agent context */}
       <div className="surface flex flex-wrap items-center justify-between gap-3 p-4">
         <div className="flex min-w-0 items-center gap-3">
           {selectedAgent ? (
             <AgentAvatar seed={selectedAgent.address ?? selectedAgent.id} label={selectedAgent.arcName ?? selectedAgent.address} size={40} />
           ) : (
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.1] bg-white/[0.04] text-slate-500"><ShieldCheck size={18} /></span>
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.1] bg-white/[0.04] text-slate-500">
+              <ShieldCheck size={18} />
+            </span>
           )}
           <div className="min-w-0">
-            <p className="truncate text-base font-semibold text-white">{selectedAgent ? isBotPolicy ? "Connected BOT EOA" : selectedAgent.arcName ?? shortAddress(selectedAgent.operatorAddress) : "No agent selected"}</p>
-            <p className="font-mono text-[13px] text-slate-400">{selectedChainWallet?.address ? shortAddress(selectedChainWallet.address) : selectedAgent ? `${chainLabel(selectedChainId)} wallet pending` : address ? shortAddress(address) : "Connect wallet"}</p>
+            <p className="truncate text-base font-semibold text-white">
+              {selectedAgent
+                ? isBotPolicy
+                  ? "Connected BOT EOA"
+                  : selectedAgent.arcName ?? shortAddress(selectedAgent.operatorAddress)
+                : "No agent selected"}
+            </p>
+            <p className="font-mono text-[13px] text-slate-400">
+              {selectedChainWallet?.address
+                ? shortAddress(selectedChainWallet.address)
+                : selectedAgent
+                  ? `${chainLabel(selectedChainId)} wallet pending`
+                  : address
+                    ? shortAddress(address)
+                    : "Connect wallet"}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {selectedAgent ? (
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${selectedDeployment ? "border-mint/25 bg-mint/10 text-mint" : "border-amber/25 bg-amber/10 text-amber"}`}>
-              <span className={`h-2 w-2 rounded-full ${selectedDeployment ? "bg-mint" : "bg-amber"}`} />
-              {selectedDeployment ? `On-chain · ${chainLabel(selectedChainId)}` : "Saved off-chain"}
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${
+              expired
+                ? "border-magenta/25 bg-magenta/10 text-magenta"
+                : selectedDeployment
+                  ? "border-mint/25 bg-mint/10 text-mint"
+                  : "border-amber/25 bg-amber/10 text-amber"
+            }`}>
+              <span className={`h-2 w-2 rounded-full ${expired ? "bg-magenta" : selectedDeployment ? "bg-mint" : "bg-amber"}`} />
+              {expired
+                ? "Expired — payments blocked"
+                : selectedDeployment
+                  ? `On-chain · ${chainLabel(selectedChainId)}`
+                  : "App-enforced"}
             </span>
           ) : null}
           {selectedAgent && !isBotPolicy && circleAgents.length > 1 ? (
-            <button type="button" onClick={() => void copyToOtherAgents()} disabled={copying} className="secondary-button min-h-9 px-3 py-1.5 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setCopyTargets(circleAgents.filter((agent) => agent.id !== selectedAgent.id).map((agent) => agent.id));
+                setShowCopyChooser((value) => !value);
+              }}
+              disabled={copying}
+              className="secondary-button min-h-9 px-3 py-1.5 text-xs"
+            >
               {copying ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
-              Copy to others
+              Copy to agents
             </button>
           ) : null}
           {dirty ? <span className="rounded-full border border-plasma/30 bg-plasma/10 px-2.5 py-1 text-xs font-semibold text-orchid">Unsaved changes</span> : null}
         </div>
       </div>
 
-      {/* Policy subject */}
-      <div>
-        <p className="mb-2 text-sm font-medium text-slate-300">{isBotPolicy ? "Policy wallet" : "Agent"}</p>
-        {isBotPolicy ? (
-          <div className="surface flex items-center justify-between gap-3 p-3.5">
-            <span>
-              <span className="block text-sm font-semibold text-white">Connected EOA</span>
-              <span className="mt-1 block font-mono text-xs text-slate-400">{address ?? "Connect a wallet to configure BOT policy controls"}</span>
-            </span>
-            <span className="rounded-full border border-cyan/25 bg-cyan/10 px-2.5 py-1 text-xs font-semibold text-cyan">External signer</span>
+      {showCopyChooser && selectedAgent ? (
+        <div className="surface space-y-3 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-white">Copy current policy to</p>
+            <button type="button" className="text-xs text-slate-400 hover:text-white" onClick={() => setShowCopyChooser(false)}>Close</button>
           </div>
-        ) : (
-          <AgentPicker agents={circleAgents} value={selectedAgent} onChange={setAgentId} />
-        )}
-        {!isBotPolicy && circleAgents.length === 0 ? (
-          <p className="mt-2 text-[13px] leading-5 text-slate-400">No agent is available yet. Create an agent wallet first; once Circle returns the wallet, it will appear here.</p>
-        ) : null}
-      </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {circleAgents.filter((agent) => agent.id !== selectedAgent.id).map((agent) => {
+              const checked = copyTargets.includes(agent.id);
+              return (
+                <label key={agent.id} className={`flex cursor-pointer items-center justify-between gap-2 rounded-xl border px-3 py-2.5 ${checked ? "border-plasma/30 bg-plasma/[0.08]" : "border-white/[0.08]"}`}>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-white">{agent.arcName ?? shortAddress(agent.address ?? agent.operatorAddress)}</span>
+                    <span className="font-mono text-[11px] text-slate-500">{agent.address ? shortAddress(agent.address) : "Pending"}</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-[#9b5cf6]"
+                    checked={checked}
+                    onChange={(event) => {
+                      setCopyTargets((current) =>
+                        event.target.checked
+                          ? [...current, agent.id]
+                          : current.filter((id) => id !== agent.id)
+                      );
+                    }}
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            className="action-button text-sm"
+            disabled={copying || copyTargets.length === 0}
+            onClick={() => void copyToAgents(copyTargets)}
+          >
+            {copying ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+            Copy to {copyTargets.length || 0} agent{copyTargets.length === 1 ? "" : "s"}
+          </button>
+        </div>
+      ) : null}
 
-      {/* Quick presets */}
+      {!hideAgentPicker ? (
+        <div>
+          <p className="mb-2 text-sm font-medium text-slate-300">{isBotPolicy ? "Policy wallet" : "Agent"}</p>
+          {isBotPolicy ? (
+            <div className="surface flex items-center justify-between gap-3 p-3.5">
+              <span>
+                <span className="block text-sm font-semibold text-white">Connected EOA</span>
+                <span className="mt-1 block font-mono text-xs text-slate-400">{address ?? "Connect a wallet to configure BOT policy controls"}</span>
+              </span>
+              <span className="rounded-full border border-cyan/25 bg-cyan/10 px-2.5 py-1 text-xs font-semibold text-cyan">External signer</span>
+            </div>
+          ) : (
+            <AgentPicker agents={circleAgents} value={selectedAgent} onChange={setAgentId} />
+          )}
+          {!isBotPolicy && circleAgents.length === 0 ? (
+            <p className="mt-2 text-[13px] leading-5 text-slate-400">
+              No agent is available yet. Create an agent wallet first; once Circle returns the wallet, it will appear here.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Live summary */}
+      <PolicySummaryCard
+        daily={dailyLimit}
+        weekly={weeklyLimit}
+        monthly={monthlyLimit}
+        txCap={transactionCap}
+        cooldownSeconds={cooldownSeconds}
+        expiresAt={expiresAt}
+        maxUnits={maxUnitsPerRequest}
+        requireOnchain={requireOnchainPolicy}
+        contracts={contractItems.length}
+        recipients={recipientItems.length}
+        services={serviceItems.length}
+        spend={spend}
+        enforcement={
+          expired
+            ? "Expired"
+            : selectedDeployment
+              ? `On-chain on ${chainLabel(selectedChainId)}`
+              : requireOnchainPolicy
+                ? "Requires on-chain save"
+                : "App-level enforcement"
+        }
+        warnings={[
+          expired ? "Policy is expired — payments should be blocked until you extend expiry." : null,
+          capExceedsDaily ? "Per-tx cap exceeds the daily limit." : null,
+          weeklyBelowDaily ? "Weekly limit is below the daily limit." : null,
+          monthlyBelowWeekly ? "Monthly limit is below the weekly limit." : null,
+          emptyRecipientWarning ? "No recipient allowlist — any recipient may be permitted by other rules." : null,
+          emptyContractWarning ? "No contract allowlist selected." : null,
+          onchainFootgun ? "On-chain required, but this agent has no wallet address yet." : null
+        ].filter(Boolean) as string[]}
+      />
+
+      {/* Presets */}
       <div>
         <p className="mb-2 text-sm font-medium text-slate-300">Quick presets</p>
         <div className="grid gap-2 sm:grid-cols-3">
@@ -459,7 +637,9 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             const Icon = preset.icon;
             return (
               <button key={preset.key} type="button" onClick={() => applyPreset(preset)} className="surface p-3 text-left transition hover:border-plasma/30">
-                <p className="flex items-center gap-2 text-[15px] font-semibold text-white"><Icon size={15} className="text-orchid" /> {preset.name}</p>
+                <p className="flex items-center gap-2 text-[15px] font-semibold text-white">
+                  <Icon size={15} className="text-orchid" /> {preset.name}
+                </p>
                 <p className="mt-1 text-[13px] text-slate-400">{preset.hint}</p>
               </button>
             );
@@ -467,55 +647,93 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="inline-flex rounded-xl border border-white/[0.1] bg-white/[0.03] p-1">
-        <TabButton active={tab === "basic"} onClick={() => setTab("basic")}>Basic</TabButton>
-        <TabButton active={tab === "advanced"} onClick={() => setTab("advanced")}>
-          Advanced
-          {advancedActive > 0 ? <span className="ml-1.5 rounded-full bg-plasma/20 px-1.5 py-0.5 text-xs font-bold text-orchid">{advancedActive}</span> : null}
-        </TabButton>
+      {/* Sections */}
+      <div className="flex flex-wrap gap-1 rounded-xl border border-white/[0.1] bg-white/[0.03] p-1">
+        {([
+          ["limits", "Limits"],
+          ["access", "Access"],
+          ["guardrails", "Guardrails", advancedActive],
+          ["test", "Test"]
+        ] as Array<[FormSection, string, number?]>).map(([key, label, badge]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setSection(key)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+              section === key ? "bg-plasma/20 text-white" : "text-slate-400 hover:text-white"
+            }`}
+          >
+            {label}
+            {badge ? <span className="rounded-full bg-plasma/25 px-1.5 py-0.5 text-[10px] font-bold text-orchid">{badge}</span> : null}
+          </button>
+        ))}
       </div>
 
-      {tab === "basic" ? (
-        <>
-          {/* Spend limits */}
-          <section className="surface p-4">
-            <p className="section-kicker flex items-center gap-2"><Wallet size={14} /> Spend limits</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm text-slate-300">
-                Daily spending limit
-                <MoneyInput value={dailyLimit} onChange={setDailyLimit} />
-              </label>
-              <label className="grid gap-2 text-sm text-slate-300">
-                Transaction cap
-                <MoneyInput value={transactionCap} onChange={setTransactionCap} />
-              </label>
+      {section === "limits" ? (
+        <section className="surface space-y-4 p-4">
+          <p className="section-kicker flex items-center gap-2"><Wallet size={14} /> Spending limits</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="grid gap-2 text-sm text-slate-300">
+              Daily spending limit
+              <MoneyInput value={dailyLimit} onChange={setDailyLimit} />
+              <span className="text-xs font-normal text-slate-500">Maximum USDC this agent can spend per calendar day.</span>
+            </label>
+            <label className="grid gap-2 text-sm text-slate-300">
+              Per-transaction cap
+              <MoneyInput value={transactionCap} onChange={setTransactionCap} />
+              <span className="text-xs font-normal text-slate-500">Hard ceiling for a single payment authorization.</span>
+            </label>
+            <label className={`grid gap-2 text-sm text-slate-300 ${hasPremiumAutomation ? "" : "opacity-70"}`}>
+              Weekly spending limit
+              <MoneyInput value={weeklyLimit} onChange={setWeeklyLimit} disabled={!hasPremiumAutomation} />
+              <span className="text-xs font-normal text-slate-500">0 disables the weekly window. Premium control.</span>
+            </label>
+            <label className={`grid gap-2 text-sm text-slate-300 ${hasPremiumAutomation ? "" : "opacity-70"}`}>
+              Monthly spending limit
+              <MoneyInput value={monthlyLimit} onChange={setMonthlyLimit} disabled={!hasPremiumAutomation} />
+              <span className="text-xs font-normal text-slate-500">0 disables the monthly window. Premium control.</span>
+            </label>
+          </div>
+          <div>
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>Per-tx cap vs daily limit</span>
+              <span className="font-semibold text-slate-300">{capRatio.toFixed(0)}%</span>
             </div>
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>Per-tx cap vs daily limit</span>
-                <span className="font-semibold text-slate-300">{capRatio.toFixed(0)}%</span>
-              </div>
-              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-                <div className={`h-full rounded-full ${capExceedsDaily ? "bg-amber" : "bg-gradient-to-r from-plasma to-mint"}`} style={{width: `${capRatio}%`}} />
-              </div>
-              {capExceedsDaily ? (
-                <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber">
-                  <AlertTriangle size={13} />
-                  Transaction cap exceeds the daily limit — a single payment could spend the full day.
-                </p>
-              ) : null}
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+              <div className={`h-full rounded-full ${capExceedsDaily ? "bg-amber" : "bg-gradient-to-r from-plasma to-mint"}`} style={{width: `${capRatio}%`}} />
             </div>
-          </section>
+            {capExceedsDaily ? (
+              <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber">
+                <AlertTriangle size={13} />
+                Transaction cap exceeds the daily limit — a single payment could spend the full day.
+              </p>
+            ) : null}
+            {weeklyBelowDaily ? <div className="mt-2"><PolicyWarning icon={AlertTriangle} text="Weekly limit is below the daily limit. The weekly budget will become the effective cap." /></div> : null}
+            {monthlyBelowWeekly ? <div className="mt-2"><PolicyWarning icon={AlertTriangle} text="Monthly limit is below the weekly limit. The monthly budget will become the effective cap." /></div> : null}
+          </div>
+          {!hasPremiumAutomation ? (
+            <p className="text-xs text-slate-500">
+              Weekly and monthly windows require Premium Agent Automation — open Guardrails to subscribe.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
-          {/* Contract allowlist */}
+      {section === "access" ? (
+        <div className="space-y-4">
           <section className="surface p-4">
             <p className="section-kicker flex items-center gap-2"><ShieldCheck size={14} /> Contract allowlist</p>
+            <p className="mt-2 text-sm leading-6 text-slate-400">Only these contracts may be involved in agent payments when allowlisting is enforced.</p>
             <div className="mt-4 grid gap-2">
               {contractOptions.map((contract) => {
                 const checked = selectedContracts.has(contract.address.toLowerCase());
                 return (
-                  <label key={contract.address} className={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-3 transition ${checked ? "border-plasma/30 bg-plasma/[0.08]" : "border-white/[0.08] bg-white/[0.03] hover:border-white/[0.16]"}`}>
+                  <label
+                    key={contract.address}
+                    className={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-3 transition ${
+                      checked ? "border-plasma/30 bg-plasma/[0.08]" : "border-white/[0.08] bg-white/[0.03] hover:border-white/[0.16]"
+                    }`}
+                  >
                     <span>
                       <span className="block text-[15px] font-medium text-white">{contract.label}</span>
                       <span className="mt-1 block text-[13px] text-slate-400">{contract.description} · {shortAddress(contract.address)}</span>
@@ -532,20 +750,78 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             </div>
             <div className="mt-3">
               <p className="mb-1.5 text-[13px] text-slate-400">Custom contracts</p>
-              <ChipInput items={customContracts} onAdd={addContract} onRemove={removeContract} placeholder="0x… custom contract address" />
+              <ChipInput items={customContracts} onAdd={addContract} onRemove={removeContract} placeholder="0x… or paste several addresses" />
             </div>
+            {emptyContractWarning ? (
+              <div className="mt-3"><PolicyWarning icon={AlertTriangle} text="No contract allowlist selected. Add contracts to tighten where this agent can interact." /></div>
+            ) : null}
           </section>
 
-          {/* Recipient allowlist */}
           <section className="surface p-4">
             <p className="section-kicker flex items-center gap-2"><Users size={14} /> Recipient allowlist</p>
+            <p className="mt-2 text-sm leading-6 text-slate-400">Optional pay-to addresses this agent is allowed to fund.</p>
             <div className="mt-4">
-              <ChipInput items={recipientItems} onAdd={addRecipient} onRemove={removeRecipient} placeholder="0x… recipient address" />
+              <ChipInput items={recipientItems} onAdd={addRecipient} onRemove={removeRecipient} placeholder="0x… or paste several addresses" />
+            </div>
+            {emptyRecipientWarning ? (
+              <div className="mt-3"><PolicyWarning icon={AlertTriangle} text="No recipient allowlist — the agent may pay any recipient still permitted by other rules." /></div>
+            ) : null}
+          </section>
+
+          <section className={`surface p-4 ${hasPremiumAutomation ? "" : "opacity-80"}`}>
+            <p className="section-kicker flex items-center gap-2"><Clock size={14} /> Service allowlist</p>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              Limit the agent to specific marketplace services by id, endpoint hash, or name. Premium control.
+            </p>
+            {!hasPremiumAutomation ? <PremiumNotice /> : null}
+            {marketplaceServices.length > 0 && hasPremiumAutomation ? (
+              <div className="mt-4 grid max-h-48 gap-2 overflow-y-auto pr-1">
+                {marketplaceServices.slice(0, 24).map((service) => {
+                  const candidates = [service.id, service.name, service.endpointHash].filter(Boolean) as string[];
+                  const checked = candidates.some((value) => serviceItems.some((item) => item.toLowerCase() === value.toLowerCase()));
+                  const token = service.id || service.name;
+                  return (
+                    <label
+                      key={service.id}
+                      className={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
+                        checked ? "border-plasma/30 bg-plasma/[0.08]" : "border-white/[0.08]"
+                      }`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-white">{service.name}</span>
+                        <span className="text-[12px] text-slate-500">${service.pricePerUnitUsdc}/unit</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[#9b5cf6]"
+                        checked={checked}
+                        onChange={(event) => {
+                          if (event.target.checked) addService(token);
+                          else {
+                            for (const candidate of candidates) removeService(candidate);
+                          }
+                        }}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            ) : null}
+            <div className="mt-4">
+              <IdentifierInput
+                items={serviceItems}
+                onAdd={addService}
+                onRemove={removeService}
+                placeholder="service id, endpoint hash, or service name"
+                disabled={!hasPremiumAutomation}
+              />
             </div>
           </section>
-        </>
-      ) : (
-        <>
+        </div>
+      ) : null}
+
+      {section === "guardrails" ? (
+        <div className="space-y-4">
           {!hasPremiumAutomation ? (
             <PlanSubscriptionCard
               planId="premium_agent_automation"
@@ -557,71 +833,70 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
             />
           ) : null}
 
-          {/* Policy Engine V2 */}
           <section className={`surface p-4 ${hasPremiumAutomation ? "" : "opacity-70"}`}>
-            <p className="section-kicker flex items-center gap-2"><SlidersHorizontal size={14} /> Policy Engine V2</p>
+            <p className="section-kicker flex items-center gap-2"><SlidersHorizontal size={14} /> Advanced guardrails</p>
             {!hasPremiumAutomation ? <PremiumNotice /> : null}
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm text-slate-300">
-                Weekly spending limit
-                <MoneyInput value={weeklyLimit} onChange={setWeeklyLimit} disabled={!hasPremiumAutomation} />
-              </label>
-              <label className="grid gap-2 text-sm text-slate-300">
-                Monthly spending limit
-                <MoneyInput value={monthlyLimit} onChange={setMonthlyLimit} disabled={!hasPremiumAutomation} />
-              </label>
-              <label className="grid gap-2 text-sm text-slate-300">
                 Max units per API request
-                <NumberInput value={maxUnitsPerRequest} onChange={setMaxUnitsPerRequest} placeholder="0 means no V2 unit cap" disabled={!hasPremiumAutomation} />
+                <NumberInput value={maxUnitsPerRequest} onChange={setMaxUnitsPerRequest} placeholder="0 means no unit cap" disabled={!hasPremiumAutomation} />
+                <span className="text-xs font-normal text-slate-500">Caps units in a single paid API call.</span>
               </label>
               <label className="grid gap-2 text-sm text-slate-300">
                 Cooldown between payments
                 <CooldownInput value={cooldownSeconds} onChange={setCooldownSeconds} disabled={!hasPremiumAutomation} />
+                <span className="text-xs font-normal text-slate-500">Minimum wait after a successful payment.</span>
               </label>
               <div className="grid gap-2 text-sm text-slate-300 sm:col-span-2">
                 Policy expiry
                 <ExpiryInput value={expiresAt} onChange={setExpiresAt} disabled={!hasPremiumAutomation} />
+                <span className="text-xs font-normal text-slate-500">After expiry, policy checks should block new spend until updated.</span>
               </div>
             </div>
             <div className="mt-4 grid gap-3">
-              {weeklyBelowDaily ? <PolicyWarning icon={AlertTriangle} text="Weekly limit is below the daily limit. The weekly budget will become the effective cap." /> : null}
-              {monthlyBelowWeekly ? <PolicyWarning icon={AlertTriangle} text="Monthly limit is below the weekly limit. The monthly budget will become the effective cap." /> : null}
               {onchainFootgun ? <PolicyWarning icon={AlertTriangle} text="Require on-chain policy is on, but this agent has no wallet address yet — the policy cannot be committed on-chain until Circle returns the wallet." /> : null}
               <div className="flex items-start justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-3">
                 <span>
-                  <span className="flex items-center gap-2 text-sm font-medium text-white"><Database size={15} className="text-orchid" /> Require on-chain policy</span>
-                  <span className="mt-1 block text-xs leading-5 text-slate-500">Blocks x402 authorization unless this policy has an on-chain transaction hash.</span>
+                  <span className="flex items-center gap-2 text-sm font-medium text-white">
+                    <Database size={15} className="text-orchid" /> Require on-chain policy
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-500">
+                    Blocks authorization unless this policy has an on-chain transaction hash.
+                  </span>
                 </span>
                 <Toggle checked={requireOnchainPolicy} onChange={setRequireOnchainPolicy} disabled={!hasPremiumAutomation} />
               </div>
             </div>
           </section>
 
-          {/* Service allowlist */}
-          <section className={`surface p-4 ${hasPremiumAutomation ? "" : "opacity-70"}`}>
-            <p className="section-kicker flex items-center gap-2"><Clock size={14} /> Service allowlist</p>
-            <p className="mt-2 text-sm leading-6 text-slate-400">Limit an agent to specific Nexora service IDs, chain service IDs, endpoint hashes, or service names.</p>
-            <div className="mt-4">
-              <IdentifierInput items={serviceItems} onAdd={addService} onRemove={removeService} placeholder="service id, endpoint hash, or service name" disabled={!hasPremiumAutomation} />
+          <section className="surface p-4">
+            <p className="section-kicker flex items-center gap-2"><Database size={14} /> Network enforcement</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <SummaryMetric label="Connected network" value={chainLabel(selectedChainId)} />
+              <SummaryMetric label="Registry ready" value={policyChainReady ? "Yes" : "No"} tone={policyChainReady ? "good" : "warn"} />
+              <SummaryMetric label="Agent wallet" value={selectedChainWallet?.address ? shortAddress(selectedChainWallet.address) : "Pending"} mono />
+              <SummaryMetric
+                label="Last on-chain save"
+                value={selectedDeployment ? shortAddress(selectedDeployment.txHash) : "Not saved on-chain"}
+                mono={Boolean(selectedDeployment)}
+              />
             </div>
           </section>
-        </>
-      )}
+        </div>
+      ) : null}
 
-      {/* Effective policy preview */}
-      <EffectivePreview
-        daily={dailyLimit}
-        weekly={weeklyLimit}
-        monthly={monthlyLimit}
-        txCap={transactionCap}
-        cooldownSeconds={cooldownSeconds}
-        expiresAt={expiresAt}
-        maxUnits={maxUnitsPerRequest}
-        requireOnchain={requireOnchainPolicy}
-      />
+      {section === "test" ? (
+        <section className="surface p-4">
+          <PolicySimulationPanel
+            variant="embedded"
+            lockedAgentId={selectedAgent && selectedAgent.walletKind !== "external_eoa" ? selectedAgent.id : undefined}
+            onSelectAgent={setAgentId}
+          />
+        </section>
+      ) : null}
 
       {/* Sticky save bar */}
-      <div className="sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.12] bg-[#0c0f18]/90 p-4 shadow-[0_18px_50px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
+      <div className="sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.12] bg-[#0c0f18]/92 p-4 shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
         <div className="min-w-0 flex-1">
           {changes.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
@@ -644,6 +919,8 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
               {serviceItems.length > 0 ? <><Dot /><span><b className="text-white">{serviceItems.length}</b> services</span></> : null}
               {expiresAt ? <><Dot /><span>expires {expiryLabel(expiresAt)}</span></> : null}
               {requireOnchainPolicy ? <><Dot /><span className="text-orchid">on-chain required</span></> : null}
+              <Dot />
+              <span className="text-slate-500">{selectedDeployment ? `On-chain on ${chainLabel(selectedChainId)}` : "App-level save"}</span>
             </div>
           )}
         </div>
@@ -653,13 +930,14 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
               <RotateCcw size={15} /> Reset
             </button>
           ) : null}
-          <button onClick={savePolicy} className="action-button" disabled={!isConnected || !selectedAgent || saving || !canSave || (Boolean(selectedAgent?.address) && !policyChainReady)}>
+          <button
+            type="button"
+            onClick={() => void savePolicy()}
+            className="action-button"
+            disabled={!isConnected || !selectedAgent || saving || !canSave || (Boolean(selectedAgent?.address) && !policyChainReady)}
+          >
             {saving ? <Loader2 size={16} className="animate-spin" /> : null}
-            {saving
-              ? "Saving policy…"
-              : selectedAgent?.address
-                ? policyChainReady ? `Save ${isBotPolicy ? "EOA policy" : `on ${chainLabel(chain?.id)}`}` : `Not available on ${chainLabel(chain?.id)}`
-                : "Save pending policy"}
+            {saveLabel}
           </button>
         </div>
       </div>
@@ -667,16 +945,132 @@ export function PolicyForm({selectedAgentId, onSelectAgent}: {selectedAgentId?: 
   );
 }
 
-function Dot() {
-  return <span className="text-slate-700">·</span>;
+function PolicySummaryCard({
+  daily,
+  weekly,
+  monthly,
+  txCap,
+  cooldownSeconds,
+  expiresAt,
+  maxUnits,
+  requireOnchain,
+  contracts,
+  recipients,
+  services,
+  spend,
+  enforcement,
+  warnings
+}: {
+  daily: string;
+  weekly: string;
+  monthly: string;
+  txCap: string;
+  cooldownSeconds: string;
+  expiresAt: string;
+  maxUnits: string;
+  requireOnchain: boolean;
+  contracts: number;
+  recipients: number;
+  services: number;
+  spend: SpendSnapshot;
+  enforcement: string;
+  warnings: string[];
+}) {
+  const dailyLimit = Number(daily || 0);
+  const weeklyLimit = Number(weekly || 0);
+  const monthlyLimit = Number(monthly || 0);
+
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-white/[0.1] bg-gradient-to-br from-panel/95 to-panel/80 p-4">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(110,231,183,0.07),transparent_45%)]" />
+      <div className="relative">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="section-kicker">What is enforced</p>
+            <h3 className="mt-2 text-lg font-semibold text-white">Live policy summary</h3>
+          </div>
+          <span className="status-pill border-plasma/25 bg-plasma/10 text-orchid">{enforcement}</span>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <BudgetMetric label="Daily" limit={dailyLimit} spent={spend.day} />
+          {weeklyLimit > 0 ? <BudgetMetric label="Weekly" limit={weeklyLimit} spent={spend.week} /> : (
+            <SummaryMetric label="Weekly" value="Not set" />
+          )}
+          {monthlyLimit > 0 ? <BudgetMetric label="Monthly" limit={monthlyLimit} spent={spend.month} /> : (
+            <SummaryMetric label="Monthly" value="Not set" />
+          )}
+          <SummaryMetric label="Per-tx cap" value={Number(txCap) > 0 ? `$${txCap}` : "No cap"} />
+          <SummaryMetric label="Cooldown" value={Number(cooldownSeconds) > 0 ? formatDuration(Number(cooldownSeconds)) : "None"} />
+          <SummaryMetric label="Expiry" value={expiresAt ? expiryLabel(expiresAt) : "No expiry"} tone={expiresAt && new Date(expiresAt).getTime() <= Date.now() ? "bad" : undefined} />
+          <SummaryMetric label="Max units / req" value={Number(maxUnits) > 0 ? String(maxUnits) : "Unlimited"} />
+          <SummaryMetric label="On-chain required" value={requireOnchain ? "Yes" : "No"} />
+          <SummaryMetric label="Allowlists" value={`${contracts} contracts · ${recipients} recipients · ${services} services`} />
+        </div>
+
+        {warnings.length > 0 ? (
+          <div className="mt-4 grid gap-2">
+            {warnings.map((warning) => (
+              <PolicyWarning key={warning} icon={AlertTriangle} text={warning} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
-function TabButton({active, onClick, children}: {active: boolean; onClick: () => void; children: React.ReactNode}) {
+function BudgetMetric({label, limit, spent}: {label: string; limit: number; spent: number}) {
+  const ratio = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
+  const over = ratio >= 100;
+  const near = ratio >= 80;
   return (
-    <button type="button" onClick={onClick} className={`flex items-center rounded-lg px-4 py-1.5 text-sm font-semibold transition ${active ? "bg-plasma/20 text-white" : "text-slate-400 hover:text-white"}`}>
-      {children}
-    </button>
+    <div className="surface px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="uppercase tracking-wider text-slate-400">{label}</span>
+        <span className={over ? "font-semibold text-magenta" : near ? "font-semibold text-amber" : "text-slate-400"}>{ratio.toFixed(0)}%</span>
+      </div>
+      <p className="mt-1 text-[15px] font-semibold text-white">
+        ${spent.toFixed(2)} <span className="font-normal text-slate-400">/ ${limit || 0}</span>
+      </p>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+        <div
+          className={`h-full rounded-full ${over ? "bg-magenta" : near ? "bg-amber" : "bg-gradient-to-r from-plasma to-mint"}`}
+          style={{width: `${ratio}%`}}
+        />
+      </div>
+    </div>
   );
+}
+
+function SummaryMetric({
+  label,
+  value,
+  mono,
+  tone
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  tone?: "good" | "warn" | "bad";
+}) {
+  const valueClass = tone === "good"
+    ? "text-mint"
+    : tone === "warn"
+      ? "text-amber"
+      : tone === "bad"
+        ? "text-magenta"
+        : "text-white";
+  return (
+    <div className="surface px-3 py-2.5">
+      <p className="text-xs uppercase tracking-wider text-slate-400">{label}</p>
+      <p className={`mt-1 truncate text-[15px] font-semibold ${mono ? "font-mono text-xs" : ""} ${valueClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function Dot() {
+  return <span className="text-slate-700">·</span>;
 }
 
 function Toggle({checked, onChange, disabled = false}: {checked: boolean; onChange: (value: boolean) => void; disabled?: boolean}) {
@@ -693,54 +1087,6 @@ function Toggle({checked, onChange, disabled = false}: {checked: boolean; onChan
     >
       <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all duration-200 ${checked ? "left-[22px]" : "left-0.5"}`} />
     </button>
-  );
-}
-
-function EffectivePreview({daily, weekly, monthly, txCap, cooldownSeconds, expiresAt, maxUnits, requireOnchain}: {
-  daily: string;
-  weekly: string;
-  monthly: string;
-  txCap: string;
-  cooldownSeconds: string;
-  expiresAt: string;
-  maxUnits: string;
-  requireOnchain: boolean;
-}) {
-  const windows = [
-    Number(daily) > 0 ? {perDay: Number(daily), display: `$${daily}/day`} : null,
-    Number(weekly) > 0 ? {perDay: Number(weekly) / 7, display: `$${weekly}/week`} : null,
-    Number(monthly) > 0 ? {perDay: Number(monthly) / 30, display: `$${monthly}/month`} : null
-  ].filter(Boolean) as Array<{perDay: number; display: string}>;
-  const binding = windows.sort((a, b) => a.perDay - b.perDay)[0];
-
-  const rows: Array<{icon: typeof Gauge; label: string; value: string; accent?: boolean}> = [
-    {icon: Gauge, label: "Effective spend", value: binding ? binding.display : "No limit set", accent: true},
-    {icon: Wallet, label: "Per-tx cap", value: Number(txCap) > 0 ? `$${txCap}` : "No cap"},
-    {icon: Timer, label: "Cooldown", value: Number(cooldownSeconds) > 0 ? formatDuration(Number(cooldownSeconds)) : "None"},
-    {icon: CalendarClock, label: "Expiry", value: expiresAt ? expiryLabel(expiresAt) : "No expiry"},
-    {icon: SlidersHorizontal, label: "Max units / req", value: Number(maxUnits) > 0 ? String(maxUnits) : "Unlimited"},
-    {icon: Database, label: "On-chain required", value: requireOnchain ? "Yes" : "No"}
-  ];
-
-  return (
-    <section className="panel relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(110,231,183,0.08),transparent_40%)]" />
-      <p className="section-kicker relative">Effective policy</p>
-      <div className="relative mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {rows.map((row) => {
-          const Icon = row.icon;
-          return (
-            <div key={row.label} className="surface flex items-center gap-2.5 px-3 py-3">
-              <Icon size={16} className={row.accent ? "text-mint" : "text-orchid"} />
-              <div className="min-w-0">
-                <p className="text-xs uppercase tracking-wider text-slate-400">{row.label}</p>
-                <p className={`truncate text-[15px] font-semibold ${row.accent ? "text-mint" : "text-white"}`}>{row.value}</p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 
@@ -842,15 +1188,28 @@ function ExpiryInput({value, onChange, disabled = false}: {value: string; onChan
 
 function ChipInput({items, onAdd, onRemove, placeholder}: {items: string[]; onAdd: (addr: string) => void; onRemove: (addr: string) => void; placeholder: string}) {
   const [draft, setDraft] = useState("");
+
   function commit() {
-    const value = draft.trim();
-    if (!ADDRESS_RE.test(value)) {
-      toast.error("Enter a valid 0x… address");
-      return;
+    const parts = draft
+      .split(/[\s,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (parts.length === 0) return;
+    let added = 0;
+    let invalid = 0;
+    for (const value of parts) {
+      if (!ADDRESS_RE.test(value)) {
+        invalid += 1;
+        continue;
+      }
+      onAdd(value);
+      added += 1;
     }
-    onAdd(value);
-    setDraft("");
+    if (invalid > 0 && added === 0) toast.error("Enter valid 0x… address(es)");
+    else if (invalid > 0) toast.error(`${invalid} invalid address${invalid === 1 ? "" : "es"} skipped`);
+    if (added > 0) setDraft("");
   }
+
   return (
     <div>
       <div className="flex gap-2">
@@ -884,7 +1243,19 @@ function ChipInput({items, onAdd, onRemove, placeholder}: {items: string[]; onAd
   );
 }
 
-function IdentifierInput({items, onAdd, onRemove, placeholder, disabled = false}: {items: string[]; onAdd: (value: string) => void; onRemove: (value: string) => void; placeholder: string; disabled?: boolean}) {
+function IdentifierInput({
+  items,
+  onAdd,
+  onRemove,
+  placeholder,
+  disabled = false
+}: {
+  items: string[];
+  onAdd: (value: string) => void;
+  onRemove: (value: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+}) {
   const [draft, setDraft] = useState("");
   function commit() {
     if (disabled) return;
@@ -942,7 +1313,7 @@ function PolicyWarning({icon: Icon, text}: {icon: typeof AlertTriangle; text: st
 function PremiumNotice() {
   return (
     <p className="mt-3 rounded-xl border border-amber/25 bg-amber/10 p-3 text-xs leading-5 text-amber">
-      Premium Agent Automation is required for weekly and monthly budgets, service allowlists, cooldowns, expiry, max API units, and on-chain policy enforcement.
+      Premium Agent Automation unlocks weekly and monthly budgets, service allowlists, cooldowns, expiry, max API units, and on-chain policy enforcement.
     </p>
   );
 }
